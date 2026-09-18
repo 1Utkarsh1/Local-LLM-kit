@@ -24,6 +24,7 @@ Security notes (see SECURITY review):
     (``tool_timeout``); failures become tool-output strings, never
     tracebacks, and server logs should redact secrets.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -76,7 +77,11 @@ def _freeze_kwargs(kwargs: Dict[str, Any]) -> str:
 
 
 def _cache_key(model_path: str, backend_name: Optional[str], backend_kwargs: Dict[str, Any]) -> str:
-    return "%s|%s|%s" % (model_path, (backend_name or "auto").lower(), _freeze_kwargs(backend_kwargs))
+    return "%s|%s|%s" % (
+        model_path,
+        (backend_name or "auto").lower(),
+        _freeze_kwargs(backend_kwargs),
+    )
 
 
 def clear_backend_cache() -> None:
@@ -328,7 +333,9 @@ class LLM:
             else:
                 name = "transformers"
         if name not in _SUPPORTED_BACKENDS:
-            raise ValueError("Unsupported backend %r; choose from %s" % (backend_name, list(_SUPPORTED_BACKENDS)))
+            raise ValueError(
+                "Unsupported backend %r; choose from %s" % (backend_name, list(_SUPPORTED_BACKENDS))
+            )
 
         if name == "echo":
             try:
@@ -374,8 +381,7 @@ class LLM:
             return OpenAICompatBackend(self.model_path, **self.backend_kwargs)
         except ImportError as exc:
             raise RuntimeError(
-                "openai-compat backend module missing "
-                "(local_llm_kit/backends/openai_compat.py)."
+                "openai-compat backend module missing " "(local_llm_kit/backends/openai_compat.py)."
             ) from exc
         raise AssertionError("unreachable")  # pragma: no cover
 
@@ -421,7 +427,9 @@ class LLM:
             "max_new_tokens": self.max_new_tokens if max_tokens is None else max_tokens,
             "top_p": self.top_p if top_p is None else top_p,
             "top_k": self.top_k if top_k is None else top_k,
-            "repetition_penalty": self.repetition_penalty if repetition_penalty is None else repetition_penalty,
+            "repetition_penalty": (
+                self.repetition_penalty if repetition_penalty is None else repetition_penalty
+            ),
         }
         if seed is not None:
             params["seed"] = seed
@@ -441,12 +449,16 @@ class LLM:
     ) -> str:
         legacy_funcs = None
         if tools_norm:
-            legacy_funcs = [t["function"] if isinstance(t, dict) and "function" in t else t for t in tools_norm]
+            legacy_funcs = [
+                t["function"] if isinstance(t, dict) and "function" in t else t for t in tools_norm
+            ]
         fmt = self.prompt_formatter.format_messages
         try:
             return fmt(messages, functions=legacy_funcs, function_call=function_call, json_mode=json_mode, tools=tools_norm)  # type: ignore[call-arg]
         except TypeError:
-            return fmt(messages, functions=legacy_funcs, function_call=function_call, json_mode=json_mode)
+            return fmt(
+                messages, functions=legacy_funcs, function_call=function_call, json_mode=json_mode
+            )
 
     def _backend_generate(
         self,
@@ -500,7 +512,10 @@ class LLM:
         if spec is not None:
             missing = [r for r in _required_params(spec) if r not in call.arguments]
             if missing:
-                return "Error: tool '%s' missing required argument(s): %s" % (call.name, ", ".join(missing))
+                return "Error: tool '%s' missing required argument(s): %s" % (
+                    call.name,
+                    ", ".join(missing),
+                )
         try:
             impl = self.tool_registry.implementations[call.name]
         except (AttributeError, KeyError):
@@ -517,7 +532,9 @@ class LLM:
         except Exception as exc:  # noqa: BLE001 (tool errors become tool output)
             logger.warning("Tool '%s' failed: %s", call.name, exc)
             return "Error: tool '%s' failed (%s: %s)" % (
-                call.name, type(exc).__name__, str(exc)[:200],
+                call.name,
+                type(exc).__name__,
+                str(exc)[:200],
             )
         return result if isinstance(result, str) else json.dumps(result)
 
@@ -542,12 +559,18 @@ class LLM:
             + "\n\nValid JSON response:"
         )
         try:
-            retry = self.backend.generate(correction, temperature=0.2, max_new_tokens=self.max_new_tokens)
+            retry = self.backend.generate(
+                correction, temperature=0.2, max_new_tokens=self.max_new_tokens
+            )
             retry_text = _extract_text(retry)
             json.loads(retry_text)
             return retry_text
         except Exception:
-            return '{"error": "Failed to generate valid JSON", "attempted_response": ' + json.dumps(text) + "}"
+            return (
+                '{"error": "Failed to generate valid JSON", "attempted_response": '
+                + json.dumps(text)
+                + "}"
+            )
 
     def _usage(self, prompt: str, text: Any) -> Dict[str, int]:
         pt = self._count(prompt)
@@ -611,7 +634,9 @@ class LLM:
         forced_name = _forced_tool_name(tool_choice, function_call)
         rf = _normalize_response_format(response_format, format)
         json_mode = rf is not None
-        legacy_path = tools is None and tool_choice is None  # old-style call -> legacy finish_reason/keys
+        legacy_path = (
+            tools is None and tool_choice is None
+        )  # old-style call -> legacy finish_reason/keys
 
         history = list(messages)  # vision parts (lists) preserved as-is
         self.memory.add_messages(history)
@@ -620,7 +645,9 @@ class LLM:
             temperature, max_tokens, top_p, top_k, repetition_penalty, seed, stop, kwargs
         )
         gen_params["logprobs"] = logprobs
-        gen_params["top_logprobs"] = (top_logprobs if top_logprobs is not None else 5) if logprobs else None
+        gen_params["top_logprobs"] = (
+            (top_logprobs if top_logprobs is not None else 5) if logprobs else None
+        )
 
         loop_kwargs = {
             "forced_name": forced_name,
@@ -674,7 +701,9 @@ class LLM:
         finish = "stop"
 
         for turn in range(max_iterations + 1):
-            prompt = self._format_prompt(working, active_tools or None, function_call, tool_choice, json_mode)
+            prompt = self._format_prompt(
+                working, active_tools or None, function_call, tool_choice, json_mode
+            )
             result = self._backend_generate(working, prompt, gen_params)
             text = _extract_text(result)
             if json_mode:
@@ -702,12 +731,18 @@ class LLM:
                 "tool_calls": [c.to_dict() for c in calls],
             }
             if len(calls) == 1:
-                assistant_msg["function_call"] = {"name": calls[0].name, "arguments": json.dumps(calls[0].arguments)}
+                assistant_msg["function_call"] = {
+                    "name": calls[0].name,
+                    "arguments": json.dumps(calls[0].arguments),
+                }
             working.append(assistant_msg)
             self.memory.add_messages([assistant_msg])
             for call in calls:
                 content = self._execute_tool_call(
-                    call, allowed_names, specs_by_name.get(call.name), tool_timeout,
+                    call,
+                    allowed_names,
+                    specs_by_name.get(call.name),
+                    tool_timeout,
                 )
                 tool_msg: Dict[str, Any] = {
                     "role": "tool",
@@ -727,7 +762,10 @@ class LLM:
                 "tool_calls": [c.to_dict() for c in pending],
             }
             if len(pending) == 1:
-                message["function_call"] = {"name": pending[0].name, "arguments": json.dumps(pending[0].arguments)}
+                message["function_call"] = {
+                    "name": pending[0].name,
+                    "arguments": json.dumps(pending[0].arguments),
+                }
             self.memory.add_messages([message])
         else:
             message = {"role": "assistant", "content": text}
@@ -767,7 +805,9 @@ class LLM:
         allowed_names, specs_by_name = self._tool_specs_by_name(active_tools)
 
         for turn in range(max_iterations + 1):
-            prompt = self._format_prompt(working, active_tools or None, function_call, tool_choice, json_mode)
+            prompt = self._format_prompt(
+                working, active_tools or None, function_call, tool_choice, json_mode
+            )
             stream_params = dict(gen_params)
             accumulated = ""
             first = True
@@ -808,17 +848,26 @@ class LLM:
                         "tool_calls": [c.to_dict() for c in calls],
                     }
                     if legacy_path and len(calls) == 1:
-                        delta2["function_call"] = {"name": calls[0].name, "arguments": json.dumps(calls[0].arguments)}
+                        delta2["function_call"] = {
+                            "name": calls[0].name,
+                            "arguments": json.dumps(calls[0].arguments),
+                        }
                     yield {
                         "id": response_id,
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": self.model_path,
-                        "choices": [{
-                            "index": 0,
-                            "delta": delta2,
-                            "finish_reason": "function_call" if (legacy_path and len(calls) == 1) else "tool_calls",
-                        }],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": delta2,
+                                "finish_reason": (
+                                    "function_call"
+                                    if (legacy_path and len(calls) == 1)
+                                    else "tool_calls"
+                                ),
+                            }
+                        ],
                     }
                     return
                 yield {
@@ -830,14 +879,26 @@ class LLM:
                 }
                 return
             # Execute and continue streaming the follow-up turn.
-            assistant_msg = {"role": "assistant", "content": None, "tool_calls": [c.to_dict() for c in calls]}
+            assistant_msg = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [c.to_dict() for c in calls],
+            }
             working.append(assistant_msg)
             self.memory.add_messages([assistant_msg])
             for call in calls:
                 content = self._execute_tool_call(
-                    call, allowed_names, specs_by_name.get(call.name), tool_timeout,
+                    call,
+                    allowed_names,
+                    specs_by_name.get(call.name),
+                    tool_timeout,
                 )
-                tool_msg = {"role": "tool", "tool_call_id": call.id, "name": call.name, "content": content}
+                tool_msg = {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "content": content,
+                }
                 working.append(tool_msg)
                 self.memory.add_messages([tool_msg])
 
@@ -865,12 +926,18 @@ class LLM:
             if rf.get("type") == "json_schema":
                 schema = rf.get("json_schema", rf.get("schema", {}))
                 prompt += "\n\nJSON Schema:\n" + json.dumps(schema)
-        gen_params = self._sampling_params(temperature, max_tokens, top_p, top_k, repetition_penalty, seed, stop, kwargs)
+        gen_params = self._sampling_params(
+            temperature, max_tokens, top_p, top_k, repetition_penalty, seed, stop, kwargs
+        )
         gen_params["logprobs"] = logprobs
-        gen_params["top_logprobs"] = (top_logprobs if top_logprobs is not None else 5) if logprobs else None
+        gen_params["top_logprobs"] = (
+            (top_logprobs if top_logprobs is not None else 5) if logprobs else None
+        )
         if stream:
             return self._complete_streaming(prompt, gen_params)
-        result = self.backend.generate(prompt, **{k: v for k, v in gen_params.items() if k != "stream"})
+        result = self.backend.generate(
+            prompt, **{k: v for k, v in gen_params.items() if k != "stream"}
+        )
         text = _extract_text(result)
         if rf is not None:
             text = self._ensure_json_output(text)
@@ -879,14 +946,26 @@ class LLM:
             "object": "text_completion",
             "created": self._now(),
             "model": self.model_path,
-            "choices": [{"text": text, "index": 0, "finish_reason": result.get("finish_reason", "stop") if isinstance(result, dict) else "stop"}],
+            "choices": [
+                {
+                    "text": text,
+                    "index": 0,
+                    "finish_reason": (
+                        result.get("finish_reason", "stop") if isinstance(result, dict) else "stop"
+                    ),
+                }
+            ],
         }
         if logprobs:
-            response["choices"][0]["logprobs"] = result.get("logprobs", {}) if isinstance(result, dict) else {}
+            response["choices"][0]["logprobs"] = (
+                result.get("logprobs", {}) if isinstance(result, dict) else {}
+            )
         response["usage"] = self._usage(prompt, text)
         return response
 
-    def _complete_streaming(self, prompt: str, gen_params: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+    def _complete_streaming(
+        self, prompt: str, gen_params: Dict[str, Any]
+    ) -> Iterator[Dict[str, Any]]:
         response_id = _new_id("cmpl")
         created = self._now()
         for chunk in self.backend.generate_stream(prompt, **gen_params):
@@ -910,7 +989,9 @@ class LLM:
         }
 
     # -- embeddings -------------------------------------------------------
-    def embed(self, input: Union[str, List[str]], **kwargs: Any) -> Dict[str, Any]:  # noqa: A002 (OpenAI field name)
+    def embed(
+        self, input: Union[str, List[str]], **kwargs: Any
+    ) -> Dict[str, Any]:  # noqa: A002 (OpenAI field name)
         """OpenAI-shaped embeddings. Delegates to ``backend.embed`` (ollama /
         openai-compat / echo); raises a helpful error otherwise."""
         texts = [input] if isinstance(input, str) else list(input)
@@ -926,7 +1007,8 @@ class LLM:
         if vectors is None:
             raise RuntimeError(
                 "Backend %r does not support embeddings. Use backend='ollama' "
-                "or backend='openai-compat' (or inject a backend with .embed)." % type(self.backend).__name__
+                "or backend='openai-compat' (or inject a backend with .embed)."
+                % type(self.backend).__name__
             )
         if isinstance(vectors, dict):  # already OpenAI-shaped
             data = vectors.get("data", [])
@@ -938,8 +1020,14 @@ class LLM:
         return {
             "object": "list",
             "model": self.model_path,
-            "data": [{"object": "embedding", "index": i, "embedding": list(vec)} for i, vec in enumerate(items)],
-            "usage": {"prompt_tokens": sum(self._count(t) for t in texts), "total_tokens": sum(self._count(t) for t in texts)},
+            "data": [
+                {"object": "embedding", "index": i, "embedding": list(vec)}
+                for i, vec in enumerate(items)
+            ],
+            "usage": {
+                "prompt_tokens": sum(self._count(t) for t in texts),
+                "total_tokens": sum(self._count(t) for t in texts),
+            },
         }
 
     # -- async (via asyncio.to_thread; Py3.9+) ------------------------------

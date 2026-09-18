@@ -58,8 +58,7 @@ DEFAULT_REVISION = "main"
 
 #: ``owner/name`` pattern for Hugging Face repo ids.
 _HF_REPO_RE = re.compile(
-    r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
-    r"/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?" r"/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
 )
 
 #: Small, CPU-friendly starter models. Filenames for GGUF rows are the
@@ -143,6 +142,7 @@ RECOMMENDED_MODELS: List[Dict[str, Any]] = [
 # Small predicates
 # ---------------------------------------------------------------------------
 
+
 def is_url(spec: str) -> bool:
     """Return True if *spec* looks like an ``http(s)://`` URL."""
     if not isinstance(spec, str):
@@ -166,7 +166,7 @@ def is_gguf_path(spec: str) -> bool:
 
 def _looks_like_llamacpp(spec: str, filename: Optional[str] = None) -> bool:
     """Internal: GGUF suffix or legacy ``ggml`` substring (mirrors llm.py)."""
-    hay = (spec or "")
+    hay = spec or ""
     if filename:
         hay += " " + filename
     low = hay.lower()
@@ -211,6 +211,7 @@ def suggested_backend_for(spec: str, filename: Optional[str] = None) -> str:
 # ---------------------------------------------------------------------------
 # Cache locations
 # ---------------------------------------------------------------------------
+
 
 def default_cache_dir() -> str:
     """Return the default download cache directory.
@@ -379,6 +380,7 @@ def _split_shorthand(spec: str) -> Tuple[str, Optional[str]]:
 # Public download API
 # ---------------------------------------------------------------------------
 
+
 def download_model(
     repo_or_path: str,
     filename: Optional[str] = None,
@@ -428,9 +430,7 @@ def download_model(
 
         parsed = urlparse(spec)
         if parsed.scheme != "https":
-            raise ValueError(
-                "Direct model downloads require https, got %r." % parsed.scheme
-            )
+            raise ValueError("Direct model downloads require https, got %r." % parsed.scheme)
         if parsed.username or parsed.password:
             raise ValueError("URLs with embedded credentials are not accepted.")
         allowed_hosts = ("huggingface.co", "cdn-lfs.huggingface.co", "hf.co")
@@ -460,8 +460,10 @@ def download_model(
         hit = _try_hf_hub_download(spec, filename, cache_dir, revision or DEFAULT_REVISION)
         if hit is not None:
             return os.path.abspath(hit)
-        logger.info("huggingface_hub not installed; falling back to urllib. "
-                    "For faster cached downloads: pip install huggingface_hub")
+        logger.info(
+            "huggingface_hub not installed; falling back to urllib. "
+            "For faster cached downloads: pip install huggingface_hub"
+        )
         return os.path.abspath(
             _download_hf_via_urllib(spec, filename, cache_dir, revision or DEFAULT_REVISION)
         )
@@ -497,6 +499,7 @@ def download_gguf(
 # ---------------------------------------------------------------------------
 # Cache discovery
 # ---------------------------------------------------------------------------
+
 
 def _iter_model_files(root: str) -> List[str]:
     """Collect model files + HF snapshot dirs under *root* (best effort)."""
@@ -561,9 +564,11 @@ def list_cached_models(
 
     if search_hf_cache:
         _add(_iter_model_files(_hf_hub_cache_dir()))
-    _add(_iter_model_files(
-        os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir()
-    ))
+    _add(
+        _iter_model_files(
+            os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir()
+        )
+    )
     if search_cwd:
         try:
             for p in Path.cwd().glob("*.gguf"):
@@ -584,7 +589,9 @@ def _find_cached_repo_file(
 ) -> Optional[str]:
     """Search caches for a previously downloaded repo file (or snapshot)."""
     roots: List[str] = []
-    roots.append(os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir())
+    roots.append(
+        os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir()
+    )
     roots.append(_hf_hub_cache_dir())
     want = os.path.basename(filename) if filename else None
     # Our nested layout first: <cache>/<owner>/<name>/<file>.
@@ -623,6 +630,7 @@ def _find_cached_repo_file(
 # ---------------------------------------------------------------------------
 # Resolve: spec -> (path_or_id, backend)
 # ---------------------------------------------------------------------------
+
 
 def resolve_model(
     spec: str,
@@ -670,9 +678,7 @@ def resolve_model(
             return hit, suggested_backend_for(hit, filename)
         if download:
             if not filename:
-                raise ValueError(
-                    "download=True for repo '{}' needs filename='...'.".format(norm)
-                )
+                raise ValueError("download=True for repo '{}' needs filename='...'.".format(norm))
             path = download_model(norm, filename, cache_dir, revision)
             return path, suggested_backend_for(path, filename)
         # Not cached: hand back something the backends accept directly.
@@ -688,6 +694,7 @@ def resolve_model(
 # Starter-model table
 # ---------------------------------------------------------------------------
 
+
 def list_recommended_models() -> List[Dict[str, Any]]:
     """Return a copy of the recommended starter-models table."""
     return [dict(entry) for entry in RECOMMENDED_MODELS]
@@ -700,11 +707,13 @@ def format_recommended_models() -> str:
         "|---|---|---|---|---|",
     ]
     for m in RECOMMENDED_MODELS:
-        lines.append("| {} | {} | {} | {} | {} |".format(
-            m.get("name", "?"),
-            m.get("repo_id", "-"),
-            m.get("filename") or "(any/snapshot)",
-            m.get("backend", "?"),
-            m.get("approx_size", "?"),
-        ))
+        lines.append(
+            "| {} | {} | {} | {} | {} |".format(
+                m.get("name", "?"),
+                m.get("repo_id", "-"),
+                m.get("filename") or "(any/snapshot)",
+                m.get("backend", "?"),
+                m.get("approx_size", "?"),
+            )
+        )
     return "\n".join(lines) + "\n"

@@ -45,6 +45,7 @@ __all__ = ["create_app", "run", "main"]
 # Pure-stdlib helpers (safe to import without fastapi installed)
 # ---------------------------------------------------------------------------
 
+
 def _now() -> int:
     return int(time.time())
 
@@ -243,7 +244,7 @@ def _call_llm_chat(llm_obj: Any, chat_kwargs: Dict[str, Any]) -> Any:
     while True:
         try:
             return llm_obj.chat(**kwargs)
-        except TypeError as exc:
+        except TypeError:
             stripped = [k for k in modern_keys if k in kwargs]
             if not stripped:
                 raise
@@ -267,12 +268,13 @@ def _call_llm_complete(llm_obj: Any, complete_kwargs: Dict[str, Any]) -> Any:
 # App factory (fastapi imported lazily so core stays light)
 # ---------------------------------------------------------------------------
 
+
 def create_app(
     llm: Any = None,
     model_path: Optional[str] = None,
     backend: Optional[str] = None,
     model_name: Optional[str] = None,
-    **llm_kwargs: Any
+    **llm_kwargs: Any,
 ):
     """Create and return a FastAPI app serving an OpenAI-compatible API.
 
@@ -297,7 +299,7 @@ def create_app(
     except ImportError as exc:  # pragma: no cover - import guard
         raise ImportError(
             "The local-llm-kit server requires 'fastapi'. "
-            "Install it with: pip install \"local-llm-kit[server]\" "
+            'Install it with: pip install "local-llm-kit[server]" '
             "or: pip install fastapi uvicorn"
         ) from exc
 
@@ -598,14 +600,14 @@ def create_app(
 # uvicorn runner
 # ---------------------------------------------------------------------------
 
+
 def run(app: Any, host: str = "127.0.0.1", port: int = 8000, **kwargs: Any) -> None:
     """Serve a FastAPI ``app`` with uvicorn (requires the ``server`` extra)."""
     try:
         import uvicorn
     except ImportError as exc:
         raise ImportError(
-            "Serving requires 'uvicorn'. "
-            "Install it with: pip install \"local-llm-kit[server]\""
+            "Serving requires 'uvicorn'. " 'Install it with: pip install "local-llm-kit[server]"'
         ) from exc
     uvicorn.run(app, host=host, port=port, **kwargs)
 

@@ -10,9 +10,9 @@ are optional extras, lazily imported.
 
 __version__ = "0.2.0"
 
-from .llm import LLM, clear_backend_cache, clear_client_cache, get_client
 from .chat import achat, acomplete, chat, complete, embed
 from .function_calling import FunctionCall, FunctionRegistry, add_function, parse_function_calls
+from .llm import LLM, clear_backend_cache, clear_client_cache, get_client
 from .tools import (
     ToolCall,
     ToolRegistry,

@@ -4,7 +4,8 @@ All message/tool/response shapes follow the OpenAI API so that code
 written against OpenAI (or LangChain / LlamaIndex / Continue / Open WebUI)
 works against local models with minimal changes.
 """
-from typing import Any, Dict, List, Optional, Union
+
+from typing import Any, Dict
 
 # A chat message. ``content`` may be:
 #   - a plain string, or

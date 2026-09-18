@@ -118,9 +118,7 @@ class EchoBackend(BaseBackend):
                 "finish_reason": "stop",
                 "model": self.model,
             }
-        text = self._truncate(
-            "Echo: %s" % self._last_user_text(messages), max_new_tokens
-        )
+        text = self._truncate("Echo: %s" % self._last_user_text(messages), max_new_tokens)
         text = self._apply_stop(text, stop)
         return {"text": text, "finish_reason": "stop", "model": self.model}
 
@@ -135,18 +133,14 @@ class EchoBackend(BaseBackend):
         stop: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
-        text = self._truncate(
-            "Echo: %s" % self._last_user_text(messages), max_new_tokens
-        )
+        text = self._truncate("Echo: %s" % self._last_user_text(messages), max_new_tokens)
         text = self._apply_stop(text, stop)
         for chunk in self._stream_text(text):
             yield {"text": chunk}
 
     # -- embeddings ----------------------------------------------------
 
-    def embed(
-        self, texts: Union[str, List[str]], **kwargs: Any
-    ) -> List[List[float]]:
+    def embed(self, texts: Union[str, List[str]], **kwargs: Any) -> List[List[float]]:
         items = [texts] if isinstance(texts, str) else list(texts)
         return [self._fake_vector(t) for t in items]
 
@@ -167,9 +161,7 @@ class EchoBackend(BaseBackend):
         return info
 
     def list_models(self) -> List[Dict[str, Any]]:
-        return [
-            {"id": self.model, "object": "model", "owned_by": "local-llm-kit"}
-        ]
+        return [{"id": self.model, "object": "model", "owned_by": "local-llm-kit"}]
 
     # -- internals -----------------------------------------------------
 

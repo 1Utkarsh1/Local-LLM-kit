@@ -101,6 +101,7 @@ class EmbeddingError(RuntimeError):
 # Numeric helpers (numpy-optional)
 # ---------------------------------------------------------------------------
 
+
 def _is_number(value: Any) -> bool:
     """Return True for real numeric scalars (bool excluded)."""
     if isinstance(value, bool):
@@ -145,9 +146,7 @@ def _extract_vector_or_none(value: Any) -> Optional[Vector]:
 def _extract_vector(value: Any, name: str = "vector") -> Vector:
     vec = _extract_vector_or_none(value)
     if vec is None:
-        raise ValueError(
-            "%s must be a non-empty sequence of numbers, got %r" % (name, value)
-        )
+        raise ValueError("%s must be a non-empty sequence of numbers, got %r" % (name, value))
     return vec
 
 
@@ -222,8 +221,7 @@ def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
     vb = _extract_vector(b, name="b")
     if len(va) != len(vb):
         raise ValueError(
-            "cosine_similarity requires equal-length vectors, got %d and %d"
-            % (len(va), len(vb))
+            "cosine_similarity requires equal-length vectors, got %d and %d" % (len(va), len(vb))
         )
     if HAS_NUMPY and np is not None:
         try:
@@ -277,6 +275,7 @@ def batch_cosine_similarity(
 # Deterministic fake embeddings (offline tests / dev)
 # ---------------------------------------------------------------------------
 
+
 def hash_embed(
     texts: Union[str, Sequence[str]],
     dim: int = 128,
@@ -311,13 +310,11 @@ def hash_embed(
         vec: Vector = []
         counter = 0
         while len(vec) < dim:
-            digest = hashlib.sha256(
-                ("%d:%s:%d" % (seed, text, counter)).encode("utf-8")
-            ).digest()
+            digest = hashlib.sha256(("%d:%s:%d" % (seed, text, counter)).encode("utf-8")).digest()
             for i in range(0, len(digest), 4):
                 if len(vec) >= dim:
                     break
-                unit = int.from_bytes(digest[i:i + 4], "big") / 0xFFFFFFFF
+                unit = int.from_bytes(digest[i : i + 4], "big") / 0xFFFFFFFF
                 vec.append(unit * 2.0 - 1.0)
             counter += 1
         if normalize:
@@ -329,6 +326,7 @@ def hash_embed(
 # ---------------------------------------------------------------------------
 # Backend interop
 # ---------------------------------------------------------------------------
+
 
 class _HashBackend:
     """Deterministic hash-based backend (tests / offline development)."""
@@ -380,9 +378,8 @@ def _call_embed_fn(obj: Any, batch: List[str]) -> List[Vector]:
             result = _SENTINEL
         except Exception as exc:
             raise EmbeddingError(
-                "Backend %r failed to embed %d texts: %s"
-                % (type(obj).__name__, len(batch), exc)
-            )
+                "Backend %r failed to embed %d texts: %s" % (type(obj).__name__, len(batch), exc)
+            ) from exc
         if result is not _SENTINEL:
             matrix = _extract_matrix(result, len(batch))
             if matrix is not None:
@@ -403,9 +400,8 @@ def _call_embed_fn(obj: Any, batch: List[str]) -> List[Vector]:
             result = _SENTINEL
         except Exception as exc:
             raise EmbeddingError(
-                "Backend %r failed to encode %d texts: %s"
-                % (type(obj).__name__, len(batch), exc)
-            )
+                "Backend %r failed to encode %d texts: %s" % (type(obj).__name__, len(batch), exc)
+            ) from exc
         if result is not _SENTINEL:
             matrix = _extract_matrix(result, len(batch))
             if matrix is not None:
@@ -425,17 +421,13 @@ def _call_embed_fn(obj: Any, batch: List[str]) -> List[Vector]:
                 if matrix is not None:
                     return matrix
             if callable(embed_query):
-                return [
-                    _extract_vector(embed_query(t), name="embedding")
-                    for t in batch
-                ]
+                return [_extract_vector(embed_query(t), name="embedding") for t in batch]
         except (TypeError, ValueError) as exc:
             notes.append("embed_documents/embed_query: %s" % exc)
         except Exception as exc:
             raise EmbeddingError(
-                "Backend %r failed to embed %d texts: %s"
-                % (type(obj).__name__, len(batch), exc)
-            )
+                "Backend %r failed to embed %d texts: %s" % (type(obj).__name__, len(batch), exc)
+            ) from exc
 
     detail = "; ".join(notes) if notes else "no embed/encode method found"
     raise EmbeddingError(
@@ -475,27 +467,23 @@ def _construct_named_backend(
             continue
         cls = getattr(module, class_name, None)
         if cls is None:
-            last_error = ImportError(
-                "module %r has no %r" % (full_name, class_name)
-            )
+            last_error = ImportError("module %r has no %r" % (full_name, class_name))
             continue
         try:
             instance = cls(model_path or "", **backend_kwargs)
         except Exception as exc:
             raise EmbeddingError(
                 "Could not construct backend %r for embeddings: %s" % (name, exc)
-            )
+            ) from exc
         if not _has_embed_capability(instance):
             raise EmbeddingError(
-                "Backend %r does not support embeddings (no embed()/encode() "
-                "method)." % name
+                "Backend %r does not support embeddings (no embed()/encode() " "method)." % name
             )
         return instance
     raise EmbeddingError(
         "Embedding backend %r is not available (%s). Install the matching "
         "optional dependency, pass a backend instance directly, or use "
-        "backend='hash' for deterministic offline embeddings."
-        % (name, last_error)
+        "backend='hash' for deterministic offline embeddings." % (name, last_error)
     )
 
 
@@ -522,9 +510,7 @@ def _resolve_backend(
     if _has_embed_capability(backend):
         return backend
     if isinstance(backend, type):
-        raise EmbeddingError(
-            "backend must be an instance, not the class %r." % backend.__name__
-        )
+        raise EmbeddingError("backend must be an instance, not the class %r." % backend.__name__)
     if callable(backend):
         return _CallableBackend(backend)
     raise EmbeddingError(
@@ -537,6 +523,7 @@ def _resolve_backend(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def embed(
     texts: Union[str, Sequence[str]],
@@ -671,8 +658,7 @@ class EmbeddingClient:
             self.dim = len(vec)
         elif len(vec) != self.dim:
             raise ValueError(
-                "Inconsistent embedding dimension: expected %d, got %d"
-                % (self.dim, len(vec))
+                "Inconsistent embedding dimension: expected %d, got %d" % (self.dim, len(vec))
             )
 
     # -- embedding ------------------------------------------------------
@@ -688,9 +674,7 @@ class EmbeddingClient:
             items = list(texts)
         for t in items:
             if not isinstance(t, str):
-                raise TypeError(
-                    "embed expects strings, got %r" % type(t).__name__
-                )
+                raise TypeError("embed expects strings, got %r" % type(t).__name__)
         if not items:
             return []
 
@@ -707,16 +691,16 @@ class EmbeddingClient:
 
         fetched: Dict[str, Vector] = {}
         for start in range(0, len(to_fetch), self.batch_size):
-            batch = to_fetch[start:start + self.batch_size]
+            batch = to_fetch[start : start + self.batch_size]
             logger.debug(
                 "Embedding batch of %d texts with %s",
-                len(batch), type(self.backend).__name__,
+                len(batch),
+                type(self.backend).__name__,
             )
             vectors = _call_embed_fn(self.backend, batch)
             if len(vectors) != len(batch):
                 raise EmbeddingError(
-                    "Backend returned %d vectors for %d texts"
-                    % (len(vectors), len(batch))
+                    "Backend returned %d vectors for %d texts" % (len(vectors), len(batch))
                 )
             for text, vec in zip(batch, vectors):
                 vec = _extract_vector(vec, name="embedding")
@@ -740,8 +724,6 @@ class EmbeddingClient:
             raise TypeError("embed_query expects a string, got %r" % type(text).__name__)
         return self.embed([text])[0]
 
-    def similarity(
-        self, a: Sequence[float], b: Sequence[float]
-    ) -> float:
+    def similarity(self, a: Sequence[float], b: Sequence[float]) -> float:
         """Cosine similarity between two vectors (numpy fast path if present)."""
         return cosine_similarity(a, b)

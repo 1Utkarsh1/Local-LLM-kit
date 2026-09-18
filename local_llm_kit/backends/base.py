@@ -230,9 +230,7 @@ class BaseBackend(ABC):
     # 2026 embeddings API (optional)
     # ------------------------------------------------------------------
 
-    def embed(
-        self, texts: Union[str, List[str]], **kwargs: Any
-    ) -> List[List[float]]:
+    def embed(self, texts: Union[str, List[str]], **kwargs: Any) -> List[List[float]]:
         """Embed one string or a batch of strings.
 
         Returns:
@@ -243,9 +241,7 @@ class BaseBackend(ABC):
         Raises:
             NotImplementedError: if this backend has no embedding support.
         """
-        raise NotImplementedError(
-            "%s does not support embeddings." % type(self).__name__
-        )
+        raise NotImplementedError("%s does not support embeddings." % type(self).__name__)
 
     # ------------------------------------------------------------------
     # Introspection (optional overrides)
@@ -276,7 +272,8 @@ class BaseBackend(ABC):
         return []
 
     def close(self) -> None:
-        """Release backend resources (no-op by default)."""
+        """Release backend resources (no-op by default; override as needed)."""
+        self._closed = True
 
     def __enter__(self) -> "BaseBackend":
         return self

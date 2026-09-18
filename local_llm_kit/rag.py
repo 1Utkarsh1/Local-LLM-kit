@@ -76,6 +76,7 @@ EmbedFn = Callable[..., Any]
 # Cosine similarity (local copies so rag works standalone)
 # ---------------------------------------------------------------------------
 
+
 def _cosine(a: List[float], b: List[float]) -> float:
     dot = math.fsum(x * y for x, y in zip(a, b))
     na = math.sqrt(math.fsum(x * x for x in a))
@@ -114,8 +115,8 @@ def _as_vector(value: Any, name: str = "vector") -> List[float]:
             if value.ndim != 1:
                 raise ValueError("expected 1-D vector")
             value = value.tolist()
-        except (TypeError, ValueError):
-            raise ValueError("%s must be a 1-D numeric vector" % name)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("%s must be a 1-D numeric vector" % name) from exc
     if isinstance(value, dict) and "embedding" in value:
         return _as_vector(value["embedding"], name=name)
     if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
@@ -225,6 +226,7 @@ def _embed_one(fn: EmbedFn, text: str) -> List[float]:
 # Text chunking
 # ---------------------------------------------------------------------------
 
+
 def chunk_text(
     text: str,
     chunk_size: int = 500,
@@ -265,8 +267,7 @@ def chunk_text(
         raise ValueError("chunk_overlap must be >= 0, got %r" % (chunk_overlap,))
     if chunk_overlap >= chunk_size:
         raise ValueError(
-            "chunk_overlap (%d) must be smaller than chunk_size (%d)"
-            % (chunk_overlap, chunk_size)
+            "chunk_overlap (%d) must be smaller than chunk_size (%d)" % (chunk_overlap, chunk_size)
         )
     seps = list(DEFAULT_SEPARATORS if separators is None else separators)
     n = len(text)
@@ -316,6 +317,7 @@ def chunk_text(
 # Vector store
 # ---------------------------------------------------------------------------
 
+
 def _lexical_tokens(text: str) -> List[str]:
     """Lowercase word tokens for the lexical (TF-IDF) fallback."""
     return re.findall(r"\w+", text.lower())
@@ -347,9 +349,7 @@ def _lexical_scores(query: str, docs: Sequence[str]) -> List[float]:
         dtf: Dict[str, int] = {}
         for tok in toks:
             dtf[tok] = dtf.get(tok, 0) + 1
-        dot = math.fsum(
-            qtf[t] * idf.get(t, 0.0) * dtf.get(t, 0) * idf.get(t, 0.0) for t in qtf
-        )
+        dot = math.fsum(qtf[t] * idf.get(t, 0.0) * dtf.get(t, 0) * idf.get(t, 0.0) for t in qtf)
         dnorm = math.sqrt(math.fsum((dtf[t] * idf.get(t, 0.0)) ** 2 for t in dtf))
         denom = qnorm * dnorm
         scores.append(dot / denom if denom else 0.0)
@@ -410,9 +410,7 @@ class SimpleVectorStore:
         return len(self.texts)
 
     def __repr__(self) -> str:
-        return "%s(size=%d, dim=%r)" % (
-            type(self).__name__, len(self), self.dim
-        )
+        return "%s(size=%d, dim=%r)" % (type(self).__name__, len(self), self.dim)
 
     def clear(self) -> None:
         """Remove all stored entries."""
@@ -437,8 +435,7 @@ class SimpleVectorStore:
                 self.dim = len(vec)
             elif len(vec) != self.dim:
                 raise ValueError(
-                    "Inconsistent embedding dimension: expected %d, got %d"
-                    % (self.dim, len(vec))
+                    "Inconsistent embedding dimension: expected %d, got %d" % (self.dim, len(vec))
                 )
         return checked
 
@@ -479,18 +476,14 @@ class SimpleVectorStore:
         else:
             vectors = self._check_vectors(list(embeddings))
             if len(vectors) != len(items):
-                raise ValueError(
-                    "Got %d embeddings for %d texts" % (len(vectors), len(items))
-                )
+                raise ValueError("Got %d embeddings for %d texts" % (len(vectors), len(items)))
 
         if metadatas is None:
             metas: List[Dict[str, Any]] = [{} for _ in items]
         else:
             metas = [dict(m) if m else {} for m in metadatas]
             if len(metas) != len(items):
-                raise ValueError(
-                    "Got %d metadatas for %d texts" % (len(metas), len(items))
-                )
+                raise ValueError("Got %d metadatas for %d texts" % (len(metas), len(items)))
 
         if ids is None:
             new_ids = [self._next_id() for _ in items]
@@ -574,8 +567,7 @@ class SimpleVectorStore:
             )
         if self.dim is not None and len(query_vec) != self.dim:
             raise ValueError(
-                "Query dimension %d does not match store dimension %d"
-                % (len(query_vec), self.dim)
+                "Query dimension %d does not match store dimension %d" % (len(query_vec), self.dim)
             )
         scores = _cosine_matrix(query_vec, self.vectors)
         return self._ranked_hits(scores, k)
@@ -602,9 +594,7 @@ class SimpleVectorStore:
         return path
 
     @classmethod
-    def load(
-        cls, path: str, embed_fn: Optional[EmbedFn] = None
-    ) -> "SimpleVectorStore":
+    def load(cls, path: str, embed_fn: Optional[EmbedFn] = None) -> "SimpleVectorStore":
         """Load a store previously saved with :meth:`save`."""
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -614,24 +604,15 @@ class SimpleVectorStore:
         texts = data.get("texts", [])
         metadatas = data.get("metadatas", [])
         vectors = data.get("vectors", [])
-        if not (
-            len(ids) == len(texts) == len(metadatas) == len(vectors)
-        ):
-            raise ValueError(
-                "Corrupt vector store file %r: mismatched field lengths" % (path,)
-            )
+        if not (len(ids) == len(texts) == len(metadatas) == len(vectors)):
+            raise ValueError("Corrupt vector store file %r: mismatched field lengths" % (path,))
         store = cls(embed_fn=embed_fn, dim=data.get("dim"))
         store.ids = [str(i) for i in ids]
         store.texts = [str(t) for t in texts]
         store.metadatas = [dict(m) if isinstance(m, dict) else {} for m in metadatas]
         # Empty vectors mark lexical-mode entries (no embed_fn at save time).
-        store.vectors = [
-            [] if (isinstance(v, list) and len(v) == 0) else v for v in vectors
-        ]
-        store.vectors = [
-            v if len(v) == 0 else store._check_vectors([v])[0]
-            for v in store.vectors
-        ]
+        store.vectors = [[] if (isinstance(v, list) and len(v) == 0) else v for v in vectors]
+        store.vectors = [v if len(v) == 0 else store._check_vectors([v])[0] for v in store.vectors]
         # Keep generated ids collision-free.
         store._id_counter = len(store.ids)
         return store
@@ -640,6 +621,7 @@ class SimpleVectorStore:
 # ---------------------------------------------------------------------------
 # Retrieval helper
 # ---------------------------------------------------------------------------
+
 
 def retrieve(
     query: Union[str, Sequence[float]],
@@ -671,6 +653,7 @@ def retrieve(
 # ---------------------------------------------------------------------------
 # Prompt building
 # ---------------------------------------------------------------------------
+
 
 def _doc_text(doc: DocInput) -> str:
     if isinstance(doc, str):
@@ -728,8 +711,7 @@ def build_rag_prompt(
     if not items:
         user = (
             "%s %s\n\n(No context was retrieved. Answer from general "
-            "knowledge if you can, otherwise say you don't know.)"
-            % (question_label, query.strip())
+            "knowledge if you can, otherwise say you don't know.)" % (question_label, query.strip())
         )
     else:
         parts = []

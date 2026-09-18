@@ -78,23 +78,31 @@ class OpenAICompatBackend(BaseBackend):
             text = "".join(
                 c["text"]
                 for c in self.generate_stream(
-                    prompt, temperature=temperature,
-                    max_new_tokens=max_new_tokens, top_p=top_p, top_k=top_k,
-                    repetition_penalty=repetition_penalty, **kwargs,
+                    prompt,
+                    temperature=temperature,
+                    max_new_tokens=max_new_tokens,
+                    top_p=top_p,
+                    top_k=top_k,
+                    repetition_penalty=repetition_penalty,
+                    **kwargs,
                 )
             )
             return {"text": text, "finish_reason": "stop", "model": self.model}
         payload = self._completion_payload(
-            prompt, temperature, max_new_tokens, top_p, top_k,
-            repetition_penalty, stream=False, **kwargs,
+            prompt,
+            temperature,
+            max_new_tokens,
+            top_p,
+            top_k,
+            repetition_penalty,
+            stream=False,
+            **kwargs,
         )
         resp = self._post_json("/completions", payload)
         try:
             choice = (resp.get("choices") or [])[0]
-        except IndexError:
-            raise RuntimeError(
-                "Server returned no completion choices: %r" % (resp,)
-            )
+        except IndexError as e:
+            raise RuntimeError("Server returned no completion choices: %r" % (resp,)) from e
         return {
             "text": choice.get("text", "") or "",
             "finish_reason": choice.get("finish_reason", "stop"),
@@ -116,8 +124,14 @@ class OpenAICompatBackend(BaseBackend):
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
         payload = self._completion_payload(
-            prompt, temperature, max_new_tokens, top_p, top_k,
-            repetition_penalty, stream=True, **kwargs,
+            prompt,
+            temperature,
+            max_new_tokens,
+            top_p,
+            top_k,
+            repetition_penalty,
+            stream=True,
+            **kwargs,
         )
         for event in self._post_sse("/completions", payload):
             for choice in event.get("choices", []) or []:
@@ -148,11 +162,18 @@ class OpenAICompatBackend(BaseBackend):
         if stream:
             chunks = list(
                 self.chat_stream(
-                    messages, temperature=temperature,
-                    max_new_tokens=max_new_tokens, top_p=top_p, top_k=top_k,
-                    repetition_penalty=repetition_penalty, stop=stop,
-                    tools=tools, tool_choice=tool_choice,
-                    response_format=response_format, seed=seed, **kwargs,
+                    messages,
+                    temperature=temperature,
+                    max_new_tokens=max_new_tokens,
+                    top_p=top_p,
+                    top_k=top_k,
+                    repetition_penalty=repetition_penalty,
+                    stop=stop,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    response_format=response_format,
+                    seed=seed,
+                    **kwargs,
                 )
             )
             text = "".join(c.get("text", "") for c in chunks)
@@ -161,29 +182,37 @@ class OpenAICompatBackend(BaseBackend):
                 if c.get("tool_calls"):
                     tool_calls = c["tool_calls"]
             finish = next(
-                (c["finish_reason"] for c in reversed(chunks)
-                 if c.get("finish_reason")),
+                (c["finish_reason"] for c in reversed(chunks) if c.get("finish_reason")),
                 "stop",
             )
             result: Dict[str, Any] = {
-                "text": text, "finish_reason": finish, "model": self.model,
+                "text": text,
+                "finish_reason": finish,
+                "model": self.model,
             }
             if tool_calls:
                 result["tool_calls"] = tool_calls
             return result
         payload = self._chat_payload(
-            messages, temperature, max_new_tokens, top_p, top_k,
-            repetition_penalty, stream=False, stop=stop, tools=tools,
-            tool_choice=tool_choice, response_format=response_format,
-            seed=seed, **kwargs,
+            messages,
+            temperature,
+            max_new_tokens,
+            top_p,
+            top_k,
+            repetition_penalty,
+            stream=False,
+            stop=stop,
+            tools=tools,
+            tool_choice=tool_choice,
+            response_format=response_format,
+            seed=seed,
+            **kwargs,
         )
         resp = self._post_json("/chat/completions", payload)
         try:
             choice = (resp.get("choices") or [])[0]
-        except IndexError:
-            raise RuntimeError(
-                "Server returned no chat choices: %r" % (resp,)
-            )
+        except IndexError as e:
+            raise RuntimeError("Server returned no chat choices: %r" % (resp,)) from e
         message = choice.get("message", {}) or {}
         return {
             "text": self._content_text(message.get("content")),
@@ -210,10 +239,19 @@ class OpenAICompatBackend(BaseBackend):
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
         payload = self._chat_payload(
-            messages, temperature, max_new_tokens, top_p, top_k,
-            repetition_penalty, stream=True, stop=stop, tools=tools,
-            tool_choice=tool_choice, response_format=response_format,
-            seed=seed, **kwargs,
+            messages,
+            temperature,
+            max_new_tokens,
+            top_p,
+            top_k,
+            repetition_penalty,
+            stream=True,
+            stop=stop,
+            tools=tools,
+            tool_choice=tool_choice,
+            response_format=response_format,
+            seed=seed,
+            **kwargs,
         )
         for event in self._post_sse("/chat/completions", payload):
             for choice in event.get("choices", []) or []:
@@ -226,15 +264,12 @@ class OpenAICompatBackend(BaseBackend):
                     chunk["tool_calls"] = delta["tool_calls"]
                 if choice.get("finish_reason"):
                     chunk["finish_reason"] = choice["finish_reason"]
-                if (chunk["text"] or chunk.get("finish_reason")
-                        or "tool_calls_delta" in chunk):
+                if chunk["text"] or chunk.get("finish_reason") or "tool_calls_delta" in chunk:
                     yield chunk
 
     # -- embeddings (/v1/embeddings) -----------------------------------
 
-    def embed(
-        self, texts: Union[str, List[str]], **kwargs: Any
-    ) -> List[List[float]]:
+    def embed(self, texts: Union[str, List[str]], **kwargs: Any) -> List[List[float]]:
         items = [texts] if isinstance(texts, str) else list(texts)
         if not items:
             return []
@@ -245,10 +280,8 @@ class OpenAICompatBackend(BaseBackend):
         try:
             ordered = sorted(data, key=lambda d: d.get("index", 0))
             return [list(d["embedding"]) for d in ordered]
-        except (KeyError, TypeError, AttributeError):
-            raise RuntimeError(
-                "Unexpected /v1/embeddings response: %r" % (resp,)
-            )
+        except (KeyError, TypeError, AttributeError) as e:
+            raise RuntimeError("Unexpected /v1/embeddings response: %r" % (resp,)) from e
 
     # -- introspection -------------------------------------------------
 
@@ -278,20 +311,23 @@ class OpenAICompatBackend(BaseBackend):
         out = []
         for m in models or []:
             if isinstance(m, dict):
-                out.append({
-                    "id": m.get("id", "unknown"),
-                    "object": m.get("object", "model"),
-                    "created": m.get("created"),
-                    "owned_by": m.get("owned_by"),
-                })
+                out.append(
+                    {
+                        "id": m.get("id", "unknown"),
+                        "object": m.get("object", "model"),
+                        "created": m.get("created"),
+                        "owned_by": m.get("owned_by"),
+                    }
+                )
             else:
                 out.append({"id": str(m), "object": "model"})
         return out
 
     # -- payload builders ----------------------------------------------
 
-    def _base_sampling(self, temperature: float, max_new_tokens: int,
-                       top_p: float, **kwargs: Any) -> Dict[str, Any]:
+    def _base_sampling(
+        self, temperature: float, max_new_tokens: int, top_p: float, **kwargs: Any
+    ) -> Dict[str, Any]:
         params: Dict[str, Any] = {
             "model": self.model,
             "temperature": temperature,
@@ -303,31 +339,44 @@ class OpenAICompatBackend(BaseBackend):
         params.update(kwargs)  # explicit call args win; unknown keys pass through
         return params
 
-    def _completion_payload(self, prompt: str, temperature: float,
-                            max_new_tokens: int, top_p: float, top_k: int,
-                            repetition_penalty: float, stream: bool,
-                            **kwargs: Any) -> Dict[str, Any]:
+    def _completion_payload(
+        self,
+        prompt: str,
+        temperature: float,
+        max_new_tokens: int,
+        top_p: float,
+        top_k: int,
+        repetition_penalty: float,
+        stream: bool,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
         # top_k / repetition_penalty are not OpenAI fields; most local
         # servers accept them as extra body params, so pass through.
         kwargs.setdefault("top_k", top_k)
         kwargs.setdefault("repeat_penalty", repetition_penalty)
-        payload = self._base_sampling(temperature, max_new_tokens, top_p,
-                                      stream=stream, **kwargs)
+        payload = self._base_sampling(temperature, max_new_tokens, top_p, stream=stream, **kwargs)
         payload["prompt"] = prompt
         return payload
 
-    def _chat_payload(self, messages: List[Dict[str, Any]],
-                      temperature: float, max_new_tokens: int, top_p: float,
-                      top_k: int, repetition_penalty: float, stream: bool,
-                      stop: Optional[List[str]],
-                      tools: Optional[List[Dict[str, Any]]],
-                      tool_choice: Any,
-                      response_format: Optional[Dict[str, Any]],
-                      seed: Optional[int], **kwargs: Any) -> Dict[str, Any]:
+    def _chat_payload(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: float,
+        max_new_tokens: int,
+        top_p: float,
+        top_k: int,
+        repetition_penalty: float,
+        stream: bool,
+        stop: Optional[List[str]],
+        tools: Optional[List[Dict[str, Any]]],
+        tool_choice: Any,
+        response_format: Optional[Dict[str, Any]],
+        seed: Optional[int],
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
         kwargs.setdefault("top_k", top_k)
         kwargs.setdefault("repeat_penalty", repetition_penalty)
-        payload = self._base_sampling(temperature, max_new_tokens, top_p,
-                                      stream=stream, **kwargs)
+        payload = self._base_sampling(temperature, max_new_tokens, top_p, stream=stream, **kwargs)
         payload["messages"] = messages
         if stop:
             payload["stop"] = stop
@@ -349,7 +398,8 @@ class OpenAICompatBackend(BaseBackend):
             return content
         if isinstance(content, list):  # vision-style part list in a response
             return "".join(
-                str(p.get("text", "")) for p in content
+                str(p.get("text", ""))
+                for p in content
                 if isinstance(p, dict) and p.get("type", "text") == "text"
             )
         return str(content)
@@ -368,8 +418,10 @@ class OpenAICompatBackend(BaseBackend):
     def _post_json(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            self.base_url + path, data=data,
-            headers=self._headers(), method="POST",
+            self.base_url + path,
+            data=data,
+            headers=self._headers(),
+            method="POST",
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -379,22 +431,22 @@ class OpenAICompatBackend(BaseBackend):
             raise RuntimeError(
                 "OpenAI-compatible request POST %s%s failed with HTTP %s: %s"
                 % (self.base_url, path, e.code, body)
-            )
+            ) from e
         except urllib.error.URLError as e:
             raise ConnectionError(
                 "Server not reachable at %s (%s). Is your OpenAI-compatible "
                 "server (vLLM / LM Studio / llama-server) running with "
                 "--host/--port matching base_url?" % (self.base_url, e.reason)
-            )
+            ) from e
 
-    def _post_sse(
-        self, path: str, payload: Dict[str, Any]
-    ) -> Iterator[Dict[str, Any]]:
+    def _post_sse(self, path: str, payload: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         """POST with ``stream=True``; parses SSE ``data:`` frames."""
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            self.base_url + path, data=data,
-            headers=self._headers(stream=True), method="POST",
+            self.base_url + path,
+            data=data,
+            headers=self._headers(stream=True),
+            method="POST",
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -404,7 +456,7 @@ class OpenAICompatBackend(BaseBackend):
                         continue  # blank / keep-alive comment
                     if not line.startswith("data:"):
                         continue
-                    data_str = line[len("data:"):].strip()
+                    data_str = line[len("data:") :].strip()
                     if data_str == _DONE:
                         break
                     try:
@@ -418,17 +470,15 @@ class OpenAICompatBackend(BaseBackend):
             raise RuntimeError(
                 "OpenAI-compatible request POST %s%s failed with HTTP %s: %s"
                 % (self.base_url, path, e.code, body)
-            )
+            ) from e
         except urllib.error.URLError as e:
             raise ConnectionError(
                 "Server not reachable at %s (%s). Is your OpenAI-compatible "
                 "server running?" % (self.base_url, e.reason)
-            )
+            ) from e
 
     def _get_json(self, path: str) -> Dict[str, Any]:
-        req = urllib.request.Request(
-            self.base_url + path, headers=self._headers(), method="GET"
-        )
+        req = urllib.request.Request(self.base_url + path, headers=self._headers(), method="GET")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
@@ -438,8 +488,8 @@ class OpenAICompatBackend(BaseBackend):
             raise RuntimeError(
                 "OpenAI-compatible request GET %s%s failed with HTTP %s: %s"
                 % (self.base_url, path, e.code, body)
-            )
+            ) from e
         except urllib.error.URLError as e:
             raise ConnectionError(
                 "Server not reachable at %s (%s)." % (self.base_url, e.reason)
-            )
+            ) from e

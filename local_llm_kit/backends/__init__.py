@@ -124,8 +124,7 @@ def __getattr__(name: str) -> Any:
             module = importlib.import_module(module_name, __name__)
         except ImportError as e:
             raise ImportError(
-                "Backend %r needs an optional dependency that is not "
-                "installed: %s" % (name, e)
+                "Backend %r needs an optional dependency that is not " "installed: %s" % (name, e)
             ) from e
         return getattr(module, attr)
     raise AttributeError("module %r has no attribute %r" % (__name__, name))

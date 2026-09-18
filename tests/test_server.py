@@ -8,11 +8,13 @@ gracefully when fastapi (or the server module) is unavailable.
 
 Run: python -m pytest tests/test_server.py -q
 """
+
 import unittest
 
 try:
     import fastapi  # noqa: F401
     from fastapi.testclient import TestClient
+
     HAS_FASTAPI = True
 except Exception:
     HAS_FASTAPI = False
@@ -20,6 +22,7 @@ except Exception:
 
 try:
     import sys as _sys
+
     __import__("local_llm_kit.server")
     SERVER_MOD = _sys.modules["local_llm_kit.server"]
     HAS_SERVER = True
@@ -43,22 +46,36 @@ class EchoLLM(object):
                 content = msg.get("content", "")
                 last_user = content if isinstance(content, str) else str(content)
                 break
-        return {"id": "chatcmpl-test", "object": "chat.completion", "created": 0,
-                "model": self.model,
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": "echo:" + last_user},
-                             "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+        return {
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "created": 0,
+            "model": self.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "echo:" + last_user},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
 
     def complete(self, prompt, **kwargs):
-        return {"id": "cmpl-test", "object": "text_completion", "created": 0,
-                "model": self.model,
-                "choices": [{"text": "echo:" + prompt, "index": 0, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+        return {
+            "id": "cmpl-test",
+            "object": "text_completion",
+            "created": 0,
+            "model": self.model,
+            "choices": [{"text": "echo:" + prompt, "index": 0, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
 
 
 def make_app(echo):
     """Build the app across likely v0.2.0 factory spellings."""
     import inspect
+
     for name in ("create_app", "build_app", "make_app", "get_app", "create_server"):
         factory = getattr(SERVER_MOD, name, None)
         if not callable(factory):
@@ -91,8 +108,9 @@ def make_app(echo):
     raise AttributeError("local_llm_kit.server exposes no known app factory")
 
 
-@unittest.skipUnless(HAS_SERVER and HAS_FASTAPI,
-                     "server tests need local_llm_kit.server and fastapi (both optional)")
+@unittest.skipUnless(
+    HAS_SERVER and HAS_FASTAPI, "server tests need local_llm_kit.server and fastapi (both optional)"
+)
 class TestOpenAIServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -101,10 +119,13 @@ class TestOpenAIServer(unittest.TestCase):
         cls.client = TestClient(cls.app)
 
     def test_chat_completions_echo(self):
-        resp = self.client.post("/v1/chat/completions", json={
-            "model": "echo-model",
-            "messages": [{"role": "user", "content": "hello server"}],
-        })
+        resp = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "echo-model",
+                "messages": [{"role": "user", "content": "hello server"}],
+            },
+        )
         self.assertEqual(resp.status_code, 200, msg=resp.text[:500])
         body = resp.json()
         content = body["choices"][0]["message"]["content"]
@@ -112,11 +133,15 @@ class TestOpenAIServer(unittest.TestCase):
         self.assertEqual(body["choices"][0]["message"]["role"], "assistant")
 
     def test_chat_completions_empty_messages_rejected_not_500(self):
-        resp = self.client.post("/v1/chat/completions", json={"model": "echo-model", "messages": []})
+        resp = self.client.post(
+            "/v1/chat/completions", json={"model": "echo-model", "messages": []}
+        )
         self.assertIn(resp.status_code, (200, 400, 422))
 
     def test_completions_echo(self):
-        resp = self.client.post("/v1/completions", json={"model": "echo-model", "prompt": "once upon"})
+        resp = self.client.post(
+            "/v1/completions", json={"model": "echo-model", "prompt": "once upon"}
+        )
         if resp.status_code == 404:
             self.skipTest("/v1/completions route not exposed")
         self.assertEqual(resp.status_code, 200, msg=resp.text[:500])

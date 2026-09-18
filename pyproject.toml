@@ -139,12 +139,12 @@ line-length = 100
 src = ["."]
 
 [tool.ruff.lint]
-# E/F = errors, I = isort, UP = pyupgrade (py39-safe), B = bugbear-style, ASYNC
-select = ["E", "F", "I", "UP", "B", "ASYNC"]
+# E/F = errors, I = isort, B = bugbear-style, ASYNC.
+# NOTE: pyupgrade (UP) rules are intentionally off: this codebase targets
+# Python 3.9 with `typing.Dict/List/Optional` + printf-style formatting as
+# its house style, and UP006-style rewrites fight that floor.
+select = ["E", "F", "I", "B", "ASYNC"]
 ignore = ["E501"]
-
-[tool.ruff.lint.pyupgrade]
-keep-runtime-typing = true
 
 [tool.black]
 line-length = 100

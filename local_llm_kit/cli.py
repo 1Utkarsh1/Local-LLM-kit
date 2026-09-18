@@ -29,7 +29,7 @@ import inspect
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
 try:
     import readline  # noqa: F401  (history + arrow keys on Unix; optional)
@@ -113,12 +113,13 @@ _FORCE_KEYS = ("force", "overwrite", "force_download")
 # Small utilities
 # ---------------------------------------------------------------------------
 
+
 def _eprint(msg: str) -> None:
     """Print a message to stderr."""
     print(msg, file=sys.stderr)
 
 
-def _fail(msg: str, code: int = 1) -> "NoReturn":  # type: ignore[name-defined]
+def _fail(msg: str, code: int = 1) -> NoReturn:
     """Print an error to stderr and exit. (Only used inside handlers.)"""
     _eprint("Error: {0}".format(msg))
     sys.exit(code)
@@ -128,6 +129,7 @@ def _get_version() -> str:
     """Return the package version without requiring optional dependencies."""
     try:
         from . import __version__ as _v
+
         return str(_v)
     except Exception:
         pass
@@ -179,10 +181,7 @@ def _load_json_value_or_file(value: str, name: str) -> Any:
     try:
         return json.loads(value)
     except json.JSONDecodeError:
-        _fail(
-            "{0} must be a path to a JSON file or inline JSON; "
-            "got: {1!r}".format(name, value)
-        )
+        _fail("{0} must be a path to a JSON file or inline JSON; " "got: {1!r}".format(name, value))
     return None  # unreachable
 
 
@@ -255,10 +254,7 @@ def _parse_choice(value: Optional[str], name: str) -> Optional[Any]:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        _fail(
-            "invalid {0} format: {1!r} "
-            "(expected 'auto', 'none', or JSON)".format(name, value)
-        )
+        _fail("invalid {0} format: {1!r} " "(expected 'auto', 'none', or JSON)".format(name, value))
     return None  # unreachable
 
 
@@ -323,9 +319,11 @@ def _build_backend_kwargs(args: argparse.Namespace) -> Dict[str, Any]:
     if backend == "transformers" and device:
         kwargs["device"] = device
 
-    base_url = getattr(args, "base_url", None) or os.environ.get(
-        "OPENAI_BASE_URL", ""
-    ) or os.environ.get("OLLAMA_HOST", "")
+    base_url = (
+        getattr(args, "base_url", None)
+        or os.environ.get("OPENAI_BASE_URL", "")
+        or os.environ.get("OLLAMA_HOST", "")
+    )
     if base_url and backend in ("ollama", "openai-compat", None):
         kwargs["base_url"] = base_url
     api_key = getattr(args, "api_key", None) or os.environ.get("OPENAI_API_KEY", "")
@@ -364,10 +362,15 @@ def _create_llm(args: argparse.Namespace, backend_kwargs: Dict[str, Any]) -> Any
             "Install extras, e.g.: pip install 'local-llm-kit[{2}]'".format(
                 backend or "auto",
                 missing,
-                "transformers" if backend == "transformers"
-                else "llamacpp" if backend == "llamacpp"
-                else "ollama" if backend in ("ollama", "openai-compat")
-                else "all",
+                (
+                    "transformers"
+                    if backend == "transformers"
+                    else (
+                        "llamacpp"
+                        if backend == "llamacpp"
+                        else "ollama" if backend in ("ollama", "openai-compat") else "all"
+                    )
+                ),
             )
         )
     except Exception as exc:  # noqa: BLE001 - CLI must report, not crash
@@ -424,9 +427,7 @@ def _chat_once(
                 kwargs["functions"] = functions
         elif "functions" in params:
             kwargs["functions"] = (
-                functions
-                if functions is not None
-                else [t["function"] for t in modern]
+                functions if functions is not None else [t["function"] for t in modern]
             )
         else:  # unknown signature: try modern, fall back on TypeError below
             kwargs["tools"] = modern
@@ -549,29 +550,34 @@ def _print_tool_calls_from_message(message: Dict[str, Any]) -> bool:
 # Argument parser
 # ---------------------------------------------------------------------------
 
+
 def _add_common_llm_args(parser: argparse.ArgumentParser, *, require_model: bool) -> None:
     """Shared model/backend/generation flags for chat/complete/embed."""
     parser.add_argument(
-        "--model", "-m",
+        "--model",
+        "-m",
         required=require_model,
         default=None,
         help="Path to the model, model ID, or model name.",
     )
     parser.add_argument(
-        "--backend", "-b",
+        "--backend",
+        "-b",
         choices=BACKEND_CHOICES,
         default=None,
         help="Backend to use: transformers, llamacpp, ollama, "
-             "openai-compat, echo (offline mock). Default: auto-detect.",
+        "openai-compat, echo (offline mock). Default: auto-detect.",
     )
     parser.add_argument(
-        "--temperature", "-t",
+        "--temperature",
+        "-t",
         type=float,
         default=0.7,
         help="Sampling temperature (default: 0.7).",
     )
     parser.add_argument(
-        "--max-tokens", "--max-new-tokens",
+        "--max-tokens",
+        "--max-new-tokens",
         dest="max_tokens",
         type=int,
         default=512,
@@ -581,7 +587,7 @@ def _add_common_llm_args(parser: argparse.ArgumentParser, *, require_model: bool
         "--base-url",
         default=None,
         help="Base URL for 'ollama' / 'openai-compat' backends "
-             "(also honors OPENAI_BASE_URL / OLLAMA_HOST).",
+        "(also honors OPENAI_BASE_URL / OLLAMA_HOST).",
     )
     parser.add_argument(
         "--api-key",
@@ -622,7 +628,8 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--version", "-V",
+        "--version",
+        "-V",
         action="store_true",
         help="Show the local-llm-kit version and exit.",
     )
@@ -635,41 +642,60 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_backend_tuning(chat_p)
     chat_p.add_argument("--system", "-s", default=None, help="System message.")
     chat_p.add_argument(
-        "--message", "-q", "--prompt",
+        "--message",
+        "-q",
+        "--prompt",
         dest="message",
         default=None,
         help="Send a single message non-interactively instead of opening the REPL.",
     )
-    chat_p.add_argument("--stream", dest="stream", action="store_true", default=False,
-                        help="Stream the response token by token.")
-    chat_p.add_argument("--no-stream", dest="stream", action="store_false",
-                        help="Disable streaming.")
-    chat_p.add_argument("--json", dest="json", action="store_true", default=False,
-                        help="Request JSON responses (legacy; prefer --response-format).")
+    chat_p.add_argument(
+        "--stream",
+        dest="stream",
+        action="store_true",
+        default=False,
+        help="Stream the response token by token.",
+    )
+    chat_p.add_argument(
+        "--no-stream", dest="stream", action="store_false", help="Disable streaming."
+    )
+    chat_p.add_argument(
+        "--json",
+        dest="json",
+        action="store_true",
+        default=False,
+        help="Request JSON responses (legacy; prefer --response-format).",
+    )
     chat_p.add_argument(
         "--response-format",
         default=None,
         help="Structured output: 'json', inline JSON, or a path to a JSON "
-             "schema / response_format file.",
+        "schema / response_format file.",
     )
-    chat_p.add_argument("--functions", "-f", default=None,
-                        help="Path to JSON file with legacy function definitions.")
+    chat_p.add_argument(
+        "--functions",
+        "-f",
+        default=None,
+        help="Path to JSON file with legacy function definitions.",
+    )
     chat_p.add_argument(
         "--tools",
         dest="tools",
         action="append",
         default=None,
         help="Path to a JSON file with OpenAI-style tool definitions. "
-             "May be given multiple times.",
+        "May be given multiple times.",
     )
     chat_p.add_argument(
-        "--function-call", default=None,
+        "--function-call",
+        default=None,
         help="Legacy call control: 'auto', 'none', or JSON like '{\"name\": \"fn\"}'.",
     )
     chat_p.add_argument(
-        "--tool-choice", default=None,
+        "--tool-choice",
+        default=None,
         help="Modern call control: 'auto', 'none', 'required', or JSON like "
-             "'{\"type\": \"function\", \"function\": {\"name\": \"fn\"}}'.",
+        '\'{"type": "function", "function": {"name": "fn"}}\'.',
     )
     chat_p.add_argument(
         "--execute-tools",
@@ -677,65 +703,110 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Allow the model to trigger tool calls (single-turn executor). "
-             "Tools declared in JSON files carry schemas only, so calls are "
-             "displayed; locally registered implementations are executed.",
+        "Tools declared in JSON files carry schemas only, so calls are "
+        "displayed; locally registered implementations are executed.",
     )
     chat_p.add_argument(
-        "--no-execute-tools", dest="execute_tools", action="store_false",
+        "--no-execute-tools",
+        dest="execute_tools",
+        action="store_false",
         help="Never execute tool calls (display them only).",
     )
     chat_p.add_argument("--top-p", type=float, default=None, help="Top-p sampling.")
     chat_p.add_argument("--top-k", type=int, default=None, help="Top-k sampling.")
-    chat_p.add_argument("--repetition-penalty", type=float, default=None,
-                        help="Repetition penalty.")
-    chat_p.add_argument("--logprobs", action="store_true", default=False,
-                        help="Request log probabilities (if backend supports them).")
+    chat_p.add_argument(
+        "--repetition-penalty", type=float, default=None, help="Repetition penalty."
+    )
+    chat_p.add_argument(
+        "--logprobs",
+        action="store_true",
+        default=False,
+        help="Request log probabilities (if backend supports them).",
+    )
 
     # -- complete --------------------------------------------------------
     comp_p = sub.add_parser("complete", help="Complete a prompt (one-shot).")
     _add_common_llm_args(comp_p, require_model=True)
     _add_common_backend_tuning(comp_p)
-    comp_p.add_argument("--prompt", "-p", default=None,
-                        help="Prompt to complete (reads from stdin if omitted).")
-    comp_p.add_argument("--stream", dest="stream", action="store_true", default=False,
-                        help="Stream the response token by token.")
-    comp_p.add_argument("--no-stream", dest="stream", action="store_false",
-                        help="Disable streaming.")
-    comp_p.add_argument("--json", dest="json", action="store_true", default=False,
-                        help="Request JSON output (legacy; prefer --response-format).")
-    comp_p.add_argument("--response-format", default=None,
-                        help="Structured output: 'json', inline JSON, or a path "
-                             "to a JSON schema file.")
+    comp_p.add_argument(
+        "--prompt", "-p", default=None, help="Prompt to complete (reads from stdin if omitted)."
+    )
+    comp_p.add_argument(
+        "--stream",
+        dest="stream",
+        action="store_true",
+        default=False,
+        help="Stream the response token by token.",
+    )
+    comp_p.add_argument(
+        "--no-stream", dest="stream", action="store_false", help="Disable streaming."
+    )
+    comp_p.add_argument(
+        "--json",
+        dest="json",
+        action="store_true",
+        default=False,
+        help="Request JSON output (legacy; prefer --response-format).",
+    )
+    comp_p.add_argument(
+        "--response-format",
+        default=None,
+        help="Structured output: 'json', inline JSON, or a path " "to a JSON schema file.",
+    )
 
     # -- serve -----------------------------------------------------------
-    serve_p = sub.add_parser(
-        "serve", help="Serve a model over HTTP (OpenAI-compatible API)."
+    serve_p = sub.add_parser("serve", help="Serve a model over HTTP (OpenAI-compatible API).")
+    serve_p.add_argument(
+        "--model",
+        "-m",
+        default=None,
+        help="Model path or ID to serve (backend default if omitted).",
     )
-    serve_p.add_argument("--model", "-m", default=None,
-                         help="Model path or ID to serve (backend default if omitted).")
-    serve_p.add_argument("--backend", "-b", choices=BACKEND_CHOICES, default=None,
-                         help="Backend to serve with (default: auto-detect).")
+    serve_p.add_argument(
+        "--backend",
+        "-b",
+        choices=BACKEND_CHOICES,
+        default=None,
+        help="Backend to serve with (default: auto-detect).",
+    )
     serve_p.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1).")
     serve_p.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000).")
     serve_p.add_argument("--device", default=None, help="Device for transformers.")
-    serve_p.add_argument("--gpu-layers", type=int, default=None,
-                         help="GPU layers for llama.cpp.")
+    serve_p.add_argument("--gpu-layers", type=int, default=None, help="GPU layers for llama.cpp.")
     serve_p.add_argument("--base-url", default=None, help="Upstream base URL (for proxy backends).")
     serve_p.add_argument("--api-key", default=None, help="Upstream API key (for proxy backends).")
-    serve_p.add_argument("--reload", action="store_true", default=False,
-                         help="Enable uvicorn auto-reload (development only).")
+    serve_p.add_argument(
+        "--reload",
+        action="store_true",
+        default=False,
+        help="Enable uvicorn auto-reload (development only).",
+    )
 
     # -- pull ------------------------------------------------------------
     pull_p = sub.add_parser("pull", help="Download a model (e.g. from Hugging Face).")
-    pull_p.add_argument("model_pos", nargs="?", default=None, metavar="MODEL",
-                        help="Model ID or URL to download.")
-    pull_p.add_argument("--model", "-m", dest="model_flag", default=None,
-                        help="Model ID or URL (alternative to the positional arg).")
-    pull_p.add_argument("--output-dir", "-o", default=None,
-                        help="Directory to download into (default: helper default).")
+    pull_p.add_argument(
+        "model_pos", nargs="?", default=None, metavar="MODEL", help="Model ID or URL to download."
+    )
+    pull_p.add_argument(
+        "--model",
+        "-m",
+        dest="model_flag",
+        default=None,
+        help="Model ID or URL (alternative to the positional arg).",
+    )
+    pull_p.add_argument(
+        "--output-dir",
+        "-o",
+        default=None,
+        help="Directory to download into (default: helper default).",
+    )
     pull_p.add_argument("--revision", default=None, help="Git revision / tag to fetch.")
-    pull_p.add_argument("--force", action="store_true", default=False,
-                        help="Re-download even if the model is already cached.")
+    pull_p.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Re-download even if the model is already cached.",
+    )
 
     # -- list ------------------------------------------------------------
     list_p = sub.add_parser(
@@ -743,20 +814,33 @@ def build_parser() -> argparse.ArgumentParser:
         aliases=["list-models", "models"],
         help="List cached/downloaded models.",
     )
-    list_p.add_argument("--json", dest="json", action="store_true", default=False,
-                        help="Emit machine-readable JSON instead of a human-readable list.")
+    list_p.add_argument(
+        "--json",
+        dest="json",
+        action="store_true",
+        default=False,
+        help="Emit machine-readable JSON instead of a human-readable list.",
+    )
 
     # -- embed -----------------------------------------------------------
     embed_p = sub.add_parser("embed", help="Generate embeddings for text (JSON output).")
     _add_common_llm_args(embed_p, require_model=True)
     _add_common_backend_tuning(embed_p)
-    embed_p.add_argument("inputs", nargs="*", metavar="TEXT",
-                         help="Text(s) to embed (alternative to --text).")
-    embed_p.add_argument("--text", dest="text", action="append", default=None,
-                         help="Text to embed. May be given multiple times.")
-    embed_p.add_argument("--input-file", default=None,
-                         help="Read input texts from a file (one per non-empty line), "
-                              "or '-' for stdin.")
+    embed_p.add_argument(
+        "inputs", nargs="*", metavar="TEXT", help="Text(s) to embed (alternative to --text)."
+    )
+    embed_p.add_argument(
+        "--text",
+        dest="text",
+        action="append",
+        default=None,
+        help="Text to embed. May be given multiple times.",
+    )
+    embed_p.add_argument(
+        "--input-file",
+        default=None,
+        help="Read input texts from a file (one per non-empty line), " "or '-' for stdin.",
+    )
 
     return parser
 
@@ -765,15 +849,15 @@ def build_parser() -> argparse.ArgumentParser:
 # Command handlers
 # ---------------------------------------------------------------------------
 
-def handle_chat_command(args: argparse.Namespace,
-                        backend_kwargs: Optional[Dict[str, Any]] = None) -> None:
+
+def handle_chat_command(
+    args: argparse.Namespace, backend_kwargs: Optional[Dict[str, Any]] = None
+) -> None:
     """Handle the chat command (interactive REPL or one-shot --message)."""
     if backend_kwargs is None:
         backend_kwargs = _build_backend_kwargs(args)
 
-    functions, tools = _load_tools(
-        getattr(args, "functions", None), getattr(args, "tools", None)
-    )
+    functions, tools = _load_tools(getattr(args, "functions", None), getattr(args, "tools", None))
     legacy_choice = _parse_choice(getattr(args, "function_call", None), "--function-call")
     modern_choice = _parse_choice(getattr(args, "tool_choice", None), "--tool-choice")
     tool_choice = modern_choice if modern_choice is not None else legacy_choice
@@ -820,11 +904,18 @@ def handle_chat_command(args: argparse.Namespace,
             print("Assistant: ", end="", flush=True)
             acc = ""
             chunks = _chat_once(
-                llm, messages, functions=functions, tools=tools,
-                tool_choice=tool_choice, legacy_format=legacy_format,
-                modern_format=modern_format, temperature=temperature,
-                max_tokens=max_tokens, stream=True,
-                execute_tools=execute_tools, logprobs=logprobs,
+                llm,
+                messages,
+                functions=functions,
+                tools=tools,
+                tool_choice=tool_choice,
+                legacy_format=legacy_format,
+                modern_format=modern_format,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+                execute_tools=execute_tools,
+                logprobs=logprobs,
             )
             try:
                 for chunk in chunks:
@@ -853,9 +944,7 @@ def handle_chat_command(args: argparse.Namespace,
 
     # -- interactive REPL ---------------------------------------------------
     print(
-        "Chat with {0} (type 'exit' or 'quit' to end, 'clear' to reset history)".format(
-            args.model
-        )
+        "Chat with {0} (type 'exit' or 'quit' to end, 'clear' to reset history)".format(args.model)
     )
     try:
         while True:
@@ -880,11 +969,18 @@ def handle_chat_command(args: argparse.Namespace,
                 print("\nAssistant: ", end="", flush=True)
                 acc_text = ""
                 chunks = _chat_once(
-                    llm, messages, functions=functions, tools=tools,
-                    tool_choice=tool_choice, legacy_format=legacy_format,
-                    modern_format=modern_format, temperature=temperature,
-                    max_tokens=max_tokens, stream=True,
-                    execute_tools=execute_tools, logprobs=logprobs,
+                    llm,
+                    messages,
+                    functions=functions,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    legacy_format=legacy_format,
+                    modern_format=modern_format,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=True,
+                    execute_tools=execute_tools,
+                    logprobs=logprobs,
                 )
                 try:
                     for chunk in chunks:
@@ -901,11 +997,18 @@ def handle_chat_command(args: argparse.Namespace,
             else:
                 try:
                     response = _chat_once(
-                        llm, messages, functions=functions, tools=tools,
-                        tool_choice=tool_choice, legacy_format=legacy_format,
-                        modern_format=modern_format, temperature=temperature,
-                        max_tokens=max_tokens, stream=False,
-                        execute_tools=execute_tools, logprobs=logprobs,
+                        llm,
+                        messages,
+                        functions=functions,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        legacy_format=legacy_format,
+                        modern_format=modern_format,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=False,
+                        execute_tools=execute_tools,
+                        logprobs=logprobs,
                     )
                 except Exception as exc:  # noqa: BLE001
                     print("\nError: {0}".format(exc))
@@ -920,8 +1023,9 @@ def handle_chat_command(args: argparse.Namespace,
         print("\nExiting chat...")
 
 
-def handle_completion_command(args: argparse.Namespace,
-                              backend_kwargs: Optional[Dict[str, Any]] = None) -> None:
+def handle_completion_command(
+    args: argparse.Namespace, backend_kwargs: Optional[Dict[str, Any]] = None
+) -> None:
     """Handle the completion command."""
     if backend_kwargs is None:
         backend_kwargs = _build_backend_kwargs(args)
@@ -948,9 +1052,13 @@ def handle_completion_command(args: argparse.Namespace,
     if stream:
         print("Completion: ", end="", flush=True)
         chunks = _complete_once(
-            llm, prompt, legacy_format=legacy_format, modern_format=modern_format,
+            llm,
+            prompt,
+            legacy_format=legacy_format,
+            modern_format=modern_format,
             temperature=getattr(args, "temperature", 0.7),
-            max_tokens=getattr(args, "max_tokens", 512), stream=True,
+            max_tokens=getattr(args, "max_tokens", 512),
+            stream=True,
         )
         try:
             for chunk in chunks:
@@ -963,9 +1071,13 @@ def handle_completion_command(args: argparse.Namespace,
     else:
         try:
             response = _complete_once(
-                llm, prompt, legacy_format=legacy_format, modern_format=modern_format,
+                llm,
+                prompt,
+                legacy_format=legacy_format,
+                modern_format=modern_format,
                 temperature=getattr(args, "temperature", 0.7),
-                max_tokens=getattr(args, "max_tokens", 512), stream=False,
+                max_tokens=getattr(args, "max_tokens", 512),
+                stream=False,
             )
         except Exception as exc:  # noqa: BLE001
             _fail("completion failed: {0}".format(exc))
@@ -975,8 +1087,9 @@ def handle_completion_command(args: argparse.Namespace,
             _fail("backend returned an unexpected response: {0!r}".format(response))
 
 
-def _instantiate_app(create_app: Any, args: argparse.Namespace,
-                     backend_kwargs: Dict[str, Any]) -> Any:
+def _instantiate_app(
+    create_app: Any, args: argparse.Namespace, backend_kwargs: Dict[str, Any]
+) -> Any:
     """Call server.create_app compatibly across signature variants."""
     try:
         params = set(inspect.signature(create_app).parameters)
@@ -1041,20 +1154,20 @@ def handle_serve_command(args: argparse.Namespace) -> None:
 
     host = getattr(args, "host", "127.0.0.1") or "127.0.0.1"
     port = int(getattr(args, "port", 8000) or 8000)
-    print("Serving model {0!r} on http://{1}:{2}".format(
-        getattr(args, "model", None) or "(backend default)", host, port
-    ))
+    print(
+        "Serving model {0!r} on http://{1}:{2}".format(
+            getattr(args, "model", None) or "(backend default)", host, port
+        )
+    )
     try:
-        uvicorn.run(app, host=host, port=port,
-                    reload=bool(getattr(args, "reload", False)))
+        uvicorn.run(app, host=host, port=port, reload=bool(getattr(args, "reload", False)))
     except KeyboardInterrupt:
         print("\nServer stopped.")
 
 
-def _adapt_download_call(func: Any, model: str,
-                         output_dir: Optional[str],
-                         revision: Optional[str],
-                         force: bool) -> Any:
+def _adapt_download_call(
+    func: Any, model: str, output_dir: Optional[str], revision: Optional[str], force: bool
+) -> Any:
     """Invoke a models.py download helper across signature variants."""
     try:
         sig = inspect.signature(func)
@@ -1085,9 +1198,10 @@ def _adapt_download_call(func: Any, model: str,
     else:
         # Single positional parameter with an unfamiliar name.
         positional_params = [
-            p for p in params.values()
-            if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                          inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            p
+            for p in params.values()
+            if p.kind
+            in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
         ]
         if len(positional_params) == 1 and len(params) == 1:
             return func(model)
@@ -1137,7 +1251,8 @@ def handle_pull_command(args: argparse.Namespace) -> None:
     print("Downloading model {0!r}...".format(model))
     try:
         result = _adapt_download_call(
-            func, model,
+            func,
+            model,
             getattr(args, "output_dir", None),
             getattr(args, "revision", None),
             bool(getattr(args, "force", False)),
@@ -1330,9 +1445,7 @@ def _embed_texts(llm: Any, texts: List[str]) -> List[List[float]]:
     except Exception:  # noqa: BLE001
         pass
     detail = "; ".join(attempts) if attempts else "no embedding method found"
-    _fail(
-        "this backend/model does not expose embeddings ({0}).".format(detail)
-    )
+    _fail("this backend/model does not expose embeddings ({0}).".format(detail))
     return []  # unreachable
 
 
@@ -1374,8 +1487,7 @@ def handle_embed_command(args: argparse.Namespace) -> None:
         "object": "list",
         "model": getattr(args, "model", None),
         "data": [
-            {"object": "embedding", "index": i, "embedding": vec}
-            for i, vec in enumerate(vectors)
+            {"object": "embedding", "index": i, "embedding": vec} for i, vec in enumerate(vectors)
         ],
     }
     print(json.dumps(payload))
@@ -1384,6 +1496,7 @@ def handle_embed_command(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
+
 
 def main(argv: Optional[List[str]] = None) -> int:
     """Main CLI entrypoint. Returns a process exit code."""

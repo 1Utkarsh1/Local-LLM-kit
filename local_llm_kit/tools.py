@@ -21,6 +21,7 @@ Example:
         tool_choice="auto",
     )
 """
+
 import inspect
 import json
 import logging
@@ -82,7 +83,7 @@ def function_to_json_schema(func: Callable) -> Dict[str, Any]:
             if hasattr(annotation, "model_json_schema"):
                 prop = annotation.model_json_schema()  # type: ignore
             elif hasattr(annotation, "schema") and inspect.isclass(annotation):
-                maybe = getattr(annotation, "schema")
+                maybe = annotation.schema
                 if callable(maybe):
                     prop = maybe()
         except Exception:
@@ -146,7 +147,10 @@ class ToolCall:
     ):
         self.name = name
         self.arguments = arguments
-        self.id = call_id or f"call_{abs(hash((name, json.dumps(arguments, sort_keys=True)))) % 10**8:08d}"
+        self.id = (
+            call_id
+            or f"call_{abs(hash((name, json.dumps(arguments, sort_keys=True)))) % 10**8:08d}"
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -194,10 +198,7 @@ class ToolRegistry(FunctionRegistry):
 
     def get_tool_list(self) -> List[Dict[str, Any]]:
         """Return registered functions as OpenAI-style ``tools`` list."""
-        return [
-            {"type": "function", "function": dict(schema)}
-            for schema in self.get_schema_list()
-        ]
+        return [{"type": "function", "function": dict(schema)} for schema in self.get_schema_list()]
 
 
 def normalize_tools(
@@ -294,8 +295,9 @@ def parse_tool_calls(text: str) -> List[ToolCall]:
                         args = item.get("arguments", {})
                         if isinstance(args, str):
                             args = json.loads(args) if args.strip() else {}
-                        calls.append(ToolCall(name=item["name"], arguments=args,
-                                              call_id=item.get("id")))
+                        calls.append(
+                            ToolCall(name=item["name"], arguments=args, call_id=item.get("id"))
+                        )
                 if calls:
                     return calls
             except (json.JSONDecodeError, KeyError, TypeError):

@@ -11,11 +11,11 @@ Usage:
     python examples/rag_minimal.py --query "Where is the Eiffel Tower?"
     python examples/rag_minimal.py --backend ollama --model llama3.2:3b --query "..."
 """
+
 import argparse
 
 from local_llm_kit import LLM
 from local_llm_kit.rag import SimpleVectorStore, build_rag_prompt, chunk_text
-
 
 DOCS = [
     "Paris is the capital of France. The Eiffel Tower is located in Paris on the Champ de Mars.",
@@ -28,8 +28,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Minimal RAG demo (offline)")
     ap.add_argument("--model", "-m", default="echo", help="Model path/name")
     ap.add_argument("--backend", "-b", default="echo", help="Backend (default: echo)")
-    ap.add_argument("--query", "-q", default="Where is the Eiffel Tower?",
-                    help="Question to ask")
+    ap.add_argument("--query", "-q", default="Where is the Eiffel Tower?", help="Question to ask")
     ap.add_argument("--top-k", type=int, default=2, help="Chunks to retrieve")
     args = ap.parse_args()
 

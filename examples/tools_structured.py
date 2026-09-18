@@ -8,6 +8,7 @@ Usage:
     python examples/tools_structured.py
     python examples/tools_structured.py --backend ollama --model llama3.2:3b
 """
+
 import argparse
 import json
 
@@ -50,13 +51,16 @@ def chat_with_tools(llm: LLM):
 
 
 def chat_structured(llm: LLM):
-    messages = [{"role": "user",
-                 "content": "Return Paris weather as JSON with keys name/temperature/unit."}]
+    messages = [
+        {"role": "user", "content": "Return Paris weather as JSON with keys name/temperature/unit."}
+    ]
     try:
         return llm.chat(
             messages=messages,
-            response_format={"type": "json_schema",
-                             "json_schema": {"name": "city", "schema": CITY_SCHEMA}},
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "city", "schema": CITY_SCHEMA},
+            },
         )
     except TypeError:
         return llm.chat(messages=messages, format="json")

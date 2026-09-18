@@ -7,6 +7,7 @@ not landed yet. Stdlib unittest only; no downloads, no numpy/torch.
 
 Run: python -m pytest tests/test_rag.py -q
 """
+
 import os
 import re
 import tempfile
@@ -18,6 +19,7 @@ for _candidate in ("local_llm_kit.rag", "local_llm_kit.retrieval"):
     try:
         __import__(_candidate)
         import sys as _sys
+
         RAG_MOD = _sys.modules[_candidate]
         break
     except ImportError:
@@ -129,8 +131,10 @@ class TestChunkText(unittest.TestCase):
         chunks = call_chunk(text, chunk_size=50, overlap=0)
         joined_space = _norm(" ".join(chunks))
         joined_bare = _norm("".join(chunks))
-        self.assertTrue(joined_space == _norm(text) or joined_bare == _norm(text),
-                        msg="chunks do not reassemble the original text")
+        self.assertTrue(
+            joined_space == _norm(text) or joined_bare == _norm(text),
+            msg="chunks do not reassemble the original text",
+        )
 
     def test_overlap_adds_redundancy_and_shares_content(self):
         text = " ".join("word%d" % i for i in range(200))
@@ -141,7 +145,9 @@ class TestChunkText(unittest.TestCase):
         for first, second in zip(overlapped, overlapped[1:]):
             words = set(first.split()) & set(second.split())
             bare = "".join(first.split())
-            if words or any(bare[i:i + 3] in "".join(second.split()) for i in range(max(0, len(bare) - 3))):
+            if words or any(
+                bare[i : i + 3] in "".join(second.split()) for i in range(max(0, len(bare) - 3))
+            ):
                 shared = True
                 break
         self.assertTrue(shared, msg="overlapping chunks share no content")
@@ -159,8 +165,9 @@ class TestChunkText(unittest.TestCase):
 
     def test_deterministic(self):
         text = " ".join("word%d" % i for i in range(100))
-        self.assertEqual(call_chunk(text, chunk_size=20, overlap=5),
-                         call_chunk(text, chunk_size=20, overlap=5))
+        self.assertEqual(
+            call_chunk(text, chunk_size=20, overlap=5), call_chunk(text, chunk_size=20, overlap=5)
+        )
 
 
 @unittest.skipUnless(HAS_STORE, "local_llm_kit.rag.SimpleVectorStore not available yet")
@@ -244,11 +251,18 @@ class TestRagStaysLight(unittest.TestCase):
     def test_rag_import_pulls_no_torch(self):
         import subprocess as _sp
         import sys as _sys
+
         mod = RAG_MOD.__name__
-        code = ("import sys; import %s; "
-                "print(','.join(m for m in ('torch', 'transformers') if m in sys.modules))" % mod)
-        out = _sp.run([_sys.executable, "-c", code], capture_output=True, text=True,
-                      cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        code = (
+            "import sys; import %s; "
+            "print(','.join(m for m in ('torch', 'transformers') if m in sys.modules))" % mod
+        )
+        out = _sp.run(
+            [_sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        )
         self.assertEqual(out.returncode, 0, msg=out.stderr[-2000:])
         self.assertEqual(out.stdout.strip(), "")
 

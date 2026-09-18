@@ -8,17 +8,22 @@ Usage:
     python examples/vision_chat.py --image https://example.com/cat.jpg --prompt "What is in this image?"
     python examples/vision_chat.py --backend openai-compat --model llava --base-url http://localhost:8080/v1
 """
+
 import argparse
 
-TEXT_FALLBACK_NOTE = ("(vision not supported by this backend/model; "
-                      "answered from text part only)")
+TEXT_FALLBACK_NOTE = "(vision not supported by this backend/model; " "answered from text part only)"
 
 
 def build_messages(prompt: str, image_url: str):
-    return [{"role": "user", "content": [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": image_url}},
-    ]}]
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": image_url}},
+            ],
+        }
+    ]
 
 
 def main() -> None:
@@ -26,10 +31,12 @@ def main() -> None:
     ap.add_argument("--model", "-m", default="echo", help="Model path/name")
     ap.add_argument("--backend", "-b", default="echo", help="Backend (default: echo)")
     ap.add_argument("--base-url", default=None, help="Base URL for openai-compat/ollama")
-    ap.add_argument("--image", default="https://example.com/cat.jpg",
-                    help="Image URL (or data: URI)")
-    ap.add_argument("--prompt", "-p", default="What is in this image?",
-                    help="Text accompanying the image")
+    ap.add_argument(
+        "--image", default="https://example.com/cat.jpg", help="Image URL (or data: URI)"
+    )
+    ap.add_argument(
+        "--prompt", "-p", default="What is in this image?", help="Text accompanying the image"
+    )
     args = ap.parse_args()
 
     from local_llm_kit import LLM

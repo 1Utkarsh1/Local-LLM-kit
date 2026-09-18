@@ -7,12 +7,12 @@ torch/transformers. Python 3.9 compatible.
 
 Run: python -m pytest tests/test_tools.py -q
 """
-import inspect
+
 import json
 import subprocess
 import sys
 import unittest
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 from local_llm_kit.tools import (
     FunctionCall,
@@ -21,7 +21,6 @@ from local_llm_kit.tools import (
     ToolRegistry,
     function_to_json_schema,
     normalize_tools,
-    parse_function_calls,
     parse_tool_calls,
     should_call_tools,
     tool,
@@ -30,6 +29,7 @@ from local_llm_kit.tools import (
 
 def _repo_root():
     import os
+
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -45,10 +45,18 @@ class TestCoreStaysLight(unittest.TestCase):
         )
         out = subprocess.run(
             [sys.executable, "-c", code],
-            capture_output=True, text=True, cwd=_repo_root(),
+            capture_output=True,
+            text=True,
+            cwd=_repo_root(),
         )
-        self.assertEqual(out.returncode, 0, msg="import local_llm_kit.tools failed offline: %s" % out.stderr[-2000:])
-        self.assertEqual(out.stdout.strip(), "", msg="heavy dep imported at core import: %s" % out.stdout.strip())
+        self.assertEqual(
+            out.returncode,
+            0,
+            msg="import local_llm_kit.tools failed offline: %s" % out.stderr[-2000:],
+        )
+        self.assertEqual(
+            out.stdout.strip(), "", msg="heavy dep imported at core import: %s" % out.stdout.strip()
+        )
 
 
 class TestFunctionToJsonSchema(unittest.TestCase):
@@ -65,8 +73,9 @@ class TestFunctionToJsonSchema(unittest.TestCase):
         self.assertEqual(props["flag"]["type"], "boolean")
         self.assertEqual(props["meta"]["type"], "object")
         self.assertEqual(props["tags"]["type"], "array")
-        self.assertEqual(sorted(schema["required"]),
-                         ["count", "flag", "meta", "name", "ratio", "tags"])
+        self.assertEqual(
+            sorted(schema["required"]), ["count", "flag", "meta", "name", "ratio", "tags"]
+        )
 
     def test_defaults_become_optional_with_default(self):
         def fn(location: str, unit: str = "celsius", limit: int = 5):
@@ -171,8 +180,14 @@ class TestNormalizeTools(unittest.TestCase):
         self.assertEqual(normalize_tools(tools=None, functions=None), [])
 
     def test_openai_dict_passes_through(self):
-        spec = {"type": "function", "function": {"name": "w", "description": "d",
-                "parameters": {"type": "object", "properties": {}}}}
+        spec = {
+            "type": "function",
+            "function": {
+                "name": "w",
+                "description": "d",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
         self.assertEqual(normalize_tools(tools=[spec]), [spec])
 
     def test_bare_function_spec_gets_wrapped(self):
@@ -203,25 +218,48 @@ class TestNormalizeTools(unittest.TestCase):
         self.assertEqual(out[0]["function"]["parameters"]["required"], ["query"])
 
     def test_legacy_functions_are_merged_and_wrapped(self):
-        legacy = [{"name": "old_fn", "description": "legacy",
-                   "parameters": {"type": "object", "properties": {}}}]
+        legacy = [
+            {
+                "name": "old_fn",
+                "description": "legacy",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ]
         out = normalize_tools(functions=legacy)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["type"], "function")
         self.assertEqual(out[0]["function"]["name"], "old_fn")
 
     def test_dedupe_last_wins(self):
-        a = {"type": "function", "function": {"name": "dup", "description": "first",
-             "parameters": {"type": "object", "properties": {}}}}
-        b = {"type": "function", "function": {"name": "dup", "description": "second",
-             "parameters": {"type": "object", "properties": {}}}}
+        a = {
+            "type": "function",
+            "function": {
+                "name": "dup",
+                "description": "first",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        b = {
+            "type": "function",
+            "function": {
+                "name": "dup",
+                "description": "second",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
         out = normalize_tools(tools=[a, b])
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["function"]["description"], "second")
 
     def test_tools_and_functions_combine(self):
-        t = {"type": "function", "function": {"name": "new", "description": "",
-             "parameters": {"type": "object", "properties": {}}}}
+        t = {
+            "type": "function",
+            "function": {
+                "name": "new",
+                "description": "",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
         f = {"name": "old", "description": "", "parameters": {"type": "object", "properties": {}}}
         out = normalize_tools(tools=[t], functions=[f])
         self.assertEqual(sorted(x["function"]["name"] for x in out), ["new", "old"])
@@ -229,8 +267,15 @@ class TestNormalizeTools(unittest.TestCase):
 
 class TestParseToolCalls(unittest.TestCase):
     def test_openai_tool_calls_json_with_string_args(self):
-        payload = {"tool_calls": [{"id": "call_1", "type": "function",
-                                   "function": {"name": "w", "arguments": json.dumps({"q": 1})}}]}
+        payload = {
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "w", "arguments": json.dumps({"q": 1})},
+                }
+            ]
+        }
         calls = parse_tool_calls(json.dumps(payload))
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].name, "w")
@@ -238,25 +283,35 @@ class TestParseToolCalls(unittest.TestCase):
         self.assertEqual(calls[0].id, "call_1")
 
     def test_openai_tool_calls_json_with_dict_args(self):
-        payload = {"tool_calls": [{"id": "call_2", "type": "function",
-                                   "function": {"name": "w", "arguments": {"q": 2}}}]}
+        payload = {
+            "tool_calls": [
+                {
+                    "id": "call_2",
+                    "type": "function",
+                    "function": {"name": "w", "arguments": {"q": 2}},
+                }
+            ]
+        }
         calls = parse_tool_calls(json.dumps(payload))
         self.assertEqual(calls[0].arguments, {"q": 2})
 
     def test_single_tool_call_tag(self):
-        text = ('Thinking... <tool_call>{"name": "get_weather", '
-                '"arguments": {"location": "Paris"}}</tool_call> done.')
+        text = (
+            'Thinking... <tool_call>{"name": "get_weather", '
+            '"arguments": {"location": "Paris"}}</tool_call> done.'
+        )
         calls = parse_tool_calls(text)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].name, "get_weather")
         self.assertEqual(calls[0].arguments, {"location": "Paris"})
 
     def test_parallel_tool_call_tag_array(self):
-        text = ('<tool_call>[{"name": "a", "arguments": {}}, '
-                '{"name": "b", "arguments": {"x": 1}}]</tool_call>')
+        text = (
+            '<tool_call>[{"name": "a", "arguments": {}}, '
+            '{"name": "b", "arguments": {"x": 1}}]</tool_call>'
+        )
         calls = parse_tool_calls(text)
-        self.assertEqual([(c.name, c.arguments) for c in calls],
-                         [("a", {}), ("b", {"x": 1})])
+        self.assertEqual([(c.name, c.arguments) for c in calls], [("a", {}), ("b", {"x": 1})])
 
     def test_tool_calls_bracket_block(self):
         text = '[TOOL_CALLS][{"name": "a", "arguments": {}}][/TOOL_CALLS]'
@@ -265,11 +320,15 @@ class TestParseToolCalls(unittest.TestCase):
         self.assertEqual(calls[0].name, "a")
 
     def test_bare_name_arguments_json_fallback(self):
-        calls = parse_tool_calls(json.dumps({"name": "get_weather", "arguments": {"location": "Paris"}}))
+        calls = parse_tool_calls(
+            json.dumps({"name": "get_weather", "arguments": {"location": "Paris"}})
+        )
         self.assertEqual(calls[0].name, "get_weather")
 
     def test_legacy_function_call_syntax_fallback(self):
-        calls = parse_tool_calls('function_call({"name": "calculate", "arguments": {"expression": "5+7"}})')
+        calls = parse_tool_calls(
+            'function_call({"name": "calculate", "arguments": {"expression": "5+7"}})'
+        )
         self.assertEqual(calls[0].name, "calculate")
         self.assertEqual(calls[0].arguments["expression"], "5+7")
 
@@ -351,10 +410,11 @@ class TestToolRegistry(unittest.TestCase):
         def impl(x, y=0):
             return x + y
 
-        reg.add_function(name="adder",
-                         schema={"name": "adder", "description": "",
-                                 "parameters": {"type": "object"}},
-                         implementation=impl)
+        reg.add_function(
+            name="adder",
+            schema={"name": "adder", "description": "", "parameters": {"type": "object"}},
+            implementation=impl,
+        )
         self.assertTrue(reg.has_function("adder"))
         self.assertEqual(reg.execute("adder", {"x": 2, "y": 3}), 5)
 

@@ -110,8 +110,14 @@ class OllamaBackend(BaseBackend):
             )
             return {"text": text, "finish_reason": "stop", "model": self.model}
         payload = self._generate_payload(
-            prompt, temperature, max_new_tokens, top_p, top_k,
-            repetition_penalty, stream=False, **kwargs,
+            prompt,
+            temperature,
+            max_new_tokens,
+            top_p,
+            top_k,
+            repetition_penalty,
+            stream=False,
+            **kwargs,
         )
         resp = self._post_json(_GENERATE_PATH, payload)
         return {
@@ -134,8 +140,14 @@ class OllamaBackend(BaseBackend):
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
         payload = self._generate_payload(
-            prompt, temperature, max_new_tokens, top_p, top_k,
-            repetition_penalty, stream=True, **kwargs,
+            prompt,
+            temperature,
+            max_new_tokens,
+            top_p,
+            top_k,
+            repetition_penalty,
+            stream=True,
+            **kwargs,
         )
         for obj in self._post_json_lines(_GENERATE_PATH, payload):
             text = obj.get("response", "")
@@ -164,10 +176,16 @@ class OllamaBackend(BaseBackend):
         if stream:
             chunks = list(
                 self.chat_stream(
-                    messages, temperature=temperature,
-                    max_new_tokens=max_new_tokens, top_p=top_p, top_k=top_k,
-                    repetition_penalty=repetition_penalty, stop=stop,
-                    tools=tools, response_format=response_format, **kwargs,
+                    messages,
+                    temperature=temperature,
+                    max_new_tokens=max_new_tokens,
+                    top_p=top_p,
+                    top_k=top_k,
+                    repetition_penalty=repetition_penalty,
+                    stop=stop,
+                    tools=tools,
+                    response_format=response_format,
+                    **kwargs,
                 )
             )
             text = "".join(c.get("text", "") for c in chunks)
@@ -176,15 +194,25 @@ class OllamaBackend(BaseBackend):
                 if c.get("tool_calls"):
                     tool_calls = c["tool_calls"]
             result: Dict[str, Any] = {
-                "text": text, "finish_reason": "stop", "model": self.model,
+                "text": text,
+                "finish_reason": "stop",
+                "model": self.model,
             }
             if tool_calls:
                 result["tool_calls"] = tool_calls
             return result
         payload = self._chat_payload(
-            messages, temperature, max_new_tokens, top_p, top_k,
-            repetition_penalty, stream=False, stop=stop,
-            tools=tools, response_format=response_format, **kwargs,
+            messages,
+            temperature,
+            max_new_tokens,
+            top_p,
+            top_k,
+            repetition_penalty,
+            stream=False,
+            stop=stop,
+            tools=tools,
+            response_format=response_format,
+            **kwargs,
         )
         resp = self._post_json(_CHAT_PATH, payload)
         message = resp.get("message", {}) or {}
@@ -210,9 +238,17 @@ class OllamaBackend(BaseBackend):
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
         payload = self._chat_payload(
-            messages, temperature, max_new_tokens, top_p, top_k,
-            repetition_penalty, stream=True, stop=stop,
-            tools=tools, response_format=response_format, **kwargs,
+            messages,
+            temperature,
+            max_new_tokens,
+            top_p,
+            top_k,
+            repetition_penalty,
+            stream=True,
+            stop=stop,
+            tools=tools,
+            response_format=response_format,
+            **kwargs,
         )
         for obj in self._post_json_lines(_CHAT_PATH, payload):
             message = obj.get("message", {}) or {}
@@ -228,14 +264,11 @@ class OllamaBackend(BaseBackend):
 
     # -- embeddings ----------------------------------------------------
 
-    def embed(
-        self, texts: Union[str, List[str]], **kwargs: Any
-    ) -> List[List[float]]:
+    def embed(self, texts: Union[str, List[str]], **kwargs: Any) -> List[List[float]]:
         items = [texts] if isinstance(texts, str) else list(texts)
         if not items:
             return []
-        payload = {"model": self.model, "input": items,
-                   "keep_alive": self.keep_alive}
+        payload = {"model": self.model, "input": items, "keep_alive": self.keep_alive}
         try:
             resp = self._post_json(_EMBED_PATH, payload)
         except RuntimeError as e:
@@ -244,22 +277,17 @@ class OllamaBackend(BaseBackend):
             return [self._embed_single(t) for t in items]  # old server fallback
         embeddings = resp.get("embeddings")
         if not isinstance(embeddings, list) or len(embeddings) != len(items):
-            raise RuntimeError(
-                "Unexpected Ollama /api/embed response: %r" % (resp,)
-            )
+            raise RuntimeError("Unexpected Ollama /api/embed response: %r" % (resp,))
         return embeddings
 
     def _embed_single(self, text: str) -> List[float]:
         resp = self._post_json(
             _EMBEDDINGS_PATH,
-            {"model": self.model, "prompt": text,
-             "keep_alive": self.keep_alive},
+            {"model": self.model, "prompt": text, "keep_alive": self.keep_alive},
         )
         embedding = resp.get("embedding")
         if not isinstance(embedding, list):
-            raise RuntimeError(
-                "Unexpected Ollama /api/embeddings response: %r" % (resp,)
-            )
+            raise RuntimeError("Unexpected Ollama /api/embeddings response: %r" % (resp,))
         return embedding
 
     # -- introspection -------------------------------------------------
@@ -283,15 +311,17 @@ class OllamaBackend(BaseBackend):
         resp = self._get_json(_TAGS_PATH)
         out = []
         for m in resp.get("models", []) or []:
-            out.append({
-                "id": m.get("name", m.get("model", "unknown")),
-                "object": "model",
-                "owned_by": "ollama",
-                "size": m.get("size"),
-                "digest": m.get("digest"),
-                "modified_at": m.get("modified_at"),
-                "details": m.get("details", {}),
-            })
+            out.append(
+                {
+                    "id": m.get("name", m.get("model", "unknown")),
+                    "object": "model",
+                    "owned_by": "ollama",
+                    "size": m.get("size"),
+                    "digest": m.get("digest"),
+                    "modified_at": m.get("modified_at"),
+                    "details": m.get("details", {}),
+                }
+            )
         return out
 
     def show(self) -> Dict[str, Any]:
@@ -337,39 +367,53 @@ class OllamaBackend(BaseBackend):
         top_level = {k: v for k, v in kwargs.items() if k not in _OPTION_KEYS}
         return options_extra, top_level
 
-    def _generate_payload(self, prompt: str, temperature: float,
-                          max_new_tokens: int, top_p: float, top_k: int,
-                          repetition_penalty: float, stream: bool,
-                          **kwargs: Any) -> Dict[str, Any]:
+    def _generate_payload(
+        self,
+        prompt: str,
+        temperature: float,
+        max_new_tokens: int,
+        top_p: float,
+        top_k: int,
+        repetition_penalty: float,
+        stream: bool,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
         options_extra, top_level = self._split_kwargs(kwargs)
         payload: Dict[str, Any] = {
             "model": self.model,
             "prompt": prompt,
             "stream": stream,
             "keep_alive": self.keep_alive,
-            "options": self._options(temperature, max_new_tokens, top_p,
-                                     top_k, repetition_penalty, None,
-                                     options_extra),
+            "options": self._options(
+                temperature, max_new_tokens, top_p, top_k, repetition_penalty, None, options_extra
+            ),
         }
         payload.update(top_level)
         return payload
 
-    def _chat_payload(self, messages: List[Dict[str, Any]], temperature: float,
-                      max_new_tokens: int, top_p: float, top_k: int,
-                      repetition_penalty: float, stream: bool,
-                      stop: Optional[List[str]],
-                      tools: Optional[List[Dict[str, Any]]],
-                      response_format: Optional[Dict[str, Any]],
-                      **kwargs: Any) -> Dict[str, Any]:
+    def _chat_payload(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: float,
+        max_new_tokens: int,
+        top_p: float,
+        top_k: int,
+        repetition_penalty: float,
+        stream: bool,
+        stop: Optional[List[str]],
+        tools: Optional[List[Dict[str, Any]]],
+        response_format: Optional[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
         options_extra, top_level = self._split_kwargs(kwargs)
         payload: Dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "stream": stream,
             "keep_alive": self.keep_alive,
-            "options": self._options(temperature, max_new_tokens, top_p,
-                                     top_k, repetition_penalty, stop,
-                                     options_extra),
+            "options": self._options(
+                temperature, max_new_tokens, top_p, top_k, repetition_penalty, stop, options_extra
+            ),
         }
         if tools:
             payload["tools"] = tools
@@ -401,7 +445,9 @@ class OllamaBackend(BaseBackend):
     def _post_json(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            self.host + path, data=data, headers=self._headers(),
+            self.host + path,
+            data=data,
+            headers=self._headers(),
             method="POST",
         )
         try:
@@ -410,25 +456,24 @@ class OllamaBackend(BaseBackend):
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
             raise RuntimeError(
-                "Ollama request POST %s failed with HTTP %s: %s"
-                % (path, e.code, body)
-            )
+                "Ollama request POST %s failed with HTTP %s: %s" % (path, e.code, body)
+            ) from e
         except urllib.error.URLError as e:
             raise ConnectionError(
                 "Ollama server not reachable at %s (%s). Is Ollama running? "
                 "Start it with `ollama serve` and pull a model with "
                 "`ollama pull %s`." % (self.host, e.reason, self.model)
-            )
+            ) from e
         except (ValueError, json.JSONDecodeError) as e:
-            raise RuntimeError("Ollama returned invalid JSON: %s" % e)
+            raise RuntimeError("Ollama returned invalid JSON: %s" % e) from e
 
-    def _post_json_lines(
-        self, path: str, payload: Dict[str, Any]
-    ) -> Iterator[Dict[str, Any]]:
+    def _post_json_lines(self, path: str, payload: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         """POST with ``stream=True``; yields one dict per JSON line."""
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            self.host + path, data=data, headers=self._headers(),
+            self.host + path,
+            data=data,
+            headers=self._headers(),
             method="POST",
         )
         try:
@@ -444,30 +489,26 @@ class OllamaBackend(BaseBackend):
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
             raise RuntimeError(
-                "Ollama request POST %s failed with HTTP %s: %s"
-                % (path, e.code, body)
-            )
+                "Ollama request POST %s failed with HTTP %s: %s" % (path, e.code, body)
+            ) from e
         except urllib.error.URLError as e:
             raise ConnectionError(
                 "Ollama server not reachable at %s (%s). Is Ollama running? "
                 "Start it with `ollama serve`." % (self.host, e.reason)
-            )
+            ) from e
 
     def _get_json(self, path: str) -> Dict[str, Any]:
-        req = urllib.request.Request(
-            self.host + path, headers=self._headers(), method="GET"
-        )
+        req = urllib.request.Request(self.host + path, headers=self._headers(), method="GET")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
             raise RuntimeError(
-                "Ollama request GET %s failed with HTTP %s: %s"
-                % (path, e.code, body)
-            )
+                "Ollama request GET %s failed with HTTP %s: %s" % (path, e.code, body)
+            ) from e
         except urllib.error.URLError as e:
             raise ConnectionError(
                 "Ollama server not reachable at %s (%s). Is Ollama running? "
                 "Start it with `ollama serve`." % (self.host, e.reason)
-            )
+            ) from e

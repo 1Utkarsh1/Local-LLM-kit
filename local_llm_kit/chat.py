@@ -7,6 +7,7 @@ helpers. The cache lives in this module and constructs clients through the
 module-global :class:`LLM` name (importable/patchable as
 ``local_llm_kit.chat.LLM``).
 """
+
 import asyncio
 import json
 import threading
@@ -37,9 +38,13 @@ def _cached_llm(
     """Return a cached shared LLM (module-global ``LLM`` name)."""
     llm_kwargs = dict(llm_kwargs or {})
     if backend_instance is not None or not use_cache:
-        return LLM(  # noqa: F821 (module-global lookup keeps it patchable)
-            model_path=model_path, backend=backend,
-            backend_instance=backend_instance, use_cache=use_cache,
+        # NOTE: module-global LLM lookup (not a direct class reference) so
+        # tests can patch local_llm_kit.chat.LLM.
+        return LLM(
+            model_path=model_path,
+            backend=backend,
+            backend_instance=backend_instance,
+            use_cache=use_cache,
             **llm_kwargs,
         )
     key = "%s|%s|%s|%s" % (
@@ -52,7 +57,7 @@ def _cached_llm(
         hit = _CHAT_CLIENT_CACHE.get(key)
     if hit is not None:
         return hit
-    client = LLM(model_path=model_path, backend=backend, **llm_kwargs)  # noqa: F821
+    client = LLM(model_path=model_path, backend=backend, **llm_kwargs)
     with _CHAT_CACHE_LOCK:
         _CHAT_CLIENT_CACHE.setdefault(key, client)
     return client
@@ -96,9 +101,11 @@ def chat(
         backend=backend,
         backend_instance=backend_instance,
         use_cache=use_cache,
-        llm_kwargs={"temperature": temperature,
-                    "max_new_tokens": max_tokens or 512,
-                    "backend_kwargs": backend_kwargs},
+        llm_kwargs={
+            "temperature": temperature,
+            "max_new_tokens": max_tokens or 512,
+            "backend_kwargs": backend_kwargs,
+        },
     )
     return llm.chat(
         messages=messages,
@@ -141,9 +148,11 @@ def complete(
         backend=backend,
         backend_instance=backend_instance,
         use_cache=use_cache,
-        llm_kwargs={"temperature": temperature,
-                    "max_new_tokens": max_tokens or 512,
-                    "backend_kwargs": backend_kwargs},
+        llm_kwargs={
+            "temperature": temperature,
+            "max_new_tokens": max_tokens or 512,
+            "backend_kwargs": backend_kwargs,
+        },
     )
     return llm.complete(
         prompt=prompt,

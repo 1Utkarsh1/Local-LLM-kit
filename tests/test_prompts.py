@@ -6,6 +6,7 @@ format_messages. Stdlib unittest only; no model downloads. Py3.9 compatible.
 
 Run: python -m pytest tests/test_prompts.py -q
 """
+
 import unittest
 
 from local_llm_kit.prompt_formatting import (
@@ -89,7 +90,9 @@ class TestRouting(unittest.TestCase):
                 self.assertIsInstance(get_prompt_formatter(model_name), cls)
 
     def test_routing_is_case_insensitive(self):
-        self.assertIsInstance(get_prompt_formatter("META-LLAMA/LLAMA-3-8B-INSTRUCT"), Llama3ChatPromptFormatter)
+        self.assertIsInstance(
+            get_prompt_formatter("META-LLAMA/LLAMA-3-8B-INSTRUCT"), Llama3ChatPromptFormatter
+        )
         self.assertIsInstance(get_prompt_formatter("QWEN2.5-7B"), QwenChatPromptFormatter)
         self.assertIsInstance(get_prompt_formatter("DEEPSEEK-V3"), DeepSeekChatPromptFormatter)
 
@@ -102,10 +105,13 @@ class TestMessageText(unittest.TestCase):
         self.assertEqual(message_text({"role": "user"}), "")
 
     def test_text_parts_are_joined(self):
-        msg = {"role": "user", "content": [
-            {"type": "text", "text": "hello"},
-            {"type": "text", "text": "world"},
-        ]}
+        msg = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": "world"},
+            ],
+        }
         self.assertEqual(message_text(msg), "hello\nworld")
 
     def test_image_url_part_becomes_placeholder(self):
@@ -138,8 +144,13 @@ class TestAllFormattersSmoke(unittest.TestCase):
                 self.assertIn("Hello, how are you?", out)
 
     def test_every_formatter_accepts_functions_and_json_mode(self):
-        functions = [{"name": "get_weather", "description": "Get weather",
-                      "parameters": {"type": "object", "properties": {"location": {"type": "string"}}}}]
+        functions = [
+            {
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {"type": "object", "properties": {"location": {"type": "string"}}},
+            }
+        ]
         for cls in ALL_FORMATTERS:
             with self.subTest(formatter=cls.__name__):
                 out = cls().format_messages(list(BASIC_MESSAGES), functions=functions)
@@ -156,8 +167,11 @@ class TestAllFormattersSmoke(unittest.TestCase):
     def test_every_formatter_handles_function_role(self):
         messages = [
             {"role": "user", "content": "Weather in Paris?"},
-            {"role": "assistant", "content": None,
-             "function_call": {"name": "get_weather", "arguments": '{"location": "Paris"}'}},
+            {
+                "role": "assistant",
+                "content": None,
+                "function_call": {"name": "get_weather", "arguments": '{"location": "Paris"}'},
+            },
             {"role": "function", "name": "get_weather", "content": '{"temp": 22}'},
         ]
         for cls in ALL_FORMATTERS:
@@ -175,21 +189,36 @@ class TestIndividualFormatters(unittest.TestCase):
         self.assertTrue(out.rstrip().endswith("<|start_header_id|>assistant<|end_header_id|>"))
 
     def test_llama3_tools_preamble_uses_tool_call_style(self):
-        tools = [{"type": "function", "function": {"name": "w", "description": "d",
-                 "parameters": {"type": "object", "properties": {}}}}]
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "w",
+                    "description": "d",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
         out = Llama3ChatPromptFormatter().format_messages(list(BASIC_MESSAGES), tools=tools)
         self.assertIn("<tool_call>", out)
         self.assertIn('"w"', out)
 
     def test_llama3_tool_role_rendered(self):
-        messages = [{"role": "user", "content": "hi"},
-                    {"role": "tool", "content": "result!"}]
+        messages = [{"role": "user", "content": "hi"}, {"role": "tool", "content": "result!"}]
         out = Llama3ChatPromptFormatter().format_messages(messages)
         self.assertIn("result!", out)
 
     def test_qwen_is_chatml_with_tool_rename(self):
-        tools = [{"type": "function", "function": {"name": "w", "description": "d",
-                 "parameters": {"type": "object", "properties": {}}}}]
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "w",
+                    "description": "d",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
         out = QwenChatPromptFormatter().format_messages(list(BASIC_MESSAGES), tools=tools)
         self.assertIn("<|im_start|>user", out)
         self.assertIn("Tools available to call", out)
@@ -234,11 +263,17 @@ class TestIndividualFormatters(unittest.TestCase):
 
     def test_chatml_function_call_rendering(self):
         import json as _json
+
         messages = [
             {"role": "user", "content": "Weather in Paris?"},
-            {"role": "assistant", "content": None,
-             "function_call": {"name": "get_weather",
-                               "arguments": _json.dumps({"location": "Paris"})}},
+            {
+                "role": "assistant",
+                "content": None,
+                "function_call": {
+                    "name": "get_weather",
+                    "arguments": _json.dumps({"location": "Paris"}),
+                },
+            },
         ]
         out = ChatMLPromptFormatter().format_messages(messages)
         self.assertIn("<|im_start|>assistant", out)

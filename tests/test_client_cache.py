@@ -8,6 +8,7 @@ functions/function_call API. Stdlib unittest only. Py3.9 compatible.
 
 Run: python -m pytest tests/test_client_cache.py -q
 """
+
 import inspect
 import sys
 import unittest
@@ -19,6 +20,7 @@ from local_llm_kit.llm import LLM
 CHAT_MOD = sys.modules.get("local_llm_kit.chat")
 if CHAT_MOD is None:
     import importlib as _importlib
+
     CHAT_MOD = _importlib.import_module("local_llm_kit.chat")
     CHAT_MOD = sys.modules["local_llm_kit.chat"]  # NOTE: attribute local_llm_kit.chat is the
     # function (shadowed by `from .chat import chat`); sys.modules holds the module.
@@ -26,6 +28,7 @@ if CHAT_MOD is None:
 
 def _probe_get_client():
     import local_llm_kit as pkg
+
     if callable(getattr(pkg, "get_client", None)):
         return pkg.get_client
     for mod_name in ("local_llm_kit.client", "local_llm_kit.llm", "local_llm_kit.backends"):
@@ -99,10 +102,12 @@ class TestFakeLLMBehaviour(unittest.TestCase):
 
     def test_legacy_functions_kwargs_still_accepted(self):
         llm = make_fake_llm()
-        functions = [{"name": "w", "description": "d",
-                      "parameters": {"type": "object", "properties": {}}}]
-        resp = llm.chat(messages=[{"role": "user", "content": "hi"}],
-                        functions=functions, function_call="none")
+        functions = [
+            {"name": "w", "description": "d", "parameters": {"type": "object", "properties": {}}}
+        ]
+        resp = llm.chat(
+            messages=[{"role": "user", "content": "hi"}], functions=functions, function_call="none"
+        )
         self.assertIn("choices", resp)
 
 
@@ -152,8 +157,15 @@ class TestGetClientCaching(unittest.TestCase):
 class TestBackwardsCompatSignatures(unittest.TestCase):
     def test_llm_chat_keeps_legacy_params(self):
         params = set(inspect.signature(LLM.chat).parameters)
-        for name in ("messages", "functions", "function_call", "temperature",
-                     "max_tokens", "stream", "format"):
+        for name in (
+            "messages",
+            "functions",
+            "function_call",
+            "temperature",
+            "max_tokens",
+            "stream",
+            "format",
+        ):
             self.assertIn(name, params, msg="LLM.chat lost legacy param: %s" % name)
 
     def test_llm_complete_keeps_legacy_params(self):
@@ -183,10 +195,12 @@ class TestBackwardsCompatSignatures(unittest.TestCase):
                 return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
 
         with mock.patch.object(CHAT_MOD, "LLM", FakeLLM):
-            resp = CHAT_MOD.chat(messages=[{"role": "user", "content": "hi"}],
-                                 model_path="fake-model",
-                                 functions=[{"name": "w"}],
-                                 function_call="auto")
+            resp = CHAT_MOD.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                model_path="fake-model",
+                functions=[{"name": "w"}],
+                function_call="auto",
+            )
         self.assertIn("choices", resp)
         self.assertEqual(seen["chat"]["function_call"], "auto")
         self.assertEqual(seen["chat"]["functions"], [{"name": "w"}])
@@ -212,10 +226,17 @@ class TestBackwardsCompatSignatures(unittest.TestCase):
         if "tools" not in params:
             self.skipTest("LLM.chat has no tools param yet (v0.2.0 API)")
         llm = make_fake_llm()
-        spec = {"type": "function", "function": {"name": "w", "description": "d",
-                "parameters": {"type": "object", "properties": {}}}}
-        resp = llm.chat(messages=[{"role": "user", "content": "hi"}],
-                        tools=[spec], tool_choice="none")
+        spec = {
+            "type": "function",
+            "function": {
+                "name": "w",
+                "description": "d",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        resp = llm.chat(
+            messages=[{"role": "user", "content": "hi"}], tools=[spec], tool_choice="none"
+        )
         self.assertIn("choices", resp)
 
 
