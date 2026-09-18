@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible bug
+title: "[bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: Output of `pip show local-llm-kit`
+      placeholder: "e.g. 0.2.0"
+    validations: { required: true }
+  - type: input
+    id: python
+    attributes:
+      label: Python version & OS
+      placeholder: "e.g. Python 3.9.19 on macOS 14 / Ubuntu 22.04"
+    validations: { required: true }
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options: [mock/echo, transformers, llamacpp, ollama, openai-compatible-server, other]
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal repro
+      description: Smallest code/CLI command that reproduces the bug
+      placeholder: |
+        from local_llm_kit import chat
+        print(chat(messages=[{"role":"user","content":"hi"}], model_path="..."))
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: Expected behavior }
+    validations: { required: true }
+  - type: textarea
+    id: actual
+    attributes: { label: Actual behavior + full traceback }
+    validations: { required: true }
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I installed the right extra (`pip install "local-llm-kit[<extra>]"`) if using transformers/llamacpp/ollama/server
+        - label: I ran `pytest -q` if I changed code

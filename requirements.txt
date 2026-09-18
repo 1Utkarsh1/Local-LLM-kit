@@ -1,6 +1,13 @@
-typing-extensions>=4.0.0
-# Optional dependencies:
-# torch>=1.12.0
-# transformers>=4.25.0
-# accelerate>=0.16.0
-# llama-cpp-python>=0.1.77 
+# local-llm-kit v0.2.0 — core runtime (light install: stdlib + typing-extensions).
+# Install with:  pip install -e .
+typing-extensions>=4.6.0
+
+# ---- Optional extras (install via pip install -e .[<extra>]) ----
+# transformers:  pip install -e .[transformers]   # torch, transformers, accelerate, huggingface-hub, tokenizers, tqdm
+# llamacpp:      pip install -e .[llamacpp]       # llama-cpp-python (GGUF)
+# ollama:        pip install -e .[ollama]         # ollama client + requests
+# server:        pip install -e .[server]         # fastapi, uvicorn[standard], pydantic, sse-starlette, requests
+# embeddings:    pip install -e .[embeddings]     # sentence-transformers, numpy
+# rag:           pip install -e .[rag]            # numpy, faiss-cpu, pypdf
+# all:           pip install -e .[all]            # every runtime extra
+# dev:           pip install -e .[dev]            # pytest, pytest-cov, ruff, black, mypy, build, twine

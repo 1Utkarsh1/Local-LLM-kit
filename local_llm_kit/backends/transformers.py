@@ -506,14 +506,20 @@ class TransformersBackend(BaseBackend):
         return len(self.tokenizer.encode(text))
 
 
-class _StopOnTokens(StoppingCriteria):
+if TRANSFORMERS_AVAILABLE:
+    _StoppingCriteriaBase = StoppingCriteria
+else:  # pragma: no cover - import-time fallback so the module stays importable
+    _StoppingCriteriaBase = object
+
+
+class _StopOnTokens(_StoppingCriteriaBase):  # type: ignore[valid-type, misc]
     """Criteria to stop generation on specific token IDs."""
     
     def __init__(self, stop_token_ids: List[int]):
         """Initialize with the token IDs to stop on."""
         self.stop_token_ids = stop_token_ids
         
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
+    def __call__(self, input_ids, scores, **kwargs) -> bool:
         """Return True if generation should stop."""
         if not self.stop_token_ids:
             return False

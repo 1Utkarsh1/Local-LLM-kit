@@ -1,0 +1,30 @@
+name: Backend request
+description: Request support for a new model backend or server
+title: "[backend]: "
+labels: ["backend", "needs-triage"]
+body:
+  - type: input
+    id: name
+    attributes: { label: Backend / server name, placeholder: "e.g. Ollama cloud, GGUF via X, MLX (macOS)" }
+    validations: { required: true }
+  - type: textarea
+    id: api
+    attributes:
+      label: Upstream API / SDK
+      description: Link docs + auth/model-loading mechanism
+    validations: { required: true }
+  - type: textarea
+    id: mapping
+    attributes:
+      label: Param mapping
+      placeholder: "temperature, max_tokens, stream, logprobs, embeddings?, vision?"
+    validations: { required: true }
+  - type: dropdown
+    id: extra
+    attributes:
+      label: Acceptable as optional extra with lazy import?
+      options: ["yes", "no — explain below"]
+    validations: { required: true }
+  - type: textarea
+    id: offer
+    attributes: { label: Can you help? (test model, PR, docs) }

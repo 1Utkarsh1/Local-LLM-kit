@@ -57,7 +57,7 @@ class ChatMLPromptFormatter(BasePromptFormatter):
             elif role == "assistant":
                 if message.get("function_call"):
                     func_call = message["function_call"]
-                    func_call_str = json.dumps(func_call)
+                    func_call_str = json.dumps({"function_call": func_call})
                     formatted_messages.append(f"<|im_start|>assistant\n{func_call_str}<|im_end|>")
                 else:
                     formatted_messages.append(f"<|im_start|>assistant\n{content or ''}<|im_end|>")
@@ -445,34 +445,265 @@ class PlainInstructPromptFormatter(BasePromptFormatter):
         return "\n".join(formatted_parts)
 
 
+def message_text(message: Dict[str, Any]) -> str:
+    """Extract plain text from a message whose content may be a string or a
+    list of OpenAI-style content parts (``[{"type": "text", ...}]``).
+
+    Vision parts (``image_url``) are replaced with a short placeholder so
+    text-only templates still work; vision-capable backends receive the
+    original structured messages separately.
+    """
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = []
+        for part in content:
+            if not isinstance(part, dict):
+                texts.append(str(part))
+            elif part.get("type") == "text":
+                texts.append(part.get("text", ""))
+            elif part.get("type") in ("image_url", "image"):
+                texts.append("[image]")
+        return "\n".join(t for t in texts if t)
+    return str(content)
+
+
+def has_images(messages: List[Dict[str, Any]]) -> bool:
+    """Return True if any message carries an image part."""
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list) and any(
+            isinstance(p, dict) and p.get("type") in ("image_url", "image")
+            for p in content
+        ):
+            return True
+    return False
+
+
 def get_prompt_formatter(model_name: str) -> BasePromptFormatter:
     """
     Get the appropriate prompt formatter for a model.
-    
-    Args:
-        model_name: Name or path of the model
-        
-    Returns:
-        Prompt formatter instance
+
+    Supports modern families (Llama 3, Qwen 2/3, Gemma 2/3, Phi-3/4,
+    Mistral/Mixtral, DeepSeek, ChatML/Zephyr, Vicuna, Llama 2) and falls
+    back to a plain instruction template for anything else.
+
+    Tip: when a HF tokenizer with ``apply_chat_template`` is available the
+    Transformers backend prefers it automatically; these formatters are the
+    portable fallback used by every other backend.
     """
     model_name_lower = model_name.lower()
-    
+
+    # Llama 3.x (incl. Llama 3.1/3.2/3.3) — also covers llama-4 style names
+    if any(x in model_name_lower for x in ["llama-3", "llama3", "llama-4", "llama4"]):
+        return Llama3ChatPromptFormatter()
+
+    # Qwen 2 / 2.5 / 3, QwQ
+    if any(x in model_name_lower for x in ["qwen", "qwq"]):
+        return QwenChatPromptFormatter()
+
+    # Gemma 2 / 3
+    if "gemma" in model_name_lower:
+        return GemmaChatPromptFormatter()
+
+    # Phi-3 / Phi-4
+    if "phi" in model_name_lower:
+        return PhiChatPromptFormatter()
+
+    # DeepSeek R1 / V3 chat + distills
+    if "deepseek" in model_name_lower:
+        return DeepSeekChatPromptFormatter()
+
     # Check for Llama 2 Chat models
     if any(x in model_name_lower for x in ["llama-2", "llama2", "llama_2"]) and "chat" in model_name_lower:
         return Llama2ChatPromptFormatter()
-    
+
     # Check for Mistral Instruct models
-    elif any(x in model_name_lower for x in ["mistral", "mixtral"]) and any(x in model_name_lower for x in ["instruct", "chat"]):
+    elif any(x in model_name_lower for x in ["mistral", "mixtral"]) and any(x in model_name_lower for x in ["instruct", "chat", "nemo"]):
         return MistralInstructPromptFormatter()
-    
+
     # Check for Vicuna models
     elif "vicuna" in model_name_lower:
         return VicunaPromptFormatter()
-    
+
     # Check for ChatML format (Zephyr, etc.)
-    elif any(x in model_name_lower for x in ["chatml", "chat-ml", "zephyr", "openchat"]):
+    elif any(x in model_name_lower for x in ["chatml", "chat-ml", "zephyr", "openchat", "starling", "orca", "dolphin", "openhermes", "hermes"]):
         return ChatMLPromptFormatter()
-    
+
+    # Falcon / MPT / Bloom chatty models -> ChatML-ish default
+    elif any(x in model_name_lower for x in ["falcon", "mpt", "bloomz", "stablelm", "pythia"]):
+        return ChatMLPromptFormatter()
+
     # Default to plain instruction format
     else:
-        return PlainInstructPromptFormatter() 
+        return PlainInstructPromptFormatter()
+
+
+class Llama3ChatPromptFormatter(BasePromptFormatter):
+    """Formatter for Llama 3 / 3.1 / 3.2 / 3.3 Instruct (<|start_header_id|>)."""
+
+    def format_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        functions: Optional[List[Dict[str, Any]]] = None,
+        function_call: Union[str, Dict[str, str]] = "auto",
+        json_mode: bool = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        tools = tools or functions
+        parts = ["<|begin_of_text|>"]
+        # Prepend tool definitions as a system message (Llama 3 tool style)
+        preamble = list(messages)
+        if tools:
+            tools_text = (
+                "You have access to the following tools. Call them by emitting "
+                "<tool_call>{\"name\": ..., \"arguments\": {...}}</tool_call>.\n"
+                + json.dumps(tools, indent=2)
+            )
+            preamble = [{"role": "system", "content": tools_text}] + preamble
+        if json_mode:
+            preamble = preamble + [{
+                "role": "system",
+                "content": "You must respond with a valid JSON object or array, without any additional text.",
+            }]
+        for m in preamble:
+            role = m["role"]
+            if role == "function":
+                content = f"[Function {m.get('name')} result]\n{message_text(m)}"
+                parts.append(f"<|start_header_id|>user<|end_header_id|>\n\n{content}<|eot_id|>")
+            elif role == "tool":
+                content = f"[Tool result]\n{message_text(m)}"
+                parts.append(f"<|start_header_id|>user<|end_header_id|>\n\n{content}<|eot_id|>")
+            elif role in ("system", "user", "assistant"):
+                text = message_text(m)
+                if role == "assistant" and m.get("tool_calls"):
+                    text = json.dumps({"tool_calls": m["tool_calls"]})
+                elif role == "assistant" and m.get("function_call"):
+                    text = json.dumps(m["function_call"])
+                parts.append(f"<|start_header_id|>{role}<|end_header_id|>\n\n{text}<|eot_id|>")
+        parts.append("<|start_header_id|>assistant<|end_header_id|>\n\n")
+        return "".join(parts)
+
+
+class QwenChatPromptFormatter(ChatMLPromptFormatter):
+    """Qwen 2/2.5/3 uses ChatML with <|im_start|>/<|im_end|> plus <tool_call>."""
+
+    def format_messages(  # type: ignore[override]
+        self,
+        messages: List[Dict[str, Any]],
+        functions: Optional[List[Dict[str, Any]]] = None,
+        function_call: Union[str, Dict[str, str]] = "auto",
+        json_mode: bool = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        **kwargs: Any,
+    ) -> str:
+        merged_functions = functions
+        if tools and not functions:
+            # Convert OpenAI tools -> legacy function list for the base formatter
+            merged_functions = [t["function"] if isinstance(t, dict) and "function" in t else t for t in tools]
+        text = super().format_messages(messages, merged_functions, function_call, json_mode)
+        if tools and functions is None:
+            text = text.replace(
+                "Functions available to call:",
+                "Tools available to call (reply with <tool_call>{\"name\":...,\"arguments\":{...}}</tool_call> when needed):",
+            )
+        return text
+
+
+class GemmaChatPromptFormatter(BasePromptFormatter):
+    """Formatter for Gemma 2/3 instruction-tuned models (<start_of_turn>)."""
+
+    def format_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        functions: Optional[List[Dict[str, Any]]] = None,
+        function_call: Union[str, Dict[str, str]] = "auto",
+        json_mode: bool = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        used = tools or functions
+        parts: List[str] = []
+        for m in messages:
+            role = "model" if m["role"] == "assistant" else m["role"]
+            if role not in ("user", "model", "system"):
+                role = "user"
+            text = message_text(m)
+            parts.append(f"<start_of_turn>{role}\n{text}<end_of_turn>\n")
+        if used:
+            parts.append(
+                "<start_of_turn>user\n[Tools available: "
+                + json.dumps(used)[:2000]
+                + "]<end_of_turn>\n"
+            )
+        if json_mode:
+            parts.append("<start_of_turn>user\nRespond with valid JSON only.<end_of_turn>\n")
+        parts.append("<start_of_turn>model\n")
+        return "".join(parts)
+
+
+class PhiChatPromptFormatter(ChatMLPromptFormatter):
+    """Phi-3 / Phi-4 Instruct models use ChatML with <|user|>/<|assistant|>."""
+
+    def format_messages(  # type: ignore[override]
+        self,
+        messages: List[Dict[str, Any]],
+        functions: Optional[List[Dict[str, Any]]] = None,
+        function_call: Union[str, Dict[str, str]] = "auto",
+        json_mode: bool = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        **kwargs: Any,
+    ) -> str:
+        merged = functions
+        if tools and not functions:
+            merged = [t["function"] if isinstance(t, dict) and "function" in t else t for t in tools]
+        parts: List[str] = []
+        for m in messages:
+            role = m["role"]
+            text = message_text(m)
+            if role == "system":
+                parts.append(f"<|system|>\n{text}<|end|>\n")
+            elif role == "user":
+                parts.append(f"<|user|>\n{text}<|end|>\n")
+            elif role == "assistant":
+                parts.append(f"<|assistant|>\n{text or ''}<|end|>\n")
+            elif role in ("function", "tool"):
+                parts.append(f"<|user|>\n[Tool result] {text}<|end|>\n")
+        if merged:
+            parts.append(f"<|system|>\nTools available: {json.dumps(merged)[:2000]}<|end|>\n")
+        if json_mode:
+            parts.append("<|system|>\nRespond with valid JSON only.<|end|>\n")
+        parts.append("<|assistant|>\n")
+        return "".join(parts)
+
+
+class DeepSeekChatPromptFormatter(BasePromptFormatter):
+    """DeepSeek V3/R1 chat template (deepseek_v3 style, ChatML-compatible)."""
+
+    def format_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        functions: Optional[List[Dict[str, Any]]] = None,
+        function_call: Union[str, Dict[str, str]] = "auto",
+        json_mode: bool = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        used = tools or functions
+        out: List[str] = []
+        for m in messages:
+            role = m["role"]
+            text = message_text(m)
+            if role == "system":
+                out.append(f"{text}\n\n")
+            elif role == "user":
+                out.append(f"### User:\n{text}\n\n")
+            elif role == "assistant":
+                out.append(f"### Assistant:\n{text or ''}\n\n")
+            elif role in ("function", "tool"):
+                out.append(f"### Tool Result:\n{text}\n\n")
+        if used:
+            out.insert(0, f"[Tools] {json.dumps(used)[:2000]}\n\n")
+        if json_mode:
+            out.append("Respond with valid JSON only.\n\n")
+        out.append("### Assistant:\n")
+        return "".join(out) 

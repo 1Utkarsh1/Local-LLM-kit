@@ -109,9 +109,24 @@ class MessageHistory:
         # Add role
         text_parts.append(message.get("role", ""))
         
-        # Add content if present
-        if message.get("content"):
-            text_parts.append(message["content"])
+        # Add content if present (plain string or vision-style part list)
+        content = message.get("content")
+        if isinstance(content, str):
+            if content:
+                text_parts.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type", "text") == "text":
+                        text = part.get("text", "")
+                        if text:
+                            text_parts.append(text)
+                    elif part.get("type") in ("image_url", "image"):
+                        text_parts.append("[image]")
+                    elif part.get("text"):
+                        text_parts.append(str(part["text"]))
+                elif isinstance(part, str):
+                    text_parts.append(part)
         
         # Add function call if present
         if message.get("function_call"):
