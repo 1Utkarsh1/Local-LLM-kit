@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an idea (API, CLI, endpoint, RAG/helper, docs)
+title: "[feat]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: Problem / use case, placeholder: "What can't you do today?" }
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API/CLI
+      placeholder: |
+        chat(..., response_format={"type": "json_object"})
+        local-llm-kit serve --model ... --port 8000
+    validations: { required: true }
+  - type: dropdown
+    id: compat
+    attributes:
+      label: Backwards-compat impact
+      options: ["none — additive only", "minor — needs migration note", "breaking — justify below"]
+    validations: { required: true }
+  - type: textarea
+    id: openai
+    attributes: { label: OpenAI-compat note, description: "Does OpenAI / Ollama / llama.cpp server already do this? Link docs." }
+  - type: textarea
+    id: alt
+    attributes: { label: Alternatives considered }

@@ -1,0 +1,166 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-llm-kit"
+# Single-sourced: resolved at build time from local_llm_kit/__init__.py
+# (__version__ = "0.2.0"). Do NOT duplicate the version string here.
+dynamic = ["version"]
+description = "OpenAI-compatible interface for local LLMs (transformers, llama.cpp, Ollama, OpenAI-compatible servers, offline mock)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Utkarsh Rajput", email = "utkarshrajput815@gmail.com" },
+]
+maintainers = [
+    { name = "Utkarsh Rajput", email = "utkarshrajput815@gmail.com" },
+]
+keywords = ["llm", "local-llm", "openai-compatible", "transformers", "llama.cpp", "ollama", "rag", "embeddings", "chat"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+# Core install stays light: stdlib + typing-extensions only.
+# Every heavy dependency is optional and must be lazily imported.
+dependencies = [
+    "typing-extensions>=4.6.0",
+]
+
+[project.optional-dependencies]
+# HF transformers backend (lazy: local_llm_kit.backends.transformers)
+transformers = [
+    "torch>=2.0.0",
+    "transformers>=4.41.0",
+    "accelerate>=0.30.0",
+    "huggingface-hub>=0.23.0",
+    "tokenizers>=0.19.0",
+    "tqdm>=4.66.0",
+]
+# llama.cpp backend for GGUF models (lazy: local_llm_kit.backends.llamacpp)
+llamacpp = [
+    "llama-cpp-python>=0.2.11",
+]
+# Ollama backend (stdlib HTTP client; `ollama` package + requests are conveniences)
+ollama = [
+    "ollama>=0.4.0",
+    "requests>=2.31.0",
+]
+# OpenAI-compatible HTTP server (`local-llm-kit serve`) (lazy: local_llm_kit.server)
+server = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.6.0",
+    "sse-starlette>=1.8.0",
+    "requests>=2.31.0",
+]
+# Local embeddings (lazy: local_llm_kit.embeddings)
+embeddings = [
+    "numpy>=1.24.0",
+    "sentence-transformers>=2.7.0",
+]
+# Minimal RAG helpers (lazy: local_llm_kit.rag; stdlib fallback without these)
+rag = [
+    "numpy>=1.24.0",
+    "faiss-cpu>=1.8.0",
+    "pypdf>=4.0.0",
+]
+# Everything runnable (all runtime extras, excludes dev tooling)
+all = [
+    "torch>=2.0.0",
+    "transformers>=4.41.0",
+    "accelerate>=0.30.0",
+    "huggingface-hub>=0.23.0",
+    "tokenizers>=0.19.0",
+    "tqdm>=4.66.0",
+    "llama-cpp-python>=0.2.11",
+    "ollama>=0.4.0",
+    "requests>=2.31.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.6.0",
+    "sse-starlette>=1.8.0",
+    "numpy>=1.24.0",
+    "sentence-transformers>=2.7.0",
+    "faiss-cpu>=1.8.0",
+    "pypdf>=4.0.0",
+]
+# Contributor tooling (lint + format + test + packaging checks)
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
+    "black>=24.4.0",
+    "mypy>=1.10.0",
+    "build>=1.2.0",
+    "twine>=5.0.0",
+]
+
+[project.scripts]
+local-llm-kit = "local_llm_kit.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/1Utkarsh1/Local-LLM-kit"
+Repository = "https://github.com/1Utkarsh1/Local-LLM-kit"
+Documentation = "https://github.com/1Utkarsh1/Local-LLM-kit#readme"
+Changelog = "https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/CHANGELOG.md"
+Issues = "https://github.com/1Utkarsh1/Local-LLM-kit/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["local_llm_kit*"]
+namespaces = false
+
+# Version is single-sourced from local_llm_kit/__init__.py:__version__ (= "0.2.0").
+[tool.setuptools.dynamic]
+version = { attr = "local_llm_kit.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["."]
+
+[tool.ruff.lint]
+# E/F = errors, I = isort, B = bugbear-style, ASYNC.
+# NOTE: pyupgrade (UP) rules are intentionally off: this codebase targets
+# Python 3.9 with `typing.Dict/List/Optional` + printf-style formatting as
+# its house style, and UP006-style rewrites fight that floor.
+select = ["E", "F", "I", "B", "ASYNC"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.coverage.run]
+source = ["local_llm_kit"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.mypy]
+python_version = "3.9"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
