@@ -44,18 +44,26 @@ Design notes:
 * Embeddings are not available on-device (``apfel --serve`` likewise
   answers ``POST /v1/embeddings`` with 501); :meth:`embed` is not
   implemented and raises :exc:`NotImplementedError`.
-* Vision parts are degraded to ``[image]`` placeholders. The SDK takes image
-  *files* (``ImageAttachment(path)``), not the base64 data URLs used by the
-  OpenAI/HTTP adapters, so wiring them would require materialising uploads
-  to disk first. Use ``backend="apfel"`` on macOS 27 (or an HTTP vision
-  model) for image input.
+* Vision: OpenAI-style ``image_url`` parts carrying inline base64 data URLs
+  are materialised to temporary files and passed as ``ImageAttachment``
+  objects (the SDK takes image *files*, not data URLs). Remote ``http(s)``
+  URLs are rejected — this backend never downloads images for a request.
+  Actual image understanding additionally needs the macOS 27 SDK (older
+  runtimes raise ``ImagePromptError``); text fallback still applies to
+  plain-text backends.
+* Token counting: :meth:`count_tokens` stays a cheap heuristic like the
+  other backends; :meth:`count_tokens_exact` uses the SDK's async
+  ``token_count`` for exact budgeting against ``context_size``.
 """
 
 import asyncio
+import base64
+import os
 import queue
 import sys
+import tempfile
 import threading
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .base import BaseBackend
 
@@ -113,7 +121,7 @@ class AppleFMBackend(BaseBackend):
     """
 
     backend_name = "apple-fm"
-    supports_vision = False
+    supports_vision = True
     supports_embeddings = False
     supports_native_chat = True
 
@@ -409,15 +417,22 @@ class AppleFMBackend(BaseBackend):
                 "stop",
             )
             return {"text": text, "finish_reason": finish, "model": self.model}
-        prompt, instructions = self._chat_prompt(messages, tools)
+        parts, instructions, attachments = self._chat_prompt(messages, tools)
         options = self._options(temperature, max_new_tokens, seed)
-        session = self._new_session(instructions)
         schema = _json_schema_from_response_format(response_format)
+        with self._materialized(attachments) as objects:
+            prompt = _assemble_prompt(parts, objects)
+            session = self._new_session(instructions)
 
-        async def _call() -> Any:
-            if schema is not None:
-                return await session.respond(prompt, json_schema=schema, options=options)
-            return await session.respond(prompt, options=options)
+            async def _call() -> Any:
+                if schema is not None:
+                    return await session.respond(prompt, json_schema=schema, options=options)
+                return await session.respond(prompt, options=options)
+
+            result = self._run(_call)
+        text = _generated_content_to_text(result)
+        text = _apply_stop(text, stop)
+        return {"text": text, "finish_reason": "stop", "model": self.model}
 
         result = self._run(_call)
         text = _generated_content_to_text(result)
@@ -439,7 +454,7 @@ class AppleFMBackend(BaseBackend):
         seed: Optional[int] = None,
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
-        prompt, instructions = self._chat_prompt(messages, tools)
+        parts, instructions, attachments = self._chat_prompt(messages, tools)
         options = self._options(temperature, max_new_tokens, seed)
         if _json_schema_from_response_format(response_format) is not None:
             # The SDK does not stream guided generation; emit one chunk.
@@ -456,25 +471,27 @@ class AppleFMBackend(BaseBackend):
             )
             yield {"text": result["text"], "finish_reason": result["finish_reason"]}
             return
-        session_instructions = instructions
-        for snapshot in self._stream_snapshots(prompt, options, session_instructions):
-            yield {"text": snapshot}
+        with self._materialized(attachments) as objects:
+            prompt = _assemble_prompt(parts, objects)
+            for snapshot in self._stream_snapshots(prompt, options, instructions):
+                yield {"text": snapshot}
 
     def _chat_prompt(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
-    ) -> Any:
-        """Split messages into (prompt text, session instructions).
+    ) -> Tuple[List[Tuple[str, Any]], Optional[str], List[Tuple[str, bytes]]]:
+        """Split messages into prompt parts, session instructions, attachments.
 
-        System messages become session instructions (the SDK's native slot
-        for them). Everything else is flattened to ``Role: text`` lines so
-        the stateless-per-request session still sees the full history.
-        Tool specs are appended as a JSON block so the model can emit the
-        text-format tool calls the client-side loop parses.
+        Returns ``(parts, instructions, attachments)`` where ``parts`` is a
+        list of ``("text", str)`` / ``("image", index)`` tuples (indexes into
+        ``attachments``, a list of ``(suffix, bytes)``), and ``instructions``
+        holds the joined system messages. Text-only histories assemble to
+        exactly the ``Role: text`` string the previous implementation sent.
         """
-        system_parts = []
-        rest = []
+        system_parts: List[str] = []
+        parts: List[Tuple[str, Any]] = []
+        attachments: List[Tuple[str, bytes]] = []
         for message in messages or []:
             if not isinstance(message, dict):
                 continue
@@ -482,17 +499,61 @@ class AppleFMBackend(BaseBackend):
                 text = self.message_text(message)
                 if text:
                     system_parts.append(text)
+                continue
+            role = str(message.get("role", "user")).capitalize()
+            content = message.get("content")
+            if isinstance(content, list):
+                texts: List[str] = []
+                for item in content:
+                    kind, value = _split_content_part(item)
+                    if kind == "text":
+                        texts.append(value)
+                    else:
+                        if texts:
+                            parts.append(("text", "%s: %s" % (role, "".join(texts))))
+                            texts = []
+                        attachments.append(value)
+                        parts.append(("image", len(attachments) - 1))
+                parts.append(("text", "%s: %s" % (role, "".join(texts))))
             else:
-                rest.append(message)
-        prompt = self.messages_to_prompt(rest)
+                parts.append(("text", "%s: %s" % (role, self.message_text(message))))
+        parts.append(("text", "Assistant:"))
         if tools:
-            prompt += "\n\nAvailable tools (JSON):\n" + _tools_documentation(tools)
+            parts.append(("text", "Available tools (JSON):\n" + _tools_documentation(tools)))
         instructions = "\n\n".join(system_parts) or None
-        return prompt, instructions
+        return parts, instructions, attachments
+
+    def _materialized(self, attachments: List[Tuple[str, bytes]]) -> Any:
+        """Context manager yielding ``ImageAttachment`` objects for image bytes.
+
+        Files live only for the block (the SDK reads them synchronously
+        during the request) and are removed afterwards, even on failure.
+        """
+        import contextlib
+        import pathlib
+
+        @contextlib.contextmanager
+        def _manager() -> Any:
+            paths: List[str] = []
+            try:
+                for suffix, data in attachments:
+                    handle, path = tempfile.mkstemp(prefix="llmk-apple-", suffix=suffix)
+                    with os.fdopen(handle, "wb") as stream:
+                        stream.write(data)
+                    paths.append(path)
+                yield [self._fm.ImageAttachment(pathlib.Path(path)) for path in paths]
+            finally:
+                for path in paths:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+
+        return _manager()
 
     def _stream_snapshots(
         self,
-        prompt: str,
+        prompt: Any,
         options: Any,
         instructions: Optional[str] = None,
     ) -> Iterator[str]:
@@ -550,11 +611,30 @@ class AppleFMBackend(BaseBackend):
 
     def count_tokens(self, text: str) -> int:
         """~4 chars/token heuristic (the SDK's exact ``token_count`` is async
-        and would add a round trip per call; use the SDK directly for exact
-        budgeting against ``context_size``)."""
+        and would add a round trip per call; use :meth:`count_tokens_exact`
+        for exact budgeting against ``context_size``)."""
         if not text:
             return 0
         return max(1, len(text) // 4)
+
+    def count_tokens_exact(
+        self, text: Optional[str] = None, instructions: Optional[str] = None
+    ) -> int:
+        """Exact token count via the SDK's async ``token_count``.
+
+        Pass either ``text`` (a prompt) or ``instructions`` (system text),
+        not both — mirroring the SDK's own mutual exclusivity. Useful for
+        precise budgeting against :meth:`get_context_window`.
+        """
+        if (text is None) == (instructions is None):
+            raise ValueError("Pass exactly one of text= or instructions=.")
+
+        async def _call() -> Any:
+            if instructions is not None:
+                return await self._system_model.token_count(instructions=instructions)
+            return await self._system_model.token_count(text)
+
+        return int(self._run(_call))
 
     def model_info(self) -> Dict[str, Any]:
         info = super().model_info()
@@ -583,6 +663,83 @@ class AppleFMBackend(BaseBackend):
 
 
 # -- helpers ------------------------------------------------------------
+
+
+#: Maximum inline image size materialised to disk (matches the 20 MB base64
+#: cap documented for ``apfel --serve`` vision input).
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
+#: Allowed image suffixes for materialised data URLs (sanitised; anything
+#: else falls back to ``.png`` so temp files keep a safe extension).
+_IMAGE_SUFFIXES = ("png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "heic")
+
+
+def _assemble_prompt(parts: List[Tuple[str, Any]], objects: List[Any]) -> Any:
+    """Build the SDK prompt from parts.
+
+    Text-only histories assemble to the plain ``Role: text`` string used
+    before vision support existed; histories with images become a mixed
+    ``[str, ImageAttachment, ...]`` list.
+    """
+    if not objects:
+        return "\n".join(text for kind, text in parts if kind == "text")
+    prompt: List[Any] = []
+    for kind, value in parts:
+        if kind == "text":
+            prompt.append(value)
+        else:
+            prompt.append(objects[value])
+    return prompt
+
+
+def _split_content_part(part: Any) -> Tuple[str, Any]:
+    """Split one OpenAI content part into ``("text", str)`` or image bytes.
+
+    Returns ``("image", (suffix, bytes))`` for ``image_url`` parts with
+    inline ``data:image/...;base64,`` URLs. Anything else degrades to text
+    (``[image]`` placeholder), preserving the old fallback for shapes this
+    backend cannot materialise.
+    """
+    if isinstance(part, str):
+        return "text", part
+    if not isinstance(part, dict):
+        return "text", str(part)
+    ptype = part.get("type", "text")
+    if ptype == "text":
+        return "text", str(part.get("text", ""))
+    if ptype in ("image_url", "image"):
+        image = part.get("image_url", part.get("image", ""))
+        url = image.get("url", "") if isinstance(image, dict) else image
+        if isinstance(url, str) and url.startswith("data:image/"):
+            return "image", _parse_image_data_url(url)
+        if isinstance(url, str) and url:
+            raise ValueError(
+                "Apple Foundation Models image parts must use inline base64 "
+                "data URLs; remote URLs are never downloaded (got %r...)." % (url[:48],)
+            )
+        return "text", "[image]"
+    return "text", str(part.get("text", ""))
+
+
+def _parse_image_data_url(url: str) -> Tuple[str, bytes]:
+    """Decode ``data:image/<sub>;base64,<payload>`` to ``(suffix, bytes)``."""
+    try:
+        header, _, payload = url.partition(",")
+        if not payload or "base64" not in header:
+            raise ValueError("missing base64 payload")
+        mime = header[5:].split(";")[0].strip().lower()
+        subtype = "".join(c for c in mime.split("/")[-1] if c.isalnum()) or "png"
+        suffix = "." + (subtype if subtype in _IMAGE_SUFFIXES else "png")
+        data = base64.b64decode(payload, validate=True)
+    except Exception as exc:
+        raise ValueError("Invalid inline image data URL: %s" % (exc,)) from exc
+    if not data:
+        raise ValueError("Invalid inline image data URL: empty payload.")
+    if len(data) > _MAX_IMAGE_BYTES:
+        raise ValueError(
+            "Inline image is %d bytes; the limit is %d bytes." % (len(data), _MAX_IMAGE_BYTES)
+        )
+    return suffix, data
 
 
 def _apply_stop(text: str, stop: Any) -> str:

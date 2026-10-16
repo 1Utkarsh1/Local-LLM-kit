@@ -24,7 +24,7 @@ llama.cpp's library and server integrations count as one runtime.
    * - Apple FM (native)
      - In-process SDK (``apple-fm``)
      - Prompted tools/JSON loop; native ``json_schema`` enforcement
-     - Not available on-device; use a separate embedding backend
+     - data-URL images via temp files; no on-device embedding endpoint
    * - Apfel bridge
      - OpenAI-compatible HTTP
      - Forwarded; native tools + ``json_schema`` server-side
@@ -108,10 +108,13 @@ framework. Local LLM Kit reaches it two ways:
   ``response_format={"type": "json_schema", ...}`` is enforced natively by
   the SDK. ``temperature`` (``0`` selects greedy sampling), ``seed``,
   ``max_tokens`` and ``stop`` are honoured; ``top_p``/``top_k``/penalties
-  and logprobs have no SDK equivalent and are ignored. Image parts degrade
-  to placeholders (the SDK takes image *files*, not data URLs), and there
-  is no on-device embedding endpoint. Everything runs on device; nothing
-  falls back to Private Cloud Compute or any remote endpoint.
+  and logprobs have no SDK equivalent and are ignored. data-URL
+  ``image_url`` parts are materialised to temporary files and passed as
+  ``ImageAttachment`` objects (remote URLs are rejected, never downloaded);
+  image understanding itself needs the macOS 27 SDK. ``count_tokens_exact``
+  offers exact budgeting via the SDK's async ``token_count``. There is no
+  on-device embedding endpoint. Everything runs on device; nothing falls
+  back to Private Cloud Compute or any remote endpoint.
 * **Bridge** (``backend="apfel"``): no Xcode needed. Run
   `apfel --serve <https://github.com/Arthur-Ficial/apfel>`_ (macOS 26+,
   Apple Silicon, Apple Intelligence on), which serves OpenAI-compatible

@@ -94,6 +94,7 @@ class FakeSystemModel:
     reason = None
     window = 4096
     variant_name = None
+    token_count_calls = []
 
     def __init__(self, use_case=None, guardrails=None):
         self.use_case = use_case
@@ -111,6 +112,18 @@ class FakeSystemModel:
         if FakeSystemModel.variant_name is None:
             return None
         return types.SimpleNamespace(display_name=FakeSystemModel.variant_name)
+
+    async def token_count(self, value=None, *, instructions=None):
+        FakeSystemModel.token_count_calls.append((value, instructions))
+        text = instructions if instructions is not None else value
+        return max(1, len(str(text)) // 4)
+
+
+class FakeImageAttachment:
+    def __init__(self, path):
+        self.path = str(path)
+        with open(self.path, "rb") as fh:
+            self.data = fh.read()
 
 
 class FakeSession:
@@ -135,6 +148,10 @@ class FakeSession:
             raise FakeSession.fail_with
         if json_schema is not None:
             return FakeGeneratedContent({"ok": True, "echo": str(prompt)[:24]})
+        if isinstance(prompt, list):
+            texts = [p for p in prompt if isinstance(p, str)]
+            images = [p for p in prompt if not isinstance(p, str)]
+            return "Echo: %s [%d image(s)]" % (" ".join(texts), len(images))
         return "Echo: %s" % prompt
 
     async def stream_response(self, prompt, options=None):
@@ -149,6 +166,7 @@ def make_fake_sdk():
     module.SystemLanguageModelUseCase = FakeUseCase
     module.SystemLanguageModelGuardrails = FakeGuardrails
     module.LanguageModelSession = FakeSession
+    module.ImageAttachment = FakeImageAttachment
     module.GenerationOptions = FakeOptions
     module.SamplingMode = FakeSamplingMode
     module.GeneratedContent = FakeGeneratedContent
@@ -171,6 +189,7 @@ class AppleFMBackendTest(unittest.TestCase):
         FakeSystemModel.reason = None
         FakeSystemModel.window = 4096
         FakeSystemModel.variant_name = None
+        FakeSystemModel.token_count_calls = []
         FakeSession.instances = []
         FakeSession.fail_with = None
         self._patches = []
@@ -404,6 +423,133 @@ class AppleFMBackendTest(unittest.TestCase):
         backend.generate("hi")
         backend.close()
         self.assertTrue(backend._closed)
+
+    def test_text_only_prompt_stays_a_plain_string(self):
+        self._mac()
+        backend = AppleFMBackend("m")
+        backend.chat([{"role": "user", "content": "hello"}])
+        prompt = FakeSession.instances[-1].calls[0]["prompt"]
+        self.assertIsInstance(prompt, str)
+        self.assertIn("User: hello", prompt)
+
+    def test_vision_data_url_materialized_and_cleaned_up(self):
+        import base64 as _b64
+
+        self._mac()
+        backend = AppleFMBackend("m")
+        self.assertTrue(backend.supports_vision)
+        raw = _b64.b64encode(b"\x89PNG-fake-bytes").decode()
+        out = backend.chat(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "what is this?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64," + raw},
+                        },
+                    ],
+                }
+            ]
+        )
+        self.assertIn("[1 image(s)]", out["text"])
+        session = FakeSession.instances[-1]
+        prompt = session.calls[0]["prompt"]
+        self.assertIsInstance(prompt, list)
+        attachments = [p for p in prompt if isinstance(p, FakeImageAttachment)]
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0].data, b"\x89PNG-fake-bytes")
+        # Temp files are removed after the request completes.
+        self.assertFalse(os.path.exists(attachments[0].path))
+
+    def test_vision_remote_url_rejected_without_download(self):
+        self._mac()
+        backend = AppleFMBackend("m")
+        with self.assertRaisesRegex(ValueError, "never downloaded"):
+            backend.chat(
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "https://example.com/a.png"},
+                            }
+                        ],
+                    }
+                ]
+            )
+        self.assertEqual(FakeSession.instances, [])
+
+    def test_vision_oversize_image_rejected(self):
+        import base64 as _b64
+
+        self._mac()
+        backend = AppleFMBackend("m")
+        with mock.patch.object(backend._fm, "ImageAttachment", FakeImageAttachment):
+            import local_llm_kit.backends.apple_fm as apple_mod
+
+            with mock.patch.object(apple_mod, "_MAX_IMAGE_BYTES", 4):
+                with self.assertRaisesRegex(ValueError, "limit"):
+                    backend.chat(
+                        [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": "data:image/png;base64,"
+                                            + _b64.b64encode(b"12345").decode()
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    )
+
+    def test_exact_token_count_uses_sdk(self):
+        self._mac()
+        backend = AppleFMBackend("m")
+        self.assertEqual(backend.count_tokens_exact("hello world, this is a test"), 6)
+        self.assertEqual(
+            FakeSystemModel.token_count_calls[-1], ("hello world, this is a test", None)
+        )
+        self.assertEqual(backend.count_tokens_exact(instructions="be terse"), 2)
+        self.assertEqual(FakeSystemModel.token_count_calls[-1], (None, "be terse"))
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            backend.count_tokens_exact()
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            backend.count_tokens_exact("a", instructions="b")
+
+    def test_serve_end_to_end_with_apple_backend(self):
+        try:
+            from fastapi.testclient import TestClient
+
+            from local_llm_kit.server import create_app
+        except ImportError:
+            self.skipTest("fastapi not installed")
+        sdk = install_fake_sdk()
+        sdk.start()
+        self._patches.append(sdk)
+        # Platform/interpreter patches apply only to backend construction:
+        # FastAPI inspects the real interpreter version at route setup.
+        with (
+            mock.patch.object(sys, "platform", "darwin"),
+            mock.patch.object(sys, "version_info", (3, 10, 0, "final", 0)),
+        ):
+            llm = LLM("apple-foundationmodel", backend="apple-fm", use_cache=False)
+        client = TestClient(create_app(llm=llm))
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "apple-foundationmodel",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Echo:", resp.json()["choices"][0]["message"]["content"])
 
 
 class ApfelBridgeTest(unittest.TestCase):

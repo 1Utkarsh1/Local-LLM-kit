@@ -68,7 +68,7 @@ Requires Python 3.9+. The generic `openai-compat` backend (vLLM, LM Studio, llam
 | Backend | `backend=` value | What it runs | Needs | Best for | Vision | Embeddings |
 |---|---|---|---|---|---|---|
 | Echo (mock) | `"echo"` | offline deterministic echo, no model | nothing | tests, CI, docs, offline dev | passes messages through | deterministic stub |
-| Apple FM (native) | `"apple-fm"` | on-device Apple Intelligence system model | `pip install "local-llm-kit[apple-fm]"`; macOS 26+, Xcode 26+, Python 3.10+, Apple Intelligence on | on-device inference, no daemon or downloads | text fallback (image files unsupported) | none on-device |
+| Apple FM (native) | `"apple-fm"` | on-device Apple Intelligence system model | `pip install "local-llm-kit[apple-fm]"`; macOS 26+, Xcode 26+, Python 3.10+, Apple Intelligence on | on-device inference, no daemon or downloads | data-URL images via temp files (macOS 27 for understanding) | none on-device |
 | Transformers | `"transformers"` | HF models via `transformers`+`torch` | `pip install "local-llm-kit[transformers]"` | HF text models on GPU/CPU | text adapter | separate embeddings client |
 | AirLLM (experimental adapter) | `"airllm"` | AirLLM offloaded inference | `pip install "local-llm-kit[airllm]"`, prepared weights and suitable hardware | fitting larger models into limited accelerator memory | text only in this adapter | no |
 | llama.cpp | `"llamacpp"` | `.gguf` via `llama-cpp-python` | `pip install "local-llm-kit[llamacpp]"` | quantized local text models | use HTTP server for vision | use HTTP server for embeddings |

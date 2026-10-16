@@ -15,8 +15,8 @@ Applications that want one OpenAI-shaped chat/completion interface across local 
 Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm.
 Native Apple on-device inference: backend "apple-fm" (apple-fm-sdk, macOS 26+,
 Xcode 26+, Python 3.10+, Apple Intelligence on) with native json_schema
-structured output, client-side tool loop, and streaming; or bridge to
-`apfel --serve` with backend "apfel" (chat-only, no embeddings endpoint,
+structured output, client-side tool loop, streaming, data-URL vision, and
+exact token counting; or bridge to `apfel --serve` with backend "apfel" (chat-only, no embeddings endpoint,
 top_k/penalty fields omitted). Server presets: sglang, vllm, lmstudio, localai,
 llama-server, jan, gpt4all, mlx-lm, koboldcpp and apfel. These cover 14 distinct
 local runtimes; this is not a usage ranking. A preset connects to an

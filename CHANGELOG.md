@@ -11,11 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apple Foundation Models support, two paths: a native `apple-fm` backend on
   Apple's official `apple-fm-sdk` (on-device system model; macOS 26+, Xcode 26+,
   Python 3.10+, Apple Intelligence on; new `apple-fm` extra) with native
-  `json_schema` structured output, client-side tool loop, streaming deltas and
-  per-request sessions, plus an `apfel` server preset for `apfel --serve`
-  (chat-only, no embeddings endpoint, rejected sampling fields omitted).
-  Ships with `examples/apple_foundation.py`, backend-guide coverage and offline
-  contract tests (`tests/test_apple_fm.py`) plus an opt-in live test.
+  `json_schema` structured output, client-side tool loop, streaming deltas,
+  data-URL vision via temp-file `ImageAttachment`s, exact `count_tokens_exact`
+  budgeting, and per-request sessions, plus an `apfel` server preset for
+  `apfel --serve` (chat-only, no embeddings endpoint, rejected sampling fields
+  omitted). Ships with `examples/apple_foundation.py`, backend-guide coverage
+  and offline contract tests (`tests/test_apple_fm.py`) plus an opt-in live test.
 
 ## [0.2.0] - 2026-10-17
 
