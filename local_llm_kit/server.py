@@ -208,6 +208,40 @@ def _pseudo_embedding(text: str, dim: int = 32) -> List[float]:
     return vec
 
 
+def _coerce_vectors(result: Any, n: int) -> Optional[List[List[float]]]:
+    """Coerce an embedding result to ``n`` float vectors, or None.
+
+    Accepts any iterable of vectors (list/tuple/numpy array/generator), the
+    OpenAI-shaped ``{"data": [{"embedding": [...]}, ...]}`` dicts returned by
+    :meth:`local_llm_kit.LLM.embed`, and per-item ``{"embedding": [...]}`` or
+    single-result ``{"data": [{"embedding": [...]}]}`` dicts. Returns None
+    when the shape does not line up with ``n`` inputs, so callers never pair
+    a text with the wrong vector.
+    """
+    if isinstance(result, dict):
+        if "data" not in result:
+            return None
+        result = result.get("data")
+    try:
+        items = list(result)
+    except TypeError:
+        return None
+    if len(items) != n:
+        return None
+    vectors = []  # type: List[List[float]]
+    for item in items:
+        if isinstance(item, dict):
+            if "embedding" not in item and isinstance(item.get("data"), list) and item["data"]:
+                item = item["data"][0]  # single-result envelope for this text
+            if isinstance(item, dict):
+                item = item.get("embedding")
+        try:
+            vectors.append(list(map(float, item)))
+        except (TypeError, ValueError):
+            return None
+    return vectors
+
+
 def _try_get_embeddings(llm: Any, texts: List[str]) -> Optional[List[List[float]]]:
     """Use native embedding support if the llm provides it, else None."""
     for method_name in ("embed", "embeddings", "get_embeddings"):
@@ -222,13 +256,9 @@ def _try_get_embeddings(llm: Any, texts: List[str]) -> Optional[List[List[float]
                     continue
             except Exception:
                 continue
-            try:
-                if isinstance(result, dict) and "data" in result:
-                    # OpenAI-shaped dict already
-                    return None  # signal caller to use it directly if needed
-                return [list(map(float, v)) for v in result]
-            except Exception:
-                continue
+            vectors = _coerce_vectors(result, len(texts))
+            if vectors is not None:
+                return vectors
     return None
 
 

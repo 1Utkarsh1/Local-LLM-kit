@@ -8,6 +8,7 @@ not landed yet. Stdlib unittest only; no downloads, no numpy/torch.
 Run: python -m pytest tests/test_rag.py -q
 """
 
+import json
 import os
 import re
 import tempfile
@@ -244,6 +245,92 @@ class TestSimpleVectorStore(unittest.TestCase):
                         break
             after = [_result_text(h) for h in store_search(loaded, "cat", top_k=3)]
             self.assertEqual(before, after)
+
+
+@unittest.skipUnless(
+    HAS_STORE
+    and callable(getattr(STORE_CLS, "load", None))
+    and callable(getattr(STORE_CLS, "save", None)),
+    "local_llm_kit.rag.SimpleVectorStore save/load not available yet",
+)
+class TestVectorStoreLoadValidation(unittest.TestCase):
+    """load() must validate persisted records strictly.
+
+    Null or wrongly-typed fields in a stored record (a partial/hand-edited
+    file) must raise the documented ValueError, never a TypeError or
+    AttributeError from len()/dict access on None.
+    """
+
+    def _load(self, payload, **kwargs):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "store.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh)
+            return STORE_CLS.load(path, **kwargs)
+
+    def _payload(self, **overrides):
+        base = {
+            "version": 1,
+            "dim": 2,
+            "ids": ["a"],
+            "texts": ["hello"],
+            "metadatas": [{}],
+            "vectors": [[1.0, 2.0]],
+        }
+        base.update(overrides)
+        return base
+
+    def test_null_collection_fields_are_rejected_with_value_error(self):
+        for field in ("ids", "texts", "metadatas", "vectors"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError) as ctx:
+                    self._load(self._payload(**{field: None}))
+                self.assertIn(field, str(ctx.exception))
+
+    def test_null_vector_entry_is_rejected_with_value_error(self):
+        with self.assertRaises(ValueError):
+            self._load(self._payload(vectors=[None]))
+
+    def test_wrongly_typed_fields_are_rejected_with_value_error(self):
+        with self.assertRaises(ValueError):
+            self._load(self._payload(texts="hello"))
+        with self.assertRaises(ValueError):
+            self._load(self._payload(vectors=["not-a-vector"]))
+
+    def test_mismatched_field_lengths_are_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._load(self._payload(ids=["a", "b"]))
+        self.assertIn("mismatched field lengths", str(ctx.exception))
+
+    def test_valid_records_still_load(self):
+        store = self._load(self._payload())
+        self.assertEqual(len(store), 1)
+        self.assertEqual(store.texts, ["hello"])
+        self.assertEqual(store.vectors, [[1.0, 2.0]])
+
+    def test_int_valued_float_dim_written_by_save_still_loads(self):
+        # STORE_CLS(dim=2.0) is accepted by __init__, so save() can write an
+        # int-valued float; load() must keep accepting it.
+        store = STORE_CLS(dim=2.0)
+        store.texts, store.ids = ["hello"], ["a"]
+        store.metadatas, store.vectors = [{}], [[1.0, 2.0]]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "store.json")
+            store.save(path)
+            loaded = STORE_CLS.load(path)
+        self.assertEqual(loaded.dim, 2)
+
+    def test_non_numeric_dim_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self._load(self._payload(dim="2"))
+        with self.assertRaises(ValueError):
+            self._load(self._payload(dim=2.5))
+
+    def test_empty_store_still_loads(self):
+        store = self._load(
+            {"version": 1, "dim": None, "ids": [], "texts": [], "metadatas": [], "vectors": []}
+        )
+        self.assertEqual(len(store), 0)
 
 
 @unittest.skipUnless(HAS_RAG, "local_llm_kit.rag not available yet")

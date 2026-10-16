@@ -31,7 +31,6 @@ import asyncio
 import concurrent.futures
 import json
 import logging
-import re
 import threading
 import time
 import uuid
@@ -524,9 +523,15 @@ class LLM:
             if timeout is None:
                 result = impl(**call.arguments)
             else:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                # NOTE: deliberately not a `with` block -- ThreadPoolExecutor's
+                # __exit__ joins the worker, which would make a timed-out tool
+                # block until it finishes and defeat the timeout entirely.
+                pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
                     future = pool.submit(impl, **call.arguments)
                     result = future.result(timeout=timeout)
+                finally:
+                    pool.shutdown(wait=False)
         except concurrent.futures.TimeoutError:
             return "Error: tool '%s' timed out after %s seconds" % (call.name, timeout)
         except Exception as exc:  # noqa: BLE001 (tool errors become tool output)
@@ -536,7 +541,12 @@ class LLM:
                 type(exc).__name__,
                 str(exc)[:200],
             )
-        return result if isinstance(result, str) else json.dumps(result)
+        if isinstance(result, str):
+            return result
+        try:
+            return json.dumps(result, default=str)
+        except (TypeError, ValueError):  # e.g. circular references
+            return str(result)
 
     def _ensure_json_output(self, text: str) -> str:
         try:
@@ -544,14 +554,18 @@ class LLM:
             return text
         except json.JSONDecodeError:
             pass
-        match = re.search(r"(\{|\[).*?(\}|\])", text, re.DOTALL)
-        if match:
+        # Scan for the first decodable JSON value. A brace-matching decoder is
+        # required here: the non-greedy regex this replaced stopped at the
+        # first closing brace and destroyed nested objects/arrays.
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text):
+            if char not in "{[":
+                continue
             try:
-                candidate = match.group(0)
-                json.loads(candidate)
-                return candidate
-            except json.JSONDecodeError:
-                pass
+                _value, end = decoder.raw_decode(text, index)
+            except ValueError:  # json.JSONDecodeError is a ValueError
+                continue
+            return text[index:end]
         correction = (
             "The previous response was not valid JSON. "
             "Respond with only a valid JSON object or array.\n\nPrevious invalid response:\n"

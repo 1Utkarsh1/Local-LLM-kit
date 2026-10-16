@@ -61,7 +61,7 @@ class ChatMLPromptFormatter(BasePromptFormatter):
                     formatted_messages.append(f"<|im_start|>assistant\n{func_call_str}<|im_end|>")
                 else:
                     formatted_messages.append(f"<|im_start|>assistant\n{content or ''}<|im_end|>")
-            elif role == "function":
+            elif role in ("function", "tool"):
                 formatted_messages.append(
                     f"<|im_start|>function\nname: {message.get('name')}\ncontent: {content}<|im_end|>"
                 )
@@ -144,7 +144,7 @@ class Llama2ChatPromptFormatter(BasePromptFormatter):
                     current_turn["assistant"] = func_call_str
                 else:
                     current_turn["assistant"] = content or ""
-            elif role == "function":
+            elif role in ("function", "tool"):
                 # Add function result as part of user's next message
                 func_result = f"[Function Result: {message.get('name')}]\n{content}"
                 if current_turn["user"]:
@@ -282,7 +282,7 @@ class MistralInstructPromptFormatter(BasePromptFormatter):
                     conversation_parts.append(func_call_str)
                 else:
                     conversation_parts.append(content or "")
-            elif role == "function":
+            elif role in ("function", "tool"):
                 # Add function result to next user message
                 func_result = f"[Function Result: {message.get('name')}]\n{content}"
                 if i + 1 < len(messages) and messages[i + 1]["role"] == "user":
@@ -360,7 +360,7 @@ class VicunaPromptFormatter(BasePromptFormatter):
                     formatted_parts.append(f"ASSISTANT: {func_call_str}")
                 else:
                     formatted_parts.append(f"ASSISTANT: {content or ''}")
-            elif role == "function":
+            elif role in ("function", "tool"):
                 # Add function result
                 func_result = f"FUNCTION {message.get('name')}: {content}"
                 formatted_parts.append(func_result)
@@ -438,7 +438,7 @@ class PlainInstructPromptFormatter(BasePromptFormatter):
                     conversation.append(f"Assistant: {func_call_str}")
                 else:
                     conversation.append(f"Assistant: {content or ''}")
-            elif role == "function":
+            elif role in ("function", "tool"):
                 # Add function result
                 conversation.append(f"Function {message.get('name')}: {content}")
 

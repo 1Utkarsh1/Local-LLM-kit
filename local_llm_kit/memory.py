@@ -28,14 +28,32 @@ class MessageHistory:
         self.context_window = context_window
         self.token_estimator = token_estimator or self._estimate_tokens
 
+    @staticmethod
+    def _check_message(message: Any) -> None:
+        """Reject non-dict messages before they can enter (and corrupt) history."""
+        if not isinstance(message, dict):
+            raise TypeError(
+                "messages must be dicts with a 'role' key, got %r" % type(message).__name__
+            )
+
     def add_messages(self, messages: List[Dict[str, Any]]) -> None:
         """
         Add messages to history.
 
+        The whole batch is validated before anything is stored, so a bad
+        entry cannot leave the history in a state that breaks every later
+        call on this instance.
+
         Args:
             messages: List of message dictionaries to add
+
+        Raises:
+            TypeError: If any entry is not a dict.
         """
-        self.messages.extend(messages)
+        batch = list(messages)
+        for message in batch:
+            self._check_message(message)
+        self.messages.extend(batch)
         self._truncate_if_needed()
 
     def add_message(self, message: Dict[str, Any]) -> None:
@@ -44,7 +62,11 @@ class MessageHistory:
 
         Args:
             message: Message dictionary to add
+
+        Raises:
+            TypeError: If the message is not a dict.
         """
+        self._check_message(message)
         self.messages.append(message)
         self._truncate_if_needed()
 
