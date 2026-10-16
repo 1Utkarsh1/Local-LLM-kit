@@ -4,13 +4,15 @@
 
 ## Where it fits
 
-Applications that want one OpenAI-shaped chat/completion interface across local runtimes, native tool calls and structured outputs where supported, an offline deterministic test backend, or small embedding/RAG helpers. The core client uses stdlib HTTP and typing-extensions; inference packages are optional extras.
+Applications that want one OpenAI-shaped chat/completion interface across local runtimes, native tool calls and structured outputs where supported, an offline deterministic test backend, small embedding/RAG helpers, or MCP (Model Context Protocol) tools discovered from local/remote servers. The core client uses stdlib HTTP and typing-extensions; inference packages are optional extras. The MCP client (`local_llm_kit.mcp.MCPServer`) is also stdlib-only and works on Python 3.9, unlike the official `mcp` SDK (Python >= 3.10).
 
 ## Actual API
 
 `from local_llm_kit import LLM, chat, complete, embed, tool`
 
 `LLM(model_path="echo", backend="echo").chat([{"role":"user","content":"Hello"}])` returns a dictionary; text is at `response["choices"][0]["message"]["content"]`.
+
+MCP: `from local_llm_kit import LLM` then `llm.add_mcp_server("fs", command="npx", args=[...])` registers a server's tools (namespaced `fs__<tool>`) for the chat tool loop; `from local_llm_kit.mcp import MCPServer` drives discovery/invocation directly. CLI: `local-llm-kit mcp tools|call` and `chat --mcp-command/--mcp-url`.
 
 Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm. Server presets: sglang, vllm, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm and koboldcpp. These cover 12 distinct local runtimes; this is not a usage ranking. A preset connects to an already-running server with a served model ID; it does not install or host that engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate embedding backend.
 

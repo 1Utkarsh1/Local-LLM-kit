@@ -28,6 +28,7 @@ import argparse
 import inspect
 import json
 import os
+import shlex
 import sys
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
@@ -48,6 +49,7 @@ __all__ = [
     "handle_pull_command",
     "handle_list_command",
     "handle_embed_command",
+    "handle_mcp_command",
 ]
 
 
@@ -611,6 +613,132 @@ def _add_common_backend_tuning(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_mcp_connection_args(parser: argparse.ArgumentParser) -> None:
+    """Shared connection flags for ``mcp`` subcommands."""
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--command",
+        dest="mcp_command",
+        default=None,
+        metavar="CMD",
+        help="Start a local server over stdio, e.g. "
+        "'npx -y @modelcontextprotocol/server-filesystem /tmp'.",
+    )
+    group.add_argument(
+        "--url",
+        dest="mcp_url",
+        default=None,
+        metavar="URL",
+        help="Connect to a Streamable HTTP endpoint, e.g. 'http://localhost:3001/mcp'.",
+    )
+    parser.add_argument(
+        "--name",
+        default=None,
+        help="Server name (defaults to a name derived from the command/URL).",
+    )
+    parser.add_argument(
+        "--header",
+        dest="mcp_headers",
+        action="append",
+        default=None,
+        metavar="K:V",
+        help="Extra HTTP header for --url servers (repeatable).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="Per-request timeout in seconds (default: 30).",
+    )
+
+
+def _split_mcp_command(command: str) -> Tuple[str, List[str]]:
+    """Split a full command string into (executable, args) via shlex."""
+    try:
+        parts = shlex.split(command, posix=(os.name != "nt"))
+    except ValueError as exc:
+        _fail("could not parse MCP command {0!r}: {1}".format(command, exc))
+    if not parts:
+        _fail("MCP command is empty.")
+    return parts[0], parts[1:]
+
+
+def _derive_mcp_name(command: Optional[str], url: Optional[str], index: int) -> str:
+    """A readable, unique-ish server name from a command or URL."""
+    if url:
+        host = url.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+        return "{0}-{1}".format(host or "http", index)
+    if command:
+        first = command.split()[0] if command.split() else "mcp"
+        stem = os.path.splitext(os.path.basename(first))[0] or "mcp"
+        return "{0}-{1}".format(stem, index)
+    return "mcp-{0}".format(index)
+
+
+def _parse_headers(pairs: Optional[List[str]]) -> Optional[Dict[str, str]]:
+    """Parse ``--header K:V`` values into a dict."""
+    if not pairs:
+        return None
+    headers: Dict[str, str] = {}
+    for pair in pairs:
+        if ":" not in pair:
+            _fail("invalid --header {0!r}; expected 'Name: value'.".format(pair))
+        key, _, value = pair.partition(":")
+        key = key.strip()
+        if not key:
+            _fail("invalid --header {0!r}; empty name.".format(pair))
+        headers[key] = value.strip()
+    return headers
+
+
+def _build_mcp_servers_from_args(args: argparse.Namespace) -> List[Any]:
+    """Build (but do not open) MCPServer objects from chat/generic args."""
+    from .mcp import MCPServer
+
+    servers: List[Any] = []
+    for i, raw in enumerate(getattr(args, "mcp_command", None) or [], start=1):
+        command, extra = _split_mcp_command(raw)
+        servers.append(
+            MCPServer(
+                getattr(args, "name", None) or _derive_mcp_name(raw, None, i),
+                command=command,
+                args=extra,
+                timeout=getattr(args, "timeout", 30.0) or 30.0,
+            )
+        )
+    for i, raw_url in enumerate(getattr(args, "mcp_url", None) or [], start=1):
+        servers.append(
+            MCPServer(
+                getattr(args, "name", None) or _derive_mcp_name(None, raw_url, i),
+                url=raw_url,
+                headers=_parse_headers(getattr(args, "mcp_headers", None)),
+                timeout=getattr(args, "timeout", 30.0) or 30.0,
+            )
+        )
+    return servers
+
+
+def _register_mcp_on_llm(llm: Any, args: argparse.Namespace) -> List[str]:
+    """Connect MCP servers from CLI args and register their tools on *llm*."""
+    servers = _build_mcp_servers_from_args(args)
+    registered: List[str] = []
+    for server in servers:
+        try:
+            names = llm.add_mcp_server(server)
+        except Exception as exc:  # noqa: BLE001 - report, don't crash the REPL
+            _eprint(
+                "Warning: MCP server {0!r} unavailable ({1}); skipping.".format(server.name, exc)
+            )
+            continue
+        _eprint(
+            "MCP: {0} -> {1} tool(s)".format(server.name, len(names))
+            if names
+            else "MCP: {0} advertised no tools".format(server.name)
+        )
+        registered.extend(names)
+    return registered
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the top-level argument parser (split out for testability)."""
     parser = argparse.ArgumentParser(
@@ -686,6 +814,25 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to a JSON file with OpenAI-style tool definitions. "
         "May be given multiple times.",
+    )
+    chat_p.add_argument(
+        "--mcp-command",
+        dest="mcp_command",
+        action="append",
+        default=None,
+        metavar="CMD",
+        help="Connect a local MCP server over stdio and register its tools. "
+        "Give the full command, e.g. 'npx -y @modelcontextprotocol/server-filesystem /tmp'. "
+        "May be given multiple times.",
+    )
+    chat_p.add_argument(
+        "--mcp-url",
+        dest="mcp_url",
+        action="append",
+        default=None,
+        metavar="URL",
+        help="Connect a remote MCP server over Streamable HTTP and register "
+        "its tools. May be given multiple times.",
     )
     chat_p.add_argument(
         "--function-call",
@@ -846,6 +993,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read input texts from a file (one per non-empty line), " "or '-' for stdin.",
     )
 
+    # -- mcp -------------------------------------------------------------
+    mcp_p = sub.add_parser(
+        "mcp",
+        help="Inspect and call tools from Model Context Protocol (MCP) servers.",
+    )
+    mcp_sub = mcp_p.add_subparsers(dest="mcp_action", metavar="ACTION")
+
+    mcp_tools_p = mcp_sub.add_parser(
+        "tools", help="List the tools a server advertises (OpenAI tool specs)."
+    )
+    _add_mcp_connection_args(mcp_tools_p)
+    mcp_tools_p.add_argument(
+        "--json",
+        dest="json",
+        action="store_true",
+        default=False,
+        help="Emit OpenAI-style tool specs as JSON instead of a table.",
+    )
+
+    mcp_call_p = mcp_sub.add_parser("call", help="Call a single tool on a server.")
+    _add_mcp_connection_args(mcp_call_p)
+    mcp_call_p.add_argument("--tool", required=True, help="Tool name to call (as advertised).")
+    mcp_call_p.add_argument(
+        "--args",
+        default=None,
+        help="Tool arguments: inline JSON object or a path to a JSON file.",
+    )
+
     return parser
 
 
@@ -872,6 +1047,21 @@ def handle_chat_command(
     execute_tools = bool(getattr(args, "execute_tools", False))
 
     llm = _create_llm(args, backend_kwargs)
+
+    # Register tools from any MCP servers requested on the command line.
+    mcp_names: List[str] = []
+    if getattr(args, "mcp_command", None) or getattr(args, "mcp_url", None):
+        mcp_names = _register_mcp_on_llm(llm, args)
+        if mcp_names:
+            spec_by_name = {s["function"]["name"]: s for s in llm.list_tools()}
+            tools = list(tools or []) + [
+                spec_by_name[name] for name in mcp_names if name in spec_by_name
+            ]
+            if tool_choice is None:
+                tool_choice = "auto"
+            # Live MCP tools are meant to run; enable the executor unless the
+            # user explicitly passed tools that cannot be executed (schemas only).
+            execute_tools = True
 
     messages: List[Dict[str, Any]] = []
     if getattr(args, "system", None):
@@ -1500,6 +1690,84 @@ def handle_embed_command(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _print_mcp_tools(server: Any, tools: List[Any]) -> None:
+    """Human-readable table of a server's tools."""
+    from .mcp import sanitize_tool_name
+
+    print("Server: {0} ({1})".format(server.name, server.transport_kind))
+    if not tools:
+        print("  (no tools advertised)")
+        return
+    for tool in tools:
+        summary = (tool.description or "").strip().splitlines()
+        first_line = summary[0] if summary else ""
+        print("  - {0}: {1}".format(sanitize_tool_name(tool.name), first_line))
+        params = (tool.input_schema or {}).get("properties") or {}
+        required = set((tool.input_schema or {}).get("required") or [])
+        for pname, meta in params.items():
+            ptype = (meta or {}).get("type", "any") if isinstance(meta, dict) else "any"
+            flag = " (required)" if pname in required else ""
+            print("      {0}: {1}{2}".format(pname, ptype, flag))
+
+
+def handle_mcp_command(args: argparse.Namespace) -> None:
+    """Handle ``mcp tools`` and ``mcp call`` subcommands."""
+    action = getattr(args, "mcp_action", None)
+    if action not in ("tools", "call"):
+        _fail("mcp requires an action: 'tools' or 'call'.")
+
+    from .mcp import MCPServer
+
+    command = getattr(args, "mcp_command", None)
+    url = getattr(args, "mcp_url", None)
+    name = getattr(args, "name", None)
+    try:
+        if command:
+            exe, extra = _split_mcp_command(command)
+            server = MCPServer(
+                name or _derive_mcp_name(command, None, 1),
+                command=exe,
+                args=extra,
+                timeout=getattr(args, "timeout", 30.0) or 30.0,
+            )
+        else:
+            server = MCPServer(
+                name or _derive_mcp_name(None, url, 1),
+                url=url,
+                headers=_parse_headers(getattr(args, "mcp_headers", None)),
+                timeout=getattr(args, "timeout", 30.0) or 30.0,
+            )
+    except ValueError as exc:
+        _fail("invalid MCP server configuration: {0}".format(exc))
+
+    try:
+        server.open()
+    except Exception as exc:  # noqa: BLE001 - surface a clean CLI error
+        _fail("could not connect to MCP server: {0}".format(exc))
+
+    try:
+        if action == "tools":
+            tools = server.list_tools()
+            if getattr(args, "json", False):
+                print(json.dumps(server.to_openai_tools(), indent=2))
+            else:
+                _print_mcp_tools(server, tools)
+            return
+        raw_args = getattr(args, "args", None)
+        parsed = _load_json_value_or_file(raw_args, "--args") if raw_args else {}
+        if parsed is None:
+            parsed = {}
+        if not isinstance(parsed, dict):
+            _fail("--args must be a JSON object.")
+        try:
+            output = server.call_tool(args.tool, parsed)
+        except Exception as exc:  # noqa: BLE001 - tool errors are reported, not raised
+            _fail("tool {0!r} failed: {1}".format(args.tool, exc))
+        print(output)
+    finally:
+        server.close()
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Main CLI entrypoint. Returns a process exit code."""
     parser = build_parser()
@@ -1527,6 +1795,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             handle_list_command(args)
         elif command == "embed":
             handle_embed_command(args)
+        elif command == "mcp":
+            handle_mcp_command(args)
         else:
             parser.print_help()
             return 1

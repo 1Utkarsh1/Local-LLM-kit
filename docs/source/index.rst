@@ -19,6 +19,7 @@ Welcome to local_llm_kit's documentation!
    models
    api_reference
    examples
+   mcp
    best_practices
 
 .. toctree::
@@ -44,6 +45,7 @@ Features
 * Native Ollama chat and HTTP presets covering 12 local runtimes (see :doc:`backends`)
 * Chat completion API
 * Function calling capability
+* MCP (Model Context Protocol) host: discover and call tools from MCP servers
 * Streaming responses
 * JSON mode output
 * Memory management

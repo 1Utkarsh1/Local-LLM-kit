@@ -17,7 +17,7 @@ authors = [
 maintainers = [
     { name = "Utkarsh Rajput", email = "utkarshrajput815@gmail.com" },
 ]
-keywords = ["llm", "local-llm", "offline-ai", "openai-compatible", "transformers", "llama.cpp", "ollama", "airllm", "sglang", "vllm", "lm-studio", "tool-calling", "structured-output", "rag", "embeddings"]
+keywords = ["llm", "local-llm", "offline-ai", "openai-compatible", "transformers", "llama.cpp", "ollama", "airllm", "sglang", "vllm", "lm-studio", "tool-calling", "mcp", "model-context-protocol", "structured-output", "rag", "embeddings"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

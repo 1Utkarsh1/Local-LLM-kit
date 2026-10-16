@@ -203,6 +203,39 @@ print(resp["choices"][0]["message"])
 
 Full runnable version: `examples/tools_structured.py`.
 
+## MCP tools snippet (Model Context Protocol)
+
+Connect to any [MCP](https://modelcontextprotocol.io) server and its tools become
+tools your local model can call. Stdlib-only client — no new dependency, and it
+still works on Python 3.9 (the official `mcp` SDK needs 3.10+).
+
+```python
+from local_llm_kit import LLM
+from local_llm_kit.mcp import MCPServer
+
+# stdio (local) or http (remote) servers; discovered tools auto-register and run
+with MCPServer(
+    "fs", command="npx", args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+) as server:
+    print([t.name for t in server.tools()])
+
+llm = LLM(model_path="./models/qwen.gguf", backend="llamacpp")
+llm.add_mcp_server("fs", command="npx", args=[...])   # namespaced fs__<tool>
+print(llm.chat([{"role": "user", "content": "List the files in /tmp"}]))
+llm.close()
+```
+
+CLI:
+
+```bash
+local-llm-kit mcp tools --command "uvx mcp-server-git"
+local-llm-kit mcp call --command "uvx mcp-server-git" --tool git_status --args '{}'
+local-llm-kit chat -m ./qwen.gguf --backend llamacpp \
+  --mcp-command "npx -y @modelcontextprotocol/server-filesystem /tmp"
+```
+
+Run the offline demo: `python examples/mcp_tools.py`. See `docs/source/mcp.rst`.
+
 ## Structured output snippet (`response_format`, JSON Schema)
 
 ```python
@@ -286,6 +319,8 @@ local-llm-kit pull owner/repo --filename file.gguf --revision main --force
 local-llm-kit chat --backend sglang --model your-served-model-id -q "Hello"
 local-llm-kit list
 local-llm-kit embed --model nomic-embed-text --backend ollama --text "hello world"
+local-llm-kit mcp tools --command "uvx mcp-server-git"
+local-llm-kit mcp call --command "uvx mcp-server-git" --tool git_status --args '{}'
 ```
 
 All `chat`/`complete`/`embed` commands accept `--backend echo|transformers|llamacpp|ollama|openai-compat`. Run any command with `--help` for flags.
@@ -301,6 +336,7 @@ Server presets and `airllm` are also accepted by the CLI. `pull` reuses reposito
 | `examples/tools_structured.py` | `@tool` + `response_format` | yes |
 | `examples/rag_minimal.py` | chunk → store → retrieve → chat | yes |
 | `examples/vision_chat.py` | `image_url` message, graceful fallback | yes |
+| `examples/mcp_tools.py` | MCP server → tools → chat | yes (built-in demo server) |
 
 ## Migration: 0.1.x → 0.2.0
 

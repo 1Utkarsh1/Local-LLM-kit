@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Optional MCP (Model Context Protocol) host: `local_llm_kit.mcp.MCPServer` connects to MCP servers over stdio or Streamable HTTP, discovers their tools with pagination, and converts them to OpenAI tool specs. `LLM.add_mcp_server()` registers them (namespaced `server__tool`) so the existing chat/tool-execution loop can call them. The client is stdlib-only, so the light core gains no dependency and Python 3.9 keeps working — the official `mcp` SDK requires Python >= 3.10.
+- CLI: `local-llm-kit mcp tools` and `local-llm-kit mcp call`, plus repeatable `--mcp-command` / `--mcp-url` on `chat`.
+- `examples/mcp_tools.py` (runs fully offline against a built-in demo server) and `docs/source/mcp.rst`.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added
