@@ -273,6 +273,11 @@ class LLM:
     :param use_cache: reuse module-level cached backends for identical
         ``(model_path, backend, backend_kwargs)``. Set False in tests that
         need isolation.
+    :param require_local: refuse to use a model the backend reports as routed
+        off this device (for example an Ollama ``:cloud`` model, which runs on
+        ollama.com). Checked at construction when the backend can tell; see
+        :meth:`assert_local`. Backends with no notion of remote routing treat
+        this as a no-op.
     """
 
     def __init__(
@@ -288,6 +293,7 @@ class LLM:
         backend_kwargs: Optional[Dict[str, Any]] = None,
         backend_instance: Optional[BaseBackend] = None,
         use_cache: bool = True,
+        require_local: bool = False,
     ):
         if not isinstance(model_path, str) or not model_path.strip():
             raise ValueError("model_path must be a non-empty string.")
@@ -319,6 +325,11 @@ class LLM:
                 if use_cache:
                     with _CACHE_LOCK:
                         _BACKEND_CACHE.setdefault(key, self.backend)
+
+        # Check the on-device guarantee before reading the context window, so a
+        # detection triggered here also supplies the model's real window size.
+        if require_local:
+            self.assert_local()
 
         if context_window:
             self.context_window = context_window
@@ -409,6 +420,55 @@ class LLM:
                 "openai-compat backend module missing " "(local_llm_kit/backends/openai_compat.py)."
             ) from exc
         raise AssertionError("unreachable")  # pragma: no cover
+
+    # -- on-device guarantee ----------------------------------------------
+    def detect_backend_capabilities(self) -> Dict[str, Any]:
+        """Ask the backend what the model can really do, when it can say.
+
+        Backends that expose ``detect_capabilities()`` (currently Ollama) report
+        the model's true context length, capability list and whether the model
+        is routed off this machine. Backends without that concept are a no-op.
+        Never raises: an unreachable server leaves the backend's current values.
+        """
+        detect = getattr(self.backend, "detect_capabilities", None)
+        if not callable(detect):
+            return {"supported": False, "reason": "backend does not report capabilities"}
+        try:
+            result = detect()
+        except Exception as exc:  # noqa: BLE001 - detection is best-effort
+            return {"supported": True, "error": str(exc)}
+        if isinstance(result, dict):
+            return dict(result, supported=True)
+        return {"supported": True}
+
+    def assert_local(self) -> bool:
+        """Verify the backend runs this model on this machine.
+
+        Returns:
+            True when the model is on-device, or when the backend has no notion
+            of remote routing at all (nothing to refuse).
+
+        Raises:
+            RuntimeError: when the backend reports the model is routed to a
+                remote host, or when the backend *can* report routing but the
+                lookup failed — a requested on-device guarantee that cannot be
+                verified is not granted silently.
+        """
+        detection = self.detect_backend_capabilities()
+        if detection.get("supported") and detection.get("error"):
+            raise RuntimeError(
+                "Could not confirm that %r runs on this machine (%s). "
+                "Is the server running? Drop require_local to skip the check."
+                % (self.model_path, detection["error"])
+            )
+        if getattr(self.backend, "remote", False):
+            host = getattr(self.backend, "remote_host", None) or "a remote host"
+            raise RuntimeError(
+                "Model %r is served from %s, not on this machine. "
+                "Pull an on-device model (for example `ollama pull qwen2.5:0.5b`) "
+                "or drop require_local." % (self.model_path, host)
+            )
+        return True
 
     # -- registration -----------------------------------------------------
     def add_function(self, name: str, schema: Dict[str, Any], implementation: Callable) -> None:

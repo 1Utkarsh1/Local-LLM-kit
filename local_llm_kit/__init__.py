@@ -11,6 +11,14 @@ are optional extras, lazily imported.
 __version__ = "0.2.0"
 
 from .chat import achat, acomplete, chat, complete, embed
+from .discovery import (
+    DiscoveryReport,
+    ModelRecord,
+    ServerReport,
+    discover,
+    find_local_server,
+    probe_endpoint,
+)
 from .function_calling import FunctionCall, FunctionRegistry, add_function, parse_function_calls
 from .llm import LLM, clear_backend_cache, clear_client_cache, get_client
 from .tools import (
@@ -43,4 +51,10 @@ __all__ = [
     "normalize_tools",
     "parse_function_calls",
     "parse_tool_calls",
+    "discover",
+    "probe_endpoint",
+    "find_local_server",
+    "DiscoveryReport",
+    "ServerReport",
+    "ModelRecord",
 ]

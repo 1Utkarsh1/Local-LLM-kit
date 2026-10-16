@@ -87,12 +87,20 @@ for _alias, _canonical in BACKEND_ALIASES.items():
     BACKENDS[_alias] = BACKENDS[_canonical]
 
 # Connection presets; callers may override base_url for any server or port.
+#
+# NOTE on llama-server: llama.cpp moved its default listen port from 8080 to
+# 9931 in October 2026 (ggml-org/llama.cpp#30159, merged 2026-10-09); the
+# published Docker image still binds 8080 inside the container. This preset
+# follows the upstream binary. On an older llama-server build, or against the
+# container, pass the port explicitly:
+#     backend_kwargs={"base_url": "http://localhost:8080/v1"}
+# `local-llm-kit doctor` probes both ports and reports what is actually up.
 OPENAI_SERVER_URLS: Dict[str, str] = {
     "vllm": "http://localhost:8000/v1",
     "sglang": "http://localhost:30000/v1",
     "lmstudio": "http://localhost:1234/v1",
     "localai": "http://localhost:8080/v1",
-    "llama-server": "http://localhost:8080/v1",
+    "llama-server": "http://localhost:9931/v1",
     "jan": "http://127.0.0.1:1337/v1",
     "gpt4all": "http://127.0.0.1:4891/v1",
     "mlx-lm": "http://127.0.0.1:8080/v1",

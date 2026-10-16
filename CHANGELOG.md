@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Server discovery** (`local_llm_kit.discovery`): `discover()`, `probe_endpoint()`, `find_local_server()`, `DiscoveryReport`/`ServerReport`/`ModelRecord`, all exported from the package root. Probes the well-known local endpoints concurrently with stdlib `urllib` only, reports unreachable ports as results instead of exceptions, and identifies the provider from the server's own response rather than the port number. Extra endpoints via `extra_urls`, `timeout`/`enrich`/`max_workers` controls, full `to_dict()` for JSON output.
+- **`local-llm-kit doctor`** (aliases `discover`, `probe`): human-readable or `--json` report of what is running and what it can do, with `--url`, `--timeout`, `--require-local`, `--keep-loading` and `--quiet`. Exit code `0` when a server responded (`--require-local`: when an on-device model is available), `1` otherwise.
+- **Off-device model detection**: models a server routes elsewhere (Ollama `:cloud` models run on ollama.com) are flagged by `ServerReport.remote_models` and in the CLI, so a "local" setup cannot silently depend on a remote provider.
+- **`require_local`** on `LLM`: refuses a model the backend reports as routed off this machine, and raises when the backend *could* report routing but the lookup failed rather than assuming the model is local. `LLM.detect_backend_capabilities()` exposes the backend's report; `LLM.assert_local()` re-checks.
+- **Retry policy** (`local_llm_kit.retry`): `RetryPolicy` plus `DEFAULT_RETRY`, with `is_retryable_status`, `retry_after_seconds` and `coerce_policy` helpers. Server backends retry a refused connection and transient statuses (`429`, `5xx` — llama.cpp answers `503` while loading a model) using the same defaults as the official OpenAI Python client: two retries, 0.5s initial delay doubling to an 8s ceiling, jittered, `Retry-After` honoured and clamped to 120s. Configured per backend via `backend_kwargs={"max_retries": ...}` (int, `RetryPolicy`, or `0` to disable).
+
+### Changed
+- **Truthful capability reporting.** `OllamaBackend` now reads real model metadata instead of hardcoded defaults: `list_models()` carries the server's `capabilities`, per-model `context_length` and `remote_host`; `detect_capabilities()` reads `POST /api/show` for the true context length and `GET /api/tags` for routing; `supports_vision` reflects the server's capability list. Pass `backend_kwargs={"auto_detect_capabilities": True}` to have `LLM.context_window` use the server value (opt-in, so backend construction never requires a running server; a failed lookup keeps the configured fallback). Measured on Ollama 0.34.2 with `qwen2.5:0.5b`: the adapter reported 4096 tokens and vision support; the server reports 32768 tokens and no vision.
+- **`llama-server` preset port.** llama.cpp changed the `llama-server` default listen port from 8080 to 9931 (ggml-org/llama.cpp#30159, merged 2026-10-09); `OPENAI_SERVER_URLS["llama-server"]` now follows the upstream binary at `http://localhost:9931/v1`. The Docker image still binds 8080 and older builds default to 8080 — pass `backend_kwargs={"base_url": "http://localhost:8080/v1"}` for those, and note that `doctor` probes both ports.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added
