@@ -8,6 +8,7 @@ not landed yet. Stdlib unittest only; no downloads, no numpy/torch.
 Run: python -m pytest tests/test_rag.py -q
 """
 
+import json
 import os
 import re
 import tempfile
@@ -244,6 +245,31 @@ class TestSimpleVectorStore(unittest.TestCase):
                         break
             after = [_result_text(h) for h in store_search(loaded, "cat", top_k=3)]
             self.assertEqual(before, after)
+
+    def test_save_handles_null_metadata(self):
+        store = make_store()
+        store.add(["text 1"], metadatas=[None])
+        d = store.to_dict()
+        self.assertEqual(d["metadatas"], [{}])
+
+    def test_load_handles_null_fields_and_partial_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "partial.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "texts": ["doc one", "doc two"],
+                        "ids": None,
+                        "metadatas": None,
+                        "vectors": None,
+                    },
+                    f,
+                )
+            loaded = STORE_CLS.load(path)
+            self.assertEqual(len(loaded), 2)
+            self.assertEqual(loaded.texts, ["doc one", "doc two"])
+            self.assertEqual(len(loaded.ids), 2)
+            self.assertEqual(len(loaded.metadatas), 2)
 
 
 @unittest.skipUnless(HAS_RAG, "local_llm_kit.rag not available yet")

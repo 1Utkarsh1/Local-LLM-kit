@@ -190,7 +190,10 @@ def is_hf_repo_id(spec: str) -> bool:
         return False
     if s.lower().endswith(GGUF_SUFFIXES):
         return False
-    if os.path.exists(os.path.expanduser(s)):
+    try:
+        if os.path.exists(os.path.expanduser(s)):
+            return False
+    except (ValueError, OSError):
         return False
     if "/" not in s or s.startswith("/") or s.endswith("/"):
         return False
@@ -264,9 +267,10 @@ def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> st
     parent = os.path.dirname(dest)
     if parent:
         os.makedirs(parent, exist_ok=True)
+    tmp_dest = dest + ".tmp.%d" % os.getpid()
     req = urllib.request.Request(url, headers={"User-Agent": "local-llm-kit/0.2.0"})
     try:
-        with urllib.request.urlopen(req) as resp, open(dest, "wb") as fh:
+        with urllib.request.urlopen(req) as resp, open(tmp_dest, "wb") as fh:
             total = resp.getheader("Content-Length")
             total_n = int(total) if total and total.isdigit() else 0
             if total_n > _MAX_DOWNLOAD_BYTES:
@@ -289,11 +293,17 @@ def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> st
                 if total_n:
                     pct = done * 100 // total_n
                     logger.info("Downloading %s: %d%% (%d/%d bytes)", url, pct, done, total_n)
+            if total_n and done < total_n:
+                raise RuntimeError(
+                    "Download ended prematurely: received %d of %d bytes for %s"
+                    % (done, total_n, url)
+                )
+        os.replace(tmp_dest, dest)
     except Exception as exc:
         # Remove partial file so a retry/cache scan never sees it as valid.
         try:
-            if os.path.exists(dest):
-                os.remove(dest)
+            if os.path.exists(tmp_dest):
+                os.remove(tmp_dest)
         except OSError:
             pass
         raise RuntimeError("Failed to download {}: {}".format(url, exc)) from exc
@@ -314,6 +324,7 @@ def _try_hf_hub_download(
     filename: str,
     cache_dir: Optional[str],
     revision: str = DEFAULT_REVISION,
+    force: bool = False,
 ) -> Optional[str]:
     """Try ``huggingface_hub.hf_hub_download``; return path or None.
 
@@ -326,6 +337,8 @@ def _try_hf_hub_download(
     except ImportError:
         return None
     kwargs = {"repo_id": repo_id, "filename": filename, "revision": revision}
+    if force:
+        kwargs["force_download"] = True
     if cache_dir:
         # NOTE: this is the HF hub cache root, files land under
         # models--<org>--<name>/snapshots/... upstream layout.
@@ -386,6 +399,7 @@ def download_model(
     filename: Optional[str] = None,
     cache_dir: Optional[str] = None,
     revision: str = DEFAULT_REVISION,
+    force: bool = False,
 ) -> str:
     """Download (or locate) a model and return its local path.
 
@@ -402,6 +416,7 @@ def download_model(
         cache_dir: cache root (default
             ``$LOCAL_LLM_KIT_CACHE`` or ``~/.cache/local-llm-kit``).
         revision: HF branch/tag/commit (default ``"main"``).
+        force: re-download even if already present in the cache.
 
     Uses ``huggingface_hub.hf_hub_download`` when that package is
     installed, else falls back to a stdlib ``urllib`` download from
@@ -442,7 +457,10 @@ def download_model(
             )
         name = filename or os.path.basename(spec.split("?", 1)[0].split("#", 1)[0]) or "model.gguf"
         base = os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir()
-        return _download_url(spec, os.path.join(base, "urls", os.path.basename(name)))
+        dest = os.path.join(base, "urls", os.path.basename(name))
+        if not force and os.path.isfile(dest):
+            return os.path.abspath(dest)
+        return _download_url(spec, dest)
 
     # 4. Hugging Face repo id.
     if is_hf_repo_id(spec):
@@ -457,9 +475,18 @@ def download_model(
         filename = os.path.basename(filename.strip().lstrip("/"))
         if not filename or filename in (".", ".."):
             raise ValueError("Invalid filename: %r." % filename)
-        hit = _try_hf_hub_download(spec, filename, cache_dir, revision or DEFAULT_REVISION)
+        if not force:
+            hit = _find_cached_repo_file(spec, filename, cache_dir)
+            if hit:
+                return os.path.abspath(hit)
+        hit = _try_hf_hub_download(
+            spec, filename, cache_dir, revision or DEFAULT_REVISION, force=force
+        )
         if hit is not None:
             return os.path.abspath(hit)
+        dest = _dest_for_repo_file(spec, filename, cache_dir)
+        if not force and os.path.isfile(dest):
+            return os.path.abspath(dest)
         logger.info(
             "huggingface_hub not installed; falling back to urllib. "
             "For faster cached downloads: pip install huggingface_hub"
@@ -480,6 +507,7 @@ def download_gguf(
     filename: str,
     cache_dir: Optional[str] = None,
     revision: str = DEFAULT_REVISION,
+    force: bool = False,
 ) -> str:
     """Download a single ``.gguf`` file from a Hugging Face repo.
 
@@ -493,7 +521,7 @@ def download_gguf(
         )
     if not isinstance(filename, str) or not is_gguf_path(filename.strip()):
         raise ValueError("filename must end in '.gguf', got {!r}.".format(filename))
-    return download_model(repo_id.strip(), filename.strip(), cache_dir, revision)
+    return download_model(repo_id.strip(), filename.strip(), cache_dir, revision, force=force)
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +666,7 @@ def resolve_model(
     cache_dir: Optional[str] = None,
     download: bool = False,
     revision: str = DEFAULT_REVISION,
+    force: bool = False,
 ) -> Tuple[str, str]:
     """Resolve *spec* to ``(local_path_or_id, suggested_backend)``.
 
@@ -668,18 +697,19 @@ def resolve_model(
 
     if is_url(norm):
         if download:
-            path = download_model(norm, filename, cache_dir, revision)
+            path = download_model(norm, filename, cache_dir, revision, force=force)
             return path, suggested_backend_for(path, filename)
         return norm, suggested_backend_for(norm, filename)
 
     if is_hf_repo_id(norm):
-        hit = _find_cached_repo_file(norm, filename, cache_dir)
-        if hit:
-            return hit, suggested_backend_for(hit, filename)
+        if not force:
+            hit = _find_cached_repo_file(norm, filename, cache_dir)
+            if hit:
+                return hit, suggested_backend_for(hit, filename)
         if download:
             if not filename:
                 raise ValueError("download=True for repo '{}' needs filename='...'.".format(norm))
-            path = download_model(norm, filename, cache_dir, revision)
+            path = download_model(norm, filename, cache_dir, revision, force=force)
             return path, suggested_backend_for(path, filename)
         # Not cached: hand back something the backends accept directly.
         model_id = norm if not filename else norm + "/" + filename.strip().lstrip("/")
@@ -700,20 +730,26 @@ def list_recommended_models() -> List[Dict[str, Any]]:
     return [dict(entry) for entry in RECOMMENDED_MODELS]
 
 
-def format_recommended_models() -> str:
+def format_recommended_models(models: Optional[List[Dict[str, Any]]] = None) -> str:
     """Render the starter-models table as Markdown (for CLI/docs)."""
+    table = RECOMMENDED_MODELS if models is None else models
     lines = [
         "| Model | Repo | File | Backend | Size |",
         "|---|---|---|---|---|",
     ]
-    for m in RECOMMENDED_MODELS:
+    for m in table:
+        name = m.get("name") if m.get("name") is not None else "?"
+        repo = m.get("repo_id") if m.get("repo_id") is not None else "-"
+        fname = m.get("filename") or "(any/snapshot)"
+        backend = m.get("backend") if m.get("backend") is not None else "?"
+        size = m.get("approx_size") if m.get("approx_size") is not None else "?"
         lines.append(
             "| {} | {} | {} | {} | {} |".format(
-                m.get("name", "?"),
-                m.get("repo_id", "-"),
-                m.get("filename") or "(any/snapshot)",
-                m.get("backend", "?"),
-                m.get("approx_size", "?"),
+                name,
+                repo,
+                fname,
+                backend,
+                size,
             )
         )
     return "\n".join(lines) + "\n"

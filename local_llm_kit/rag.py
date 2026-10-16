@@ -580,7 +580,7 @@ class SimpleVectorStore:
             "dim": self.dim,
             "ids": list(self.ids),
             "texts": list(self.texts),
-            "metadatas": [dict(m) for m in self.metadatas],
+            "metadatas": [dict(m) if isinstance(m, dict) else {} for m in self.metadatas],
             "vectors": [list(v) for v in self.vectors],
         }
 
@@ -600,10 +600,24 @@ class SimpleVectorStore:
             data = json.load(f)
         if not isinstance(data, dict):
             raise ValueError("Invalid vector store file: %r" % (path,))
-        ids = data.get("ids", [])
-        texts = data.get("texts", [])
-        metadatas = data.get("metadatas", [])
-        vectors = data.get("vectors", [])
+        raw_ids = data.get("ids")
+        raw_texts = data.get("texts")
+        raw_metadatas = data.get("metadatas")
+        raw_vectors = data.get("vectors")
+
+        texts = list(raw_texts) if isinstance(raw_texts, list) else []
+        ids = list(raw_ids) if isinstance(raw_ids, list) else []
+        metadatas = list(raw_metadatas) if isinstance(raw_metadatas, list) else []
+        vectors = list(raw_vectors) if isinstance(raw_vectors, list) else []
+
+        n = len(texts)
+        if not ids and n:
+            ids = ["doc-%d" % i for i in range(n)]
+        if not metadatas and n:
+            metadatas = [{} for _ in range(n)]
+        if not vectors and n:
+            vectors = [[] for _ in range(n)]
+
         if not (len(ids) == len(texts) == len(metadatas) == len(vectors)):
             raise ValueError("Corrupt vector store file %r: mismatched field lengths" % (path,))
         store = cls(embed_fn=embed_fn, dim=data.get("dim"))

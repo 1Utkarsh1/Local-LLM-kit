@@ -103,7 +103,17 @@ _EMBED_METHOD_NAMES = (
     "embed_texts",
 )
 
-_MODEL_ARG_KEYS = ("model", "model_id", "model_name", "repo_id", "repo", "path", "name")
+_MODEL_ARG_KEYS = (
+    "model",
+    "model_id",
+    "model_name",
+    "repo_id",
+    "repo",
+    "path",
+    "name",
+    "repo_or_path",
+)
+_FILENAME_KEYS = ("filename", "file", "file_name")
 _OUTPUT_DIR_KEYS = ("output_dir", "dest_dir", "destination", "out_dir", "target_dir", "cache_dir")
 _REVISION_KEYS = ("revision", "rev", "ref")
 _FORCE_KEYS = ("force", "overwrite", "force_download")
@@ -802,6 +812,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pull_p.add_argument("--revision", default=None, help="Git revision / tag to fetch.")
     pull_p.add_argument(
+        "--filename",
+        "--file",
+        dest="filename",
+        default=None,
+        help="Specific filename inside the repository to download.",
+    )
+    pull_p.add_argument(
         "--force",
         action="store_true",
         default=False,
@@ -1118,6 +1135,8 @@ def _instantiate_app(
             candidate["model"] = model
         if backend and "backend" not in candidate:
             candidate["backend"] = backend
+        if backend_kwargs and "backend_kwargs" not in candidate:
+            candidate["backend_kwargs"] = backend_kwargs
     try:
         return create_app(**candidate)
     except TypeError:
@@ -1166,7 +1185,12 @@ def handle_serve_command(args: argparse.Namespace) -> None:
 
 
 def _adapt_download_call(
-    func: Any, model: str, output_dir: Optional[str], revision: Optional[str], force: bool
+    func: Any,
+    model: str,
+    output_dir: Optional[str],
+    revision: Optional[str],
+    force: bool,
+    filename: Optional[str] = None,
 ) -> Any:
     """Invoke a models.py download helper across signature variants."""
     try:
@@ -1182,6 +1206,8 @@ def _adapt_download_call(
             kwargs["revision"] = revision
         if force:
             kwargs["force"] = True
+        if filename is not None:
+            kwargs["filename"] = filename
         return func(**kwargs)
 
     def _pick(keys: Tuple[str, ...]) -> Optional[str]:
@@ -1196,21 +1222,25 @@ def _adapt_download_call(
     if model_key is not None:
         call[model_key] = model
     else:
-        # Single positional parameter with an unfamiliar name.
         positional_params = [
             p
             for p in params.values()
             if p.kind
             in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
         ]
-        if len(positional_params) == 1 and len(params) == 1:
-            return func(model)
-        _fail(
-            "download helper {0}{1} has an unrecognised signature; "
-            "cannot pass the model name.".format(
-                getattr(func, "__module__", ""), getattr(func, "__name__", func)
+        if positional_params:
+            positional.append(model)
+        else:
+            mod = getattr(func, "__module__", "")
+            name = getattr(func, "__name__", str(func))
+            qual = "{0}.{1}".format(mod, name) if mod else name
+            _fail(
+                "download helper {0} has an unrecognised signature; "
+                "cannot pass the model name.".format(qual)
             )
-        )
+    filename_key = _pick(_FILENAME_KEYS)
+    if filename_key is not None and filename is not None:
+        call[filename_key] = filename
     out_key = _pick(_OUTPUT_DIR_KEYS)
     if out_key is not None and output_dir is not None:
         call[out_key] = output_dir
@@ -1256,6 +1286,7 @@ def handle_pull_command(args: argparse.Namespace) -> None:
             getattr(args, "output_dir", None),
             getattr(args, "revision", None),
             bool(getattr(args, "force", False)),
+            getattr(args, "filename", None),
         )
     except KeyboardInterrupt:
         _fail("download interrupted.", code=130)

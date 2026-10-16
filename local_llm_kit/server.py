@@ -224,8 +224,18 @@ def _try_get_embeddings(llm: Any, texts: List[str]) -> Optional[List[List[float]
                 continue
             try:
                 if isinstance(result, dict) and "data" in result:
-                    # OpenAI-shaped dict already
-                    return None  # signal caller to use it directly if needed
+                    data = result.get("data")
+                    if isinstance(data, list):
+                        items = []
+                        for item in data:
+                            if isinstance(item, dict) and "embedding" in item:
+                                items.append(list(map(float, item["embedding"])))
+                            elif isinstance(item, (list, tuple)):
+                                items.append(list(map(float, item)))
+                        if items:
+                            return items
+                elif isinstance(result, list) and result and isinstance(result[0], dict):
+                    return [list(map(float, item.get("embedding", []))) for item in result]
                 return [list(map(float, v)) for v in result]
             except Exception:
                 continue
@@ -397,9 +407,22 @@ def create_app(
         # unless they explicitly opt in per request.
         execute_tools = bool(body.get("execute_tools", False))
         temperature = body.get("temperature")
+        if temperature is not None:
+            try:
+                temperature = float(temperature)
+            except (ValueError, TypeError):
+                return _error("'temperature' must be a number.")
         max_tokens = body.get("max_tokens")
         if max_tokens is None:
             max_tokens = body.get("max_completion_tokens")
+        if max_tokens is not None:
+            try:
+                max_tokens = int(max_tokens)
+                if max_tokens < 0:
+                    return _error("'max_tokens' must be non-negative.")
+            except (ValueError, TypeError):
+                return _error("'max_tokens' must be an integer.")
+        response_format = body.get("response_format")
         logprobs = bool(body.get("logprobs", False))
         top_logprobs = body.get("top_logprobs")
 
@@ -413,6 +436,7 @@ def create_app(
             "temperature": temperature,
             "max_tokens": max_tokens,
             "format": fmt,
+            "response_format": response_format,
             "logprobs": logprobs,
             "top_logprobs": top_logprobs,
         }
@@ -502,13 +526,31 @@ def create_app(
             return _error(str(exc), status=503, err_type="server_error")
 
         fmt = _extract_format(body)
+        temperature = body.get("temperature")
+        if temperature is not None:
+            try:
+                temperature = float(temperature)
+            except (ValueError, TypeError):
+                return _error("'temperature' must be a number.")
+        max_tokens = body.get("max_tokens")
+        if max_tokens is None:
+            max_tokens = body.get("max_completion_tokens")
+        if max_tokens is not None:
+            try:
+                max_tokens = int(max_tokens)
+                if max_tokens < 0:
+                    return _error("'max_tokens' must be non-negative.")
+            except (ValueError, TypeError):
+                return _error("'max_tokens' must be an integer.")
+        response_format = body.get("response_format")
         stream = bool(body.get("stream", False))
         requested_model = body.get("model") or _model_id()
         complete_kwargs = {
             "prompt": prompt,
-            "temperature": body.get("temperature"),
-            "max_tokens": body.get("max_tokens"),
+            "temperature": temperature,
+            "max_tokens": max_tokens,
             "format": fmt,
+            "response_format": response_format,
             "logprobs": body.get("logprobs", False),
             "top_logprobs": body.get("top_logprobs"),
         }

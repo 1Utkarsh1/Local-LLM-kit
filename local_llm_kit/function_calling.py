@@ -31,10 +31,11 @@ class FunctionCall:
         Returns:
             Dict with name and arguments
         """
-        return {"name": self.name, "arguments": json.dumps(self.arguments)}
+        args = self.arguments if isinstance(self.arguments, dict) else {}
+        return {"name": self.name, "arguments": json.dumps(args)}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, str]) -> "FunctionCall":
+    def from_dict(cls, data: Dict[str, Any]) -> "FunctionCall":
         """
         Create a FunctionCall from an OpenAI-style function call dict.
 
@@ -44,7 +45,24 @@ class FunctionCall:
         Returns:
             FunctionCall instance
         """
-        return cls(name=data["name"], arguments=json.loads(data["arguments"]))
+        if not isinstance(data, dict):
+            raise TypeError(
+                "Expected dict for FunctionCall.from_dict, got %s" % type(data).__name__
+            )
+        name = data.get("name") or ""
+        raw_args = data.get("arguments", {})
+        if raw_args is None:
+            args = {}
+        elif isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args) if raw_args.strip() else {}
+            except (json.JSONDecodeError, ValueError):
+                args = {}
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        else:
+            args = {}
+        return cls(name=str(name), arguments=args)
 
 
 class FunctionRegistry:

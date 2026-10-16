@@ -102,6 +102,45 @@ class TestPromptFormatting(unittest.TestCase):
         self.assertIn("get_weather", formatted)
         self.assertIn("Paris", formatted)
 
+    def test_llama2_does_not_duplicate_last_user_turn(self):
+        formatter = Llama2ChatPromptFormatter()
+        messages = [{"role": "user", "content": "Hello world"}]
+        formatted = formatter.format_messages(messages)
+        self.assertEqual(formatted.count("Hello world"), 1)
+        self.assertEqual(formatted.strip(), "[INST] Hello world [/INST]")
+
+    def test_formatters_support_tool_role_and_tool_calls(self):
+        messages = [
+            {"role": "user", "content": "Fetch data"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "fetch", "arguments": '{"k": 1}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "name": "fetch", "content": "result_123"},
+        ]
+        for formatter_cls in (
+            ChatMLPromptFormatter,
+            Llama2ChatPromptFormatter,
+            MistralInstructPromptFormatter,
+            VicunaPromptFormatter,
+            PlainInstructPromptFormatter,
+        ):
+            f = formatter_cls()
+            res = f.format_messages(messages)
+            self.assertIn(
+                "fetch", res, msg="%s failed to include tool name" % formatter_cls.__name__
+            )
+            self.assertIn(
+                "result_123", res, msg="%s failed to include tool result" % formatter_cls.__name__
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

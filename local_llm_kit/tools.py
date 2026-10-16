@@ -153,19 +153,34 @@ class ToolCall:
         )
 
     def to_dict(self) -> Dict[str, Any]:
+        args = self.arguments if isinstance(self.arguments, dict) else {}
         return {
             "id": self.id,
             "type": "function",
-            "function": {"name": self.name, "arguments": json.dumps(self.arguments)},
+            "function": {"name": self.name, "arguments": json.dumps(args)},
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolCall":
-        fn = data.get("function", data)
-        args = fn.get("arguments", {})
-        if isinstance(args, str):
-            args = json.loads(args) if args.strip() else {}
-        return cls(name=fn["name"], arguments=args, call_id=data.get("id"))
+        if not isinstance(data, dict):
+            raise TypeError("Expected dict for ToolCall.from_dict, got %s" % type(data).__name__)
+        fn = data.get("function")
+        if not isinstance(fn, dict):
+            fn = data
+        name = fn.get("name") or ""
+        raw_args = fn.get("arguments", {})
+        if raw_args is None:
+            args = {}
+        elif isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args) if raw_args.strip() else {}
+            except (json.JSONDecodeError, ValueError):
+                args = {}
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        else:
+            args = {}
+        return cls(name=str(name), arguments=args, call_id=data.get("id"))
 
     def to_function_call(self) -> FunctionCall:
         return FunctionCall(name=self.name, arguments=self.arguments)

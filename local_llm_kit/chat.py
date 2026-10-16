@@ -86,6 +86,12 @@ def chat(
     response_format: Optional[Union[str, Dict[str, Any]]] = None,
     seed: Optional[int] = None,
     stop: Optional[Union[str, List[str]]] = None,
+    execute_tools: bool = True,
+    max_iterations: int = 5,
+    tool_timeout: Optional[float] = 10.0,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    repetition_penalty: Optional[float] = None,
     backend_instance: Any = None,
     use_cache: bool = True,
     **backend_kwargs: Any,
@@ -122,6 +128,12 @@ def chat(
         response_format=response_format,
         seed=seed,
         stop=stop,
+        execute_tools=execute_tools,
+        max_iterations=max_iterations,
+        tool_timeout=tool_timeout,
+        top_p=top_p,
+        top_k=top_k,
+        repetition_penalty=repetition_penalty,
     )
 
 
@@ -138,6 +150,9 @@ def complete(
     response_format: Optional[Union[str, Dict[str, Any]]] = None,
     seed: Optional[int] = None,
     stop: Optional[Union[str, List[str]]] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    repetition_penalty: Optional[float] = None,
     backend_instance: Any = None,
     use_cache: bool = True,
     **backend_kwargs: Any,
@@ -165,6 +180,9 @@ def complete(
         response_format=response_format,
         seed=seed,
         stop=stop,
+        top_p=top_p,
+        top_k=top_k,
+        repetition_penalty=repetition_penalty,
     )
 
 

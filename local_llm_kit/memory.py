@@ -138,6 +138,19 @@ class MessageHistory:
             elif func_call.get("arguments"):
                 text_parts.append(json.dumps(func_call["arguments"]))
 
+        # Add tool calls if present
+        if message.get("tool_calls"):
+            for tc in message["tool_calls"]:
+                if isinstance(tc, dict):
+                    fn = tc.get("function", tc)
+                    if isinstance(fn, dict):
+                        text_parts.append(str(fn.get("name", "")))
+                        raw_args = fn.get("arguments")
+                        if isinstance(raw_args, str):
+                            text_parts.append(raw_args)
+                        elif raw_args:
+                            text_parts.append(json.dumps(raw_args))
+
         # Add function name if present
         if message.get("name"):
             text_parts.append(message["name"])

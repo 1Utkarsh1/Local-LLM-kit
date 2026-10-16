@@ -32,6 +32,29 @@ class TestFunctionCalling(unittest.TestCase):
         self.assertEqual(result_dict["name"], "another_function")
         self.assertIn("key", json.loads(result_dict["arguments"]))
 
+    def test_from_dict_null_and_partial_records(self):
+        """Test from_dict with nulls, dict arguments, and partial records."""
+        # Already a dict arguments
+        fc = FunctionCall.from_dict({"name": "foo", "arguments": {"a": 1}})
+        self.assertEqual(fc.arguments, {"a": 1})
+        # Null arguments
+        fc2 = FunctionCall.from_dict({"name": "foo", "arguments": None})
+        self.assertEqual(fc2.arguments, {})
+        # Missing arguments (partial record)
+        fc3 = FunctionCall.from_dict({"name": "foo"})
+        self.assertEqual(fc3.arguments, {})
+        # Missing name (partial record)
+        fc4 = FunctionCall.from_dict({"arguments": "{}"})
+        self.assertEqual(fc4.name, "")
+        # Non-dict raises TypeError
+        with self.assertRaises(TypeError):
+            FunctionCall.from_dict("not-a-dict")  # type: ignore
+
+    def test_to_dict_null_arguments(self):
+        fc = FunctionCall(name="foo", arguments=None)  # type: ignore
+        d = fc.to_dict()
+        self.assertEqual(d["arguments"], "{}")
+
     def test_function_registry(self):
         """Test function registry functionality."""
         # Create registry

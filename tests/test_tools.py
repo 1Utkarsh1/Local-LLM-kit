@@ -365,6 +365,25 @@ class TestToolCallObject(unittest.TestCase):
         self.assertIsInstance(fc, FunctionCall)
         self.assertEqual((fc.name, fc.arguments), ("w", {"q": 1}))
 
+    def test_from_dict_null_function_and_partial_records(self):
+        tc = ToolCall.from_dict({"id": "call_1", "function": None, "name": "fallback"})
+        self.assertEqual(tc.name, "fallback")
+        self.assertEqual(tc.arguments, {})
+        tc2 = ToolCall.from_dict({"function": {"name": "test"}})
+        self.assertEqual(tc2.name, "test")
+        self.assertEqual(tc2.arguments, {})
+        tc3 = ToolCall.from_dict({"function": {"name": "test", "arguments": None}})
+        self.assertEqual(tc3.arguments, {})
+        tc4 = ToolCall.from_dict({"function": {"name": "test", "arguments": {"x": 10}}})
+        self.assertEqual(tc4.arguments, {"x": 10})
+        with self.assertRaises(TypeError):
+            ToolCall.from_dict("invalid")  # type: ignore
+
+    def test_to_dict_handles_null_or_invalid_arguments(self):
+        tc = ToolCall(name="test", arguments=None)  # type: ignore
+        d = tc.to_dict()
+        self.assertEqual(d["function"]["arguments"], "{}")
+
 
 class TestToolRegistry(unittest.TestCase):
     def test_add_tool_with_decorated_function_and_execute(self):

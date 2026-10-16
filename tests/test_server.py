@@ -71,6 +71,13 @@ class EchoLLM(object):
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }
 
+    def embed(self, texts, **kwargs):
+        return {
+            "object": "list",
+            "model": self.model,
+            "data": [{"embedding": [0.1, 0.2, 0.3]} for _ in texts],
+        }
+
 
 def make_app(echo):
     """Build the app across likely v0.2.0 factory spellings."""
@@ -166,6 +173,52 @@ class TestOpenAIServer(unittest.TestCase):
         resp = self.client.post("/v1/chat/completions", json={"bogus": True})
         self.assertGreaterEqual(resp.status_code, 400)
         self.assertLess(resp.status_code, 500)
+
+    def test_embeddings_uses_native_llm_vectors(self):
+        resp = self.client.post(
+            "/v1/embeddings",
+            json={"model": "echo-model", "input": ["hello world"]},
+        )
+        self.assertEqual(resp.status_code, 200, msg=resp.text)
+        data = resp.json()
+        self.assertEqual(data["data"][0]["embedding"], [0.1, 0.2, 0.3])
+
+    def test_chat_completions_invalid_temperature_returns_400(self):
+        resp = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "echo-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "temperature": "not-a-number",
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("temperature", resp.json()["error"]["message"])
+
+    def test_chat_completions_invalid_max_tokens_returns_400(self):
+        resp = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "echo-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": -5,
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("max_tokens", resp.json()["error"]["message"])
+
+    def test_chat_completions_forwards_response_format(self):
+        rf = {"type": "json_schema", "json_schema": {"name": "test", "schema": {}}}
+        resp = self.client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "echo-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                "response_format": rf,
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.echo.chat_calls[-1]["kwargs"]["response_format"], rf)
 
 
 @unittest.skipUnless(not HAS_FASTAPI, "fastapi is installed; skip-path test not applicable")

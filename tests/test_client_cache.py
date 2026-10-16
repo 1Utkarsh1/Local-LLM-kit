@@ -239,6 +239,35 @@ class TestBackwardsCompatSignatures(unittest.TestCase):
         )
         self.assertIn("choices", resp)
 
+    def test_module_chat_forwards_tool_and_sampling_kwargs(self):
+        seen = {}
+
+        class FakeLLM(object):
+            def __init__(self, *args, **kwargs):
+                seen["init_kwargs"] = kwargs
+
+            def chat(self, **kwargs):
+                seen["chat_kwargs"] = kwargs
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        with mock.patch.object(CHAT_MOD, "LLM", FakeLLM):
+            CHAT_MOD.chat(
+                messages=[{"role": "user", "content": "hi"}],
+                model_path="fake-model",
+                execute_tools=False,
+                max_iterations=2,
+                tool_timeout=5.0,
+                top_p=0.9,
+                top_k=40,
+                repetition_penalty=1.1,
+            )
+        self.assertFalse(seen["chat_kwargs"]["execute_tools"])
+        self.assertEqual(seen["chat_kwargs"]["max_iterations"], 2)
+        self.assertEqual(seen["chat_kwargs"]["tool_timeout"], 5.0)
+        self.assertEqual(seen["chat_kwargs"]["top_p"], 0.9)
+        self.assertEqual(seen["chat_kwargs"]["top_k"], 40)
+        self.assertEqual(seen["chat_kwargs"]["repetition_penalty"], 1.1)
+
 
 if __name__ == "__main__":
     unittest.main()
