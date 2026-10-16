@@ -103,10 +103,24 @@ _EMBED_METHOD_NAMES = (
     "embed_texts",
 )
 
-_MODEL_ARG_KEYS = ("model", "model_id", "model_name", "repo_id", "repo", "path", "name")
+_MODEL_ARG_KEYS = (
+    "model",
+    "model_id",
+    "model_name",
+    "repo_id",
+    "repo",
+    "repo_or_path",
+    "path",
+    "name",
+)
 _OUTPUT_DIR_KEYS = ("output_dir", "dest_dir", "destination", "out_dir", "target_dir", "cache_dir")
 _REVISION_KEYS = ("revision", "rev", "ref")
 _FORCE_KEYS = ("force", "overwrite", "force_download")
+
+#: ``response_format["type"]`` values understood by ``LLM._normalize_response_format``.
+#: Used to tell a response_format object apart from a plain JSON Schema, whose
+#: ``type`` key holds a JSON type (``"object"``, ``"array"``, ...).
+_RESPONSE_FORMAT_TYPES = ("json_object", "json_schema", "text")
 
 
 # ---------------------------------------------------------------------------
@@ -280,10 +294,11 @@ def _resolve_formats(args: argparse.Namespace) -> Tuple[Optional[str], Optional[
     if text.lower() in ("json", "json_object", "json-object"):
         return "json", {"type": "json_object"}
     loaded = _load_json_value_or_file(text, "--response-format")
-    if isinstance(loaded, dict) and "type" in loaded and "function" not in loaded:
-        # Looks like a full {"type": ..., ...} response_format object.
+    if isinstance(loaded, dict) and loaded.get("type") in _RESPONSE_FORMAT_TYPES:
+        # A full {"type": "json_object"|"json_schema"|"text"} object.
         return "json", loaded
-    # Otherwise treat it as a JSON schema for structured output.
+    # Otherwise treat it as a JSON schema for structured output (a schema's
+    # own "type" key is a JSON type such as "object", not a format type).
     return "json", {
         "type": "json_schema",
         "json_schema": {"name": "response", "schema": loaded},
@@ -1206,7 +1221,7 @@ def _adapt_download_call(
         if len(positional_params) == 1 and len(params) == 1:
             return func(model)
         _fail(
-            "download helper {0}{1} has an unrecognised signature; "
+            "download helper {0}.{1} has an unrecognised signature; "
             "cannot pass the model name.".format(
                 getattr(func, "__module__", ""), getattr(func, "__name__", func)
             )

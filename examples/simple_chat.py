@@ -9,12 +9,17 @@ from local_llm_kit import chat
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simple chat with a local LLM")
-    parser.add_argument("--model", "-m", required=True, help="Path to the model or model name")
+    parser.add_argument(
+        "--model",
+        "-m",
+        default="echo",
+        help="Path to the model or model name (default: echo)",
+    )
     parser.add_argument(
         "--backend",
         "-b",
-        choices=["transformers", "llamacpp"],
-        help="Backend to use (default: auto-detect)",
+        choices=["transformers", "llamacpp", "ollama", "openai-compat", "echo"],
+        help="Backend to use (default: auto-detect; 'echo' mocks offline)",
     )
     args = parser.parse_args()
 

@@ -254,8 +254,22 @@ def _dest_for_repo_file(repo_id: str, filename: str, cache_dir: Optional[str]) -
 _MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024 * 1024
 
 
+def _remove_quietly(path: str) -> None:
+    """Best-effort file removal (never raises)."""
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
 def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> str:
-    """Download *url* to *dest_path* with stdlib urllib. Returns dest path."""
+    """Download *url* to *dest_path* with stdlib urllib. Returns dest path.
+
+    The body is written to ``<dest>.part`` and renamed into place only
+    after the transfer completes, so a failed or interrupted download can
+    never leave a truncated file that later looks like a cached model.
+    """
     # Local import keeps module import light.
     import urllib.request
 
@@ -264,9 +278,10 @@ def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> st
     parent = os.path.dirname(dest)
     if parent:
         os.makedirs(parent, exist_ok=True)
+    part = dest + ".part"
     req = urllib.request.Request(url, headers={"User-Agent": "local-llm-kit/0.2.0"})
     try:
-        with urllib.request.urlopen(req) as resp, open(dest, "wb") as fh:
+        with urllib.request.urlopen(req) as resp, open(part, "wb") as fh:
             total = resp.getheader("Content-Length")
             total_n = int(total) if total and total.isdigit() else 0
             if total_n > _MAX_DOWNLOAD_BYTES:
@@ -289,13 +304,16 @@ def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> st
                 if total_n:
                     pct = done * 100 // total_n
                     logger.info("Downloading %s: %d%% (%d/%d bytes)", url, pct, done, total_n)
-    except Exception as exc:
-        # Remove partial file so a retry/cache scan never sees it as valid.
-        try:
-            if os.path.exists(dest):
-                os.remove(dest)
-        except OSError:
-            pass
+            if total_n and done != total_n:
+                raise RuntimeError(
+                    "Truncated download of %s: got %d of %d bytes" % (url, done, total_n)
+                )
+        os.replace(part, dest)
+    except BaseException as exc:
+        # Drop the partial file so a retry/cache scan never sees it as valid.
+        _remove_quietly(part)
+        if not isinstance(exc, Exception):
+            raise  # KeyboardInterrupt / SystemExit: clean up, then propagate as-is
         raise RuntimeError("Failed to download {}: {}".format(url, exc)) from exc
     logger.info("Saved %s -> %s", url, dest)
     return dest

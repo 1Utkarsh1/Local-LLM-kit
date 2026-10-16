@@ -108,6 +108,38 @@ def make_app(echo):
     raise AttributeError("local_llm_kit.server exposes no known app factory")
 
 
+class GeneratorEmbedLLM(EchoLLM):
+    """LLM double whose ``embed()`` yields vectors from a non-list iterable.
+
+    numpy matrices, tuples and generators are all valid embedding
+    containers; they must be served like plain lists.
+    """
+
+    def embed(self, input):  # noqa: A002 (OpenAI field name)
+        texts = [input] if isinstance(input, str) else list(input)
+        return iter([[float(i), -1.0] for i in range(len(texts))])
+
+
+class DictEmbedLLM(EchoLLM):
+    """LLM double whose ``embed()`` returns an OpenAI-shaped dict.
+
+    This mirrors ``local_llm_kit.LLM.embed``, which always answers with
+    ``{"data": [{"embedding": [...]}]}``.
+    """
+
+    def embed(self, input):  # noqa: A002 (OpenAI field name)
+        texts = [input] if isinstance(input, str) else list(input)
+        return {
+            "object": "list",
+            "model": self.model,
+            "data": [
+                {"object": "embedding", "index": i, "embedding": [float(i), 1.5, -2.0]}
+                for i in range(len(texts))
+            ],
+            "usage": {"prompt_tokens": 1, "total_tokens": 1},
+        }
+
+
 @unittest.skipUnless(
     HAS_SERVER and HAS_FASTAPI, "server tests need local_llm_kit.server and fastapi (both optional)"
 )
@@ -166,6 +198,39 @@ class TestOpenAIServer(unittest.TestCase):
         resp = self.client.post("/v1/chat/completions", json={"bogus": True})
         self.assertGreaterEqual(resp.status_code, 400)
         self.assertLess(resp.status_code, 500)
+
+    def test_embeddings_use_the_llm_vectors_when_it_returns_openai_shape(self):
+        """LLM.embed() answers with {"data": [...]}: use those vectors, not a stub."""
+        app = make_app(DictEmbedLLM())
+        client = TestClient(app)
+        resp = client.post("/v1/embeddings", json={"model": "echo-model", "input": ["a", "b"]})
+        if resp.status_code == 404:
+            self.skipTest("/v1/embeddings route not exposed")
+        self.assertEqual(resp.status_code, 200, msg=resp.text[:500])
+        vectors = [item["embedding"] for item in resp.json()["data"]]
+        self.assertEqual(vectors, [[0.0, 1.5, -2.0], [1.0, 1.5, -2.0]])
+
+    def test_embeddings_accept_non_list_iterables(self):
+        """Generators / numpy matrices are valid embedding containers."""
+        app = make_app(GeneratorEmbedLLM())
+        resp = TestClient(app).post("/v1/embeddings", json={"model": "m", "input": ["a", "b"]})
+        if resp.status_code == 404:
+            self.skipTest("/v1/embeddings route not exposed")
+        self.assertEqual(resp.status_code, 200, msg=resp.text[:500])
+        vectors = [item["embedding"] for item in resp.json()["data"]]
+        self.assertEqual(vectors, [[0.0, -1.0], [1.0, -1.0]])
+
+    def test_embeddings_fall_back_when_the_llm_has_no_embed_support(self):
+        """EchoLLM exposes no embed(): a stable local fallback is still served."""
+        body = {"model": "echo-model", "input": "hello"}
+        first = self.client.post("/v1/embeddings", json=body)
+        if first.status_code == 404:
+            self.skipTest("/v1/embeddings route not exposed")
+        self.assertEqual(first.status_code, 200, msg=first.text[:500])
+        first_vec = first.json()["data"][0]["embedding"]
+        second_vec = self.client.post("/v1/embeddings", json=body).json()["data"][0]["embedding"]
+        self.assertTrue(first_vec, msg="fallback embeddings must not be empty")
+        self.assertEqual(first_vec, second_vec, msg="fallback embeddings must be deterministic")
 
 
 @unittest.skipUnless(not HAS_FASTAPI, "fastapi is installed; skip-path test not applicable")
