@@ -6,6 +6,8 @@ include CHANGELOG.md
 recursive-include examples *
 recursive-include tests *
 recursive-include docs *
+prune docs/build
+prune docs/_build
 global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude *.so
