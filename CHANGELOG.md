@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
 ### Added
 - Native chat, tool-call responses, streaming argument assembly and structured-output forwarding for Ollama and OpenAI-compatible servers.
 - Server presets for SGLang, vLLM, LM Studio, LocalAI, llama-server, Jan, GPT4All, MLX-LM and KoboldCpp, shared between the Python API, registry and CLI; documented limits across 12 distinct runtimes.
@@ -34,14 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The documented offline simple-chat example rejected its advertised arguments.
 
 ### Compatibility notes
+- Requires Python 3.9 or newer; the prior PyPI release supported Python 3.8.
 - Explicit nulls, JSON arrays/scalars and malformed call arguments are rejected; existing empty-string tool arguments still mean an empty object. Empty chat lists and empty completion prompts remain accepted by the Python API.
 - URL caches now include the full URL's hash; older flat URL cache files are preserved but may be downloaded once again.
 - Tool timeouts bound waiting; already-running Python functions continue in their worker thread.
 - No new core runtime dependencies. AirLLM is optional, experimental and not GPU-certified; external-server features depend on runtime/model configuration.
 
-## [0.2.0] - 2026-09-18
+### Earlier 0.2.0 development
 
-### Added
+#### Added
 - New backends: `echo` (offline deterministic mock, zero deps), `ollama`
   (Ollama REST incl. chat/embeddings/model listing), and `openai-compat`
   (any `POST /v1/chat/completions` server: vLLM, LM Studio, Ollama,
@@ -80,18 +83,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Packaging: modern `pyproject.toml` (light core, 8 extras), CI matrix
   (3.9–3.12), offline test-suite (tools, prompts, RAG, server, caching)
 
-### Changed
+#### Changed
 - `LLM.chat` accepts `tools`, `tool_choice`, `response_format`, `seed`,
   `stop`, `execute_tools`, `tool_timeout`; `complete` accepts
   `response_format`, `seed`, `stop`
 - Version bumped to 0.2.0; Development Status → Beta; requires-python → >=3.9
 
-### Deprecated
+#### Deprecated
 - Per-call `functions=` / `function_call=` and `LLM.add_function` in favour
   of `tools=` / `tool_choice=` / `add_tool`; `format="json"` in favour of
   `response_format`. All still work — no breaking change in 0.2.0.
 
-### Security
+#### Security
 - Server never executes tools unless `"execute_tools": true` is set per
   request; tool execution is scoped to advertised tools, required-arg
   validated, and time-bounded; model downloads are https/host-allowlisted

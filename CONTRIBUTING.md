@@ -143,6 +143,19 @@ Use the issue templates (Bug / Feature / Backend Request). Include:
 `pip show local-llm-kit`, Python version, OS, backend + extra versions,
 minimal repro, expected vs actual, full traceback.
 
-## 10. License
+## 10. Publishing to PyPI
+
+The `publish.yml` workflow builds a wheel/source archive, checks their metadata
+and README, and smoke-tests the installed wheel. Pull requests only build;
+publishing runs for a published GitHub release or a manual run from `main`.
+Release tags must match `v` plus the package version, and their commit must be on `main`.
+
+PyPI Trusted Publishing must allow owner `1Utkarsh1`, repository `Local-LLM-kit`,
+workflow `publish.yml` and environment `pypi` for this project. Only the upload job
+receives `id-token: write`; no PyPI password/token is stored in the repository.
+Update the single-sourced version, CI version assertion and release notes before
+creating a new release. Verify the public PyPI version and a clean install afterward.
+
+## 11. License
 
 MIT. By contributing you agree your contributions are licensed under the repo's MIT license.

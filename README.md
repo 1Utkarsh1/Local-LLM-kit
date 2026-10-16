@@ -2,14 +2,14 @@
 
 [![PyPI version](https://badge.fury.io/py/local-llm-kit.svg)](https://pypi.org/project/local-llm-kit/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/LICENSE)
 [![CI](https://github.com/1Utkarsh1/Local-LLM-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/1Utkarsh1/Local-LLM-kit/actions)
 [![Docs](https://readthedocs.org/projects/local-llm-kit-package/badge/?version=latest)](https://local-llm-kit-package.readthedocs.io/)
 [![Offline ready](https://img.shields.io/badge/offline-echo%20backend-lightgrey.svg)](#offline-mode-no-model-needed)
 
 **One Python API for offline models and local LLM servers.** Use the same chat and completion interface with Ollama, AirLLM, SGLang, vLLM, LM Studio, LocalAI, llama.cpp or Hugging Face Transformers; tools, schemas and embeddings follow backend capabilities. Start with the offline echo backend, then connect a real model. Core install stays light (stdlib + `typing-extensions`); inference dependencies are optional.
 
-Features described under **Unreleased** require a source install (`pip install -e .`) until a new package version is published. See the [backend compatibility guide](docs/source/backends.rst) for tested contracts and runtime limitations, and [llms.txt](llms.txt) for a concise project reference.
+Version **0.2.0** includes the local runtime presets and reliability fixes below. See the [backend compatibility guide](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/docs/source/backends.rst) for tested contracts and runtime limitations, and [llms.txt](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/llms.txt) for a concise project reference.
 
 > **Scope, honestly stated:** this is a zero-heavy-dependency client + adapter + offline mock — code once against the OpenAI shape, swap backends without rewriting, and test in CI without a GPU. It is not an inference engine (use vLLM/Ollama to serve traffic) and `serve` is a development shim, not production infra.
 
@@ -91,7 +91,7 @@ Use a model ID that the running server actually serves. These presets use the sh
 | MLX-LM | `"mlx-lm"` | `http://127.0.0.1:8080/v1`; run `mlx_lm.server` on Apple Silicon |
 | KoboldCpp | `"koboldcpp"` | `http://localhost:5001/v1` |
 
-Together with native Ollama, Transformers and AirLLM, these cover **12 distinct local runtimes** (llama.cpp has both in-process and server paths). This is a compatibility selection, not a measured popularity ranking. GPT4All and MLX-LM presets provide text/chat; use a separate embedding backend. Native tools, schemas and vision require explicit upstream/model support. See the [capability matrix and setup references](docs/source/backends.rst) before choosing a runtime.
+Together with native Ollama, Transformers and AirLLM, these cover **12 distinct local runtimes** (llama.cpp has both in-process and server paths). This is a compatibility selection, not a measured popularity ranking. GPT4All and MLX-LM presets provide text/chat; use a separate embedding backend. Native tools, schemas and vision require explicit upstream/model support. See the [capability matrix and setup references](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/docs/source/backends.rst) before choosing a runtime.
 
 ```python
 from local_llm_kit import LLM
@@ -103,7 +103,7 @@ print(result["choices"][0]["message"]["content"])
 
 Native chat forwards messages, tools, JSON schemas, seed and stop sequences to Ollama and OpenAI-compatible servers. Tool calls returned outside the text are preserved, including fragmented streamed arguments. Tool and schema support depends on the server configuration and selected model. Ollama's native API offers automatic tool selection; named choices narrow the available tools, while `required` is not guaranteed by that API.
 
-Compatibility tests exercise adapter contracts and a local HTTP fixture. They do not certify every server release, model, accelerator or performance level. Setup links and feature limits are in the [backend guide](docs/source/backends.rst).
+Compatibility tests exercise adapter contracts and a local HTTP fixture. They do not certify every server release, model, accelerator or performance level. Setup links and feature limits are in the [backend guide](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/docs/source/backends.rst).
 
 ### AirLLM
 
