@@ -145,6 +145,12 @@ class ToolCall:
         arguments: Dict[str, Any],
         call_id: Optional[str] = None,
     ):
+        if not isinstance(name, str) or not name:
+            raise ValueError("ToolCall requires a non-empty string 'name', got %r." % (name,))
+        if not isinstance(arguments, dict):
+            raise TypeError(
+                "ToolCall 'arguments' must be a dict, got %r." % type(arguments).__name__
+            )
         self.name = name
         self.arguments = arguments
         self.id = (
@@ -161,11 +167,44 @@ class ToolCall:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolCall":
+        if not isinstance(data, dict):
+            raise ValueError("ToolCall record must be a dict, got %r." % type(data).__name__)
         fn = data.get("function", data)
+        if "function" in data:
+            if not isinstance(fn, dict):
+                raise ValueError("ToolCall 'function' must be a dict, got %r." % type(fn).__name__)
+        if not isinstance(fn, dict):
+            raise ValueError(
+                "ToolCall record must contain a dict 'function' or "
+                "'name'/'arguments' fields, got %r." % type(fn).__name__
+            )
+        name = fn.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("ToolCall requires a non-empty string 'name', got %r." % (name,))
         args = fn.get("arguments", {})
         if isinstance(args, str):
-            args = json.loads(args) if args.strip() else {}
-        return cls(name=fn["name"], arguments=args, call_id=data.get("id"))
+            if not args.strip():
+                args = {}
+            else:
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "ToolCall 'arguments' string is not valid JSON: %s" % exc
+                    ) from exc
+        if args is None:
+            raise ValueError("ToolCall 'arguments' must not be None.")
+        if not isinstance(args, dict):
+            raise ValueError(
+                "ToolCall 'arguments' must be a dict or JSON object string, "
+                "got %r." % type(args).__name__
+            )
+        call_id = data.get("id")
+        if call_id is not None and not isinstance(call_id, str):
+            raise ValueError(
+                "ToolCall 'id' must be a string when present, got %r." % type(call_id).__name__
+            )
+        return cls(name=name, arguments=args, call_id=call_id)
 
     def to_function_call(self) -> FunctionCall:
         return FunctionCall(name=self.name, arguments=self.arguments)

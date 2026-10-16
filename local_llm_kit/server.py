@@ -65,19 +65,31 @@ def _coerce_message_content(content: Any) -> Optional[str]:
     if isinstance(content, list):
         texts = []  # type: List[str]
         for part in content:
+            if part is None:
+                continue
             if isinstance(part, str):
                 texts.append(part)
             elif isinstance(part, dict):
                 ptype = part.get("type", "text")
                 if ptype == "text":
-                    texts.append(str(part.get("text", "")))
+                    text = part.get("text", "")
+                    if text is None:
+                        continue
+                    if text:
+                        texts.append(str(text))
                 elif ptype in ("image_url", "image"):
                     url = part.get("image_url", part.get("image", ""))
                     if isinstance(url, dict):
                         url = url.get("url", "")
-                    texts.append("[image: %s]" % url)
+                    if url:
+                        texts.append("[image: %s]" % url)
+                    else:
+                        texts.append("[image]")
                 else:
-                    texts.append(str(part))
+                    text = part.get("text")
+                    if text is None:
+                        continue
+                    texts.append(str(text) if text else str(part))
             else:
                 texts.append(str(part))
         return "\n".join(texts)
@@ -224,8 +236,20 @@ def _try_get_embeddings(llm: Any, texts: List[str]) -> Optional[List[List[float]
                 continue
             try:
                 if isinstance(result, dict) and "data" in result:
-                    # OpenAI-shaped dict already
-                    return None  # signal caller to use it directly if needed
+                    # OpenAI-shaped dict: forward native embeddings instead of
+                    # discarding them for the hash fallback.
+                    data = result.get("data") or []
+                    vecs = []
+                    for item in data:
+                        if isinstance(item, dict) and "embedding" in item:
+                            vecs.append([float(v) for v in item["embedding"]])
+                        elif isinstance(item, (list, tuple)):
+                            vecs.append([float(v) for v in item])
+                        else:
+                            raise ValueError("Unrecognised embedding item: %r" % (item,))
+                    if len(vecs) != len(texts):
+                        continue
+                    return vecs
                 return [list(map(float, v)) for v in result]
             except Exception:
                 continue
@@ -558,7 +582,11 @@ def create_app(
         if isinstance(raw_input, str):
             texts = [raw_input]
         elif isinstance(raw_input, list):
-            texts = [str(t) for t in raw_input]
+            texts = []
+            for t in raw_input:
+                if not isinstance(t, str):
+                    return _error("'input' must be a string or list of strings.")
+                texts.append(t)
         else:
             return _error("'input' must be a string or list of strings.")
         if not texts:

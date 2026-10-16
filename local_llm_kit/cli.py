@@ -103,7 +103,16 @@ _EMBED_METHOD_NAMES = (
     "embed_texts",
 )
 
-_MODEL_ARG_KEYS = ("model", "model_id", "model_name", "repo_id", "repo", "path", "name")
+_MODEL_ARG_KEYS = (
+    "repo_or_path",
+    "model",
+    "model_id",
+    "model_name",
+    "repo_id",
+    "repo",
+    "path",
+    "name",
+)
 _OUTPUT_DIR_KEYS = ("output_dir", "dest_dir", "destination", "out_dir", "target_dir", "cache_dir")
 _REVISION_KEYS = ("revision", "rev", "ref")
 _FORCE_KEYS = ("force", "overwrite", "force_download")
@@ -243,18 +252,21 @@ def _load_tools(
 def _parse_choice(value: Optional[str], name: str) -> Optional[Any]:
     """Parse ``--function-call`` / ``--tool-choice`` values.
 
-    Accepts ``auto`` / ``none`` or inline JSON such as
+    Accepts ``auto`` / ``none`` / ``required`` or inline JSON such as
     ``'{"name": "get_weather"}'``.
     """
     if value is None:
         return None
     text = value.strip()
-    if text in ("auto", "none"):
+    if text in ("auto", "none", "required"):
         return text
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        _fail("invalid {0} format: {1!r} " "(expected 'auto', 'none', or JSON)".format(name, value))
+        _fail(
+            "invalid {0} format: {1!r} "
+            "(expected 'auto', 'none', 'required', or JSON)".format(name, value)
+        )
     return None  # unreachable
 
 

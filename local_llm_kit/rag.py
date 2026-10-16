@@ -600,19 +600,69 @@ class SimpleVectorStore:
             data = json.load(f)
         if not isinstance(data, dict):
             raise ValueError("Invalid vector store file: %r" % (path,))
-        ids = data.get("ids", [])
-        texts = data.get("texts", [])
-        metadatas = data.get("metadatas", [])
-        vectors = data.get("vectors", [])
+        for key in ("ids", "texts", "metadatas", "vectors"):
+            if key not in data:
+                raise ValueError("Corrupt vector store file %r: missing %r field" % (path, key))
+        ids = data["ids"]
+        texts = data["texts"]
+        metadatas = data["metadatas"]
+        vectors = data["vectors"]
+        dim = data.get("dim")
+        for key, value in (
+            ("ids", ids),
+            ("texts", texts),
+            ("metadatas", metadatas),
+            ("vectors", vectors),
+        ):
+            if value is None or not isinstance(value, list):
+                raise ValueError(
+                    "Corrupt vector store file %r: %r must be a list, got %r"
+                    % (path, key, type(value).__name__)
+                )
+        if dim is not None and not isinstance(dim, int):
+            raise ValueError(
+                "Corrupt vector store file %r: 'dim' must be an int or null, got %r"
+                % (path, type(dim).__name__)
+            )
+        if dim is not None and dim < 1:
+            raise ValueError("Corrupt vector store file %r: invalid 'dim' %r" % (path, dim))
         if not (len(ids) == len(texts) == len(metadatas) == len(vectors)):
             raise ValueError("Corrupt vector store file %r: mismatched field lengths" % (path,))
-        store = cls(embed_fn=embed_fn, dim=data.get("dim"))
-        store.ids = [str(i) for i in ids]
-        store.texts = [str(t) for t in texts]
+        for i in ids:
+            if not isinstance(i, str) or not i:
+                raise ValueError(
+                    "Corrupt vector store file %r: 'ids' must be non-empty strings" % (path,)
+                )
+        for t in texts:
+            if not isinstance(t, str):
+                raise ValueError(
+                    "Corrupt vector store file %r: 'texts' must be strings, got %r"
+                    % (path, type(t).__name__)
+                )
+        for m in metadatas:
+            if m is not None and not isinstance(m, dict):
+                raise ValueError(
+                    "Corrupt vector store file %r: 'metadatas' entries must be "
+                    "objects or null, got %r" % (path, type(m).__name__)
+                )
+        for v in vectors:
+            if v is None:
+                raise ValueError(
+                    "Corrupt vector store file %r: 'vectors' entries must not be null; "
+                    "use [] for lexical-mode entries" % (path,)
+                )
+        store = cls(embed_fn=embed_fn, dim=dim)
+        store.ids = list(ids)
+        store.texts = list(texts)
         store.metadatas = [dict(m) if isinstance(m, dict) else {} for m in metadatas]
         # Empty vectors mark lexical-mode entries (no embed_fn at save time).
         store.vectors = [[] if (isinstance(v, list) and len(v) == 0) else v for v in vectors]
-        store.vectors = [v if len(v) == 0 else store._check_vectors([v])[0] for v in store.vectors]
+        try:
+            store.vectors = [
+                v if len(v) == 0 else store._check_vectors([v])[0] for v in store.vectors
+            ]
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Corrupt vector store file %r: %s" % (path, exc)) from exc
         # Keep generated ids collision-free.
         store._id_counter = len(store.ids)
         return store

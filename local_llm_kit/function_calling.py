@@ -21,6 +21,12 @@ class FunctionCall:
             name: Name of the function
             arguments: Arguments to pass to the function
         """
+        if not isinstance(name, str) or not name:
+            raise ValueError("FunctionCall requires a non-empty string 'name', got %r." % (name,))
+        if not isinstance(arguments, dict):
+            raise TypeError(
+                "FunctionCall 'arguments' must be a dict, got %r." % type(arguments).__name__
+            )
         self.name = name
         self.arguments = arguments
 
@@ -43,8 +49,44 @@ class FunctionCall:
 
         Returns:
             FunctionCall instance
+
+        Raises:
+            ValueError: If the record is missing/invalid (never AttributeError).
         """
-        return cls(name=data["name"], arguments=json.loads(data["arguments"]))
+        if not isinstance(data, dict):
+            raise ValueError("FunctionCall record must be a dict, got %r." % type(data).__name__)
+        if "name" not in data:
+            raise ValueError("FunctionCall record is missing required 'name' field.")
+        if "arguments" not in data:
+            raise ValueError("FunctionCall record is missing required 'arguments' field.")
+        name = data["name"]
+        if not isinstance(name, str) or not name:
+            raise ValueError("FunctionCall requires a non-empty string 'name', got %r." % (name,))
+        raw_args = data["arguments"]
+        if isinstance(raw_args, dict):
+            args = raw_args
+        elif isinstance(raw_args, str):
+            if not raw_args.strip():
+                raise ValueError("FunctionCall 'arguments' string must not be empty.")
+            try:
+                args = json.loads(raw_args)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "FunctionCall 'arguments' string is not valid JSON: %s" % exc
+                ) from exc
+            if args is None:
+                raise ValueError("FunctionCall 'arguments' must not be None.")
+            if not isinstance(args, dict):
+                raise ValueError(
+                    "FunctionCall 'arguments' must decode to an object, got %r."
+                    % type(args).__name__
+                )
+        else:
+            raise ValueError(
+                "FunctionCall 'arguments' must be a dict or JSON object string, "
+                "got %r." % type(raw_args).__name__
+            )
+        return cls(name=name, arguments=args)
 
 
 class FunctionRegistry:
@@ -113,10 +155,13 @@ class FunctionRegistry:
 
         Raises:
             ValueError: If the function is not registered
+            TypeError: If arguments is not a dict
         """
         if not self.has_function(name):
             raise ValueError(f"Function '{name}' is not registered")
 
+        if not isinstance(arguments, dict):
+            raise TypeError("Function arguments must be a dict, got %r." % type(arguments).__name__)
         implementation = self.implementations[name]
         return implementation(**arguments)
 

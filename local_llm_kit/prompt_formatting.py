@@ -461,16 +461,25 @@ def message_text(message: Dict[str, Any]) -> str:
     text-only templates still work; vision-capable backends receive the
     original structured messages separately.
     """
+    if not isinstance(message, dict):
+        return str(message)
     content = message.get("content", "")
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
         texts = []
         for part in content:
             if not isinstance(part, dict):
+                if part is None:
+                    continue
                 texts.append(str(part))
             elif part.get("type") == "text":
-                texts.append(part.get("text", ""))
+                text = part.get("text")
+                if text is None:
+                    continue
+                texts.append(str(text) if not isinstance(text, str) else text)
             elif part.get("type") in ("image_url", "image"):
                 texts.append("[image]")
         return "\n".join(t for t in texts if t)
@@ -479,7 +488,11 @@ def message_text(message: Dict[str, Any]) -> str:
 
 def has_images(messages: List[Dict[str, Any]]) -> bool:
     """Return True if any message carries an image part."""
+    if not isinstance(messages, list):
+        return False
     for m in messages:
+        if not isinstance(m, dict):
+            continue
         content = m.get("content")
         if isinstance(content, list) and any(
             isinstance(p, dict) and p.get("type") in ("image_url", "image") for p in content

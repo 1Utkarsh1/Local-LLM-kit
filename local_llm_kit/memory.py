@@ -35,6 +35,13 @@ class MessageHistory:
         Args:
             messages: List of message dictionaries to add
         """
+        if not isinstance(messages, list):
+            raise TypeError(
+                "add_messages expects a list of message dicts, got %r." % type(messages).__name__
+            )
+        for m in messages:
+            if not isinstance(m, dict):
+                raise TypeError("Each message must be a dict, got %r." % type(m).__name__)
         self.messages.extend(messages)
         self._truncate_if_needed()
 
@@ -45,6 +52,8 @@ class MessageHistory:
         Args:
             message: Message dictionary to add
         """
+        if not isinstance(message, dict):
+            raise TypeError("add_message expects a message dict, got %r." % type(message).__name__)
         self.messages.append(message)
         self._truncate_if_needed()
 
@@ -104,6 +113,8 @@ class MessageHistory:
         Returns:
             Estimated token count
         """
+        if not isinstance(message, dict):
+            raise TypeError("Message must be a dict, got %r." % type(message).__name__)
         # Extract all text content from the message
         text_parts = []
 
@@ -132,7 +143,14 @@ class MessageHistory:
         # Add function call if present
         if message.get("function_call"):
             func_call = message["function_call"]
-            text_parts.append(func_call.get("name", ""))
+            if not isinstance(func_call, dict):
+                raise TypeError(
+                    "Message 'function_call' must be a dict when present, got %r."
+                    % type(func_call).__name__
+                )
+            name = func_call.get("name", "")
+            if name:
+                text_parts.append(str(name))
             if isinstance(func_call.get("arguments"), str):
                 text_parts.append(func_call["arguments"])
             elif func_call.get("arguments"):

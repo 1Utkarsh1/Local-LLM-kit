@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Strict validation for tool/function serializers (`ToolCall`/`FunctionCall`
+  `from_dict`, `FunctionRegistry.execute`) and `SimpleVectorStore.load`:
+  null/partial records now raise `ValueError`/`TypeError`, never
+  `AttributeError` or silent `"None"` corruption
+- Model download hardening: fixed `pull` arg mapping (`repo_or_path`),
+  cache-traversal guards, atomic `.part` writes, timeout, `chunk_size`
+  validation, glob-escape cache lookup
+- Entry validation: `LLM` model/messages/prompt/embed checks, backend
+  aliases (`mock`/`llama-cpp`/`openai`), `--tool-choice required`,
+  native embeddings forwarding, no `"None"` prompt text
+
 ### Added
-- Future features and improvements will be listed here
+- `tests/test_audit_fixes.py` (34 offline regression tests)
 
 ## [0.2.0] - 2026-09-18
 

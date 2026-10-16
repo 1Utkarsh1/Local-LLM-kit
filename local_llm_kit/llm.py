@@ -200,11 +200,20 @@ def _normalize_response_format(
     if response_format is None and format == "json":
         return {"type": "json_object"}
     if response_format is None:
+        if format is not None and format != "json":
+            raise ValueError("Unsupported format string: %r (expected 'json')." % (format,))
         return None
     if isinstance(response_format, str):
         if response_format in ("json_object", "json"):
             return {"type": "json_object"}
+        if response_format == "text":
+            return None
         raise ValueError("Unsupported response_format string: %r" % (response_format,))
+    if not isinstance(response_format, dict):
+        raise TypeError(
+            "response_format must be a string, dict or None, got %r."
+            % type(response_format).__name__
+        )
     rtype = response_format.get("type")
     if rtype in ("json_object", "json_schema"):
         return response_format
@@ -277,6 +286,10 @@ class LLM:
         backend_instance: Optional[BaseBackend] = None,
         use_cache: bool = True,
     ):
+        if not isinstance(model_path, str) or not model_path.strip():
+            raise ValueError("model_path must be a non-empty string, got %r." % (model_path,))
+        if backend is not None and not isinstance(backend, str):
+            raise ValueError("backend must be a string or None, got %r." % type(backend).__name__)
         self.model_path = model_path
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
@@ -321,7 +334,27 @@ class LLM:
 
     # -- backend setup ----------------------------------------------------
     def _init_backend(self, backend_name: Optional[str]) -> BaseBackend:
-        name = (backend_name or "auto").lower()
+        if backend_name is not None and not isinstance(backend_name, str):
+            raise ValueError(
+                "backend must be a string or None, got %r." % type(backend_name).__name__
+            )
+        raw = (backend_name or "auto").strip().lower()
+        # Accept the same aliases the CLI normalizes so copy-pasted
+        # `--backend` values work against the library directly.
+        aliases = {
+            "llama-cpp": "llamacpp",
+            "llama_cpp": "llamacpp",
+            "llama.cpp": "llamacpp",
+            "openai_compat": "openai-compat",
+            "openai": "openai-compat",
+            "vllm": "openai-compat",
+            "lmstudio": "openai-compat",
+            "llama-server": "openai-compat",
+            "mock": "echo",
+            "dummy": "echo",
+            "test": "echo",
+        }
+        name = aliases.get(raw, raw)
         if name == "auto":
             lp = self.model_path.lower()
             if self.model_path.startswith(("http://", "https://")):
@@ -618,6 +651,27 @@ class LLM:
             (None = no timeout).
         :param max_iterations: maximum tool-execution rounds.
         """
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("messages must be a non-empty list of message dicts.")
+        for m in messages:
+            if not isinstance(m, dict):
+                raise ValueError(
+                    "Each message must be a dict with 'role', got %r." % type(m).__name__
+                )
+            if not isinstance(m.get("role"), str) or not m.get("role"):
+                raise ValueError("Each message must have a non-empty string 'role', got %r." % (m,))
+        if (
+            isinstance(max_iterations, bool)
+            or not isinstance(max_iterations, int)
+            or max_iterations < 0
+        ):
+            raise ValueError(
+                "max_iterations must be a non-negative int, got %r." % (max_iterations,)
+            )
+        if tools is not None and not isinstance(tools, list):
+            raise TypeError("tools must be a list or None, got %r." % type(tools).__name__)
+        if functions is not None and not isinstance(functions, list):
+            raise TypeError("functions must be a list or None, got %r." % type(functions).__name__)
         # Register per-call callables so the loop can execute them.
         for item in tools or []:
             if callable(item) and not isinstance(item, dict):
@@ -920,6 +974,10 @@ class LLM:
         repetition_penalty: Optional[float] = None,
         **kwargs: Any,
     ) -> Union[Dict[str, Any], Iterator[Dict[str, Any]]]:
+        if not isinstance(prompt, str):
+            raise TypeError("prompt must be a string, got %r." % type(prompt).__name__)
+        if not prompt.strip():
+            raise ValueError("prompt must be a non-empty string.")
         rf = _normalize_response_format(response_format, format)
         if rf is not None:
             prompt = "You must respond with valid JSON only, no other text.\n\n" + prompt
@@ -994,7 +1052,19 @@ class LLM:
     ) -> Dict[str, Any]:  # noqa: A002 (OpenAI field name)
         """OpenAI-shaped embeddings. Delegates to ``backend.embed`` (ollama /
         openai-compat / echo); raises a helpful error otherwise."""
-        texts = [input] if isinstance(input, str) else list(input)
+        if isinstance(input, str):
+            texts = [input]
+        elif isinstance(input, (list, tuple)):
+            texts = list(input)
+        else:
+            raise TypeError(
+                "embed input must be a string or list of strings, got %r." % type(input).__name__
+            )
+        if not texts:
+            raise ValueError("embed input must be non-empty.")
+        for t in texts:
+            if not isinstance(t, str):
+                raise TypeError("embed input must be strings, got %r." % type(t).__name__)
         vectors: Any = None
         for attr in ("embed", "embeddings", "get_embeddings"):
             fn = getattr(self.backend, attr, None)
