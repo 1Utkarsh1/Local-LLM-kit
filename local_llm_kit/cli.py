@@ -48,6 +48,8 @@ __all__ = [
     "handle_pull_command",
     "handle_list_command",
     "handle_embed_command",
+    "handle_vram_command",
+    "handle_agent_command",
 ]
 
 
@@ -846,6 +848,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read input texts from a file (one per non-empty line), " "or '-' for stdin.",
     )
 
+    # -- vram ------------------------------------------------------------
+    vram_p = sub.add_parser(
+        "vram", help="Estimate VRAM requirement and get hardware recommendations."
+    )
+    vram_p.add_argument(
+        "--params",
+        "-p",
+        type=float,
+        default=8.0,
+        help="Model parameters in billions (default: 8.0).",
+    )
+    vram_p.add_argument(
+        "--quant",
+        "-q",
+        default="Q4_K_M",
+        help="Quantization type (e.g. Q4_K_M, Q8_0, FP16; default: Q4_K_M).",
+    )
+    vram_p.add_argument(
+        "--context",
+        "-c",
+        type=int,
+        default=4096,
+        help="Context length in tokens (default: 4096).",
+    )
+
+    # -- agent -----------------------------------------------------------
+    agent_p = sub.add_parser(
+        "agent", help="Run an autonomous multi-turn agent with self-correcting tool execution."
+    )
+    _add_common_llm_args(agent_p, require_model=True)
+    _add_common_backend_tuning(agent_p)
+    agent_p.add_argument("prompt", help="Prompt or task instruction for the agent.")
+    agent_p.add_argument(
+        "--mcp",
+        dest="mcp",
+        action="append",
+        default=None,
+        help="MCP server command (e.g. 'python mcp_server.py').",
+    )
+    agent_p.add_argument("--system", "-s", default=None, help="System message.")
+    agent_p.add_argument(
+        "--max-steps", type=int, default=10, help="Maximum agent turns (default: 10)."
+    )
+
     return parser
 
 
@@ -1495,6 +1541,74 @@ def handle_embed_command(args: argparse.Namespace) -> None:
     print(json.dumps(payload))
 
 
+def handle_vram_command(args: argparse.Namespace) -> None:
+    """Handle the vram estimation command."""
+    from .hardware import estimate_model_vram, get_system_memory, recommend_quantization
+
+    sys_mem = get_system_memory()
+    est = estimate_model_vram(args.params, quant=args.quant, context_length=args.context)
+    rec = recommend_quantization(args.params, context_length=args.context)
+
+    print("==================================================")
+    print("Hardware & VRAM Advisor for {0}B Model".format(args.params))
+    print("==================================================")
+    print("Platform:              {0}".format(sys_mem["platform"]))
+    print(
+        "Host RAM:              {0:.1f} GB ({1:.1f} GB available)".format(
+            sys_mem["total_ram_gb"], sys_mem["available_ram_gb"]
+        )
+    )
+    if sys_mem["gpu_vram_gb"] > 0:
+        gpu_type = "Unified Memory" if sys_mem["is_apple_silicon"] else "Dedicated VRAM"
+        print("GPU Memory:            {0:.1f} GB ({1})".format(sys_mem["gpu_vram_gb"], gpu_type))
+    print("--------------------------------------------------")
+    print(
+        "Requested Quant:       {0} @ {1} context tokens".format(args.quant.upper(), args.context)
+    )
+    print("Model Weights:         {0:.2f} GB".format(est["weights_gb"]))
+    print("KV Cache:              {0:.2f} GB".format(est["kv_cache_gb"]))
+    print("Runtime Overhead:      {0:.2f} GB".format(est["overhead_gb"]))
+    print("Total Required Memory: {0:.2f} GB".format(est["total_gb"]))
+    print("--------------------------------------------------")
+    print("Recommendation:        {0}".format(rec["recommendation"]))
+    print("==================================================")
+
+
+def handle_agent_command(
+    args: argparse.Namespace, backend_kwargs: Optional[Dict[str, Any]] = None
+) -> None:
+    import shlex
+
+    from .agent import Agent
+    from .mcp import MCPClient
+
+    if backend_kwargs is None:
+        backend_kwargs = _build_backend_kwargs(args)
+
+    llm = _create_llm(args, backend_kwargs)
+
+    mcp_clients = []
+    if getattr(args, "mcp", None):
+        for mcp_cmd in args.mcp:
+            parts = shlex.split(mcp_cmd)
+            client = MCPClient(parts)
+            client.connect()
+            mcp_clients.append(client)
+
+    try:
+        agent = Agent(
+            llm=llm,
+            mcp_clients=mcp_clients,
+            system=getattr(args, "system", None),
+            max_steps=getattr(args, "max_steps", 10),
+        )
+        res = agent.run(args.prompt)
+        print(res.content)
+    finally:
+        for c in mcp_clients:
+            c.close()
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
@@ -1527,6 +1641,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             handle_list_command(args)
         elif command == "embed":
             handle_embed_command(args)
+        elif command == "vram":
+            handle_vram_command(args)
+        elif command == "agent":
+            handle_agent_command(args, _build_backend_kwargs(args))
         else:
             parser.print_help()
             return 1

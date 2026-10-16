@@ -286,11 +286,82 @@ local-llm-kit pull owner/repo --filename file.gguf --revision main --force
 local-llm-kit chat --backend sglang --model your-served-model-id -q "Hello"
 local-llm-kit list
 local-llm-kit embed --model nomic-embed-text --backend ollama --text "hello world"
+local-llm-kit vram --params 8 --quant Q4_K_M --context 4096
+local-llm-kit agent "Calculate (100 * 2.5) + 15" --model llama3.2:3b --backend echo
 ```
 
 All `chat`/`complete`/`embed` commands accept `--backend echo|transformers|llamacpp|ollama|openai-compat`. Run any command with `--help` for flags.
 
 Server presets and `airllm` are also accepted by the CLI. `pull` reuses repository/revision-specific and URL-specific caches; `--force` refreshes a download. Failed transfers preserve existing complete files. URL cache paths now include a URL hash, so older flat URL caches may be downloaded once again.
+
+## Autonomous Agent & Model Context Protocol (MCP)
+
+Run multi-turn agent loops with automated tool execution and self-correcting error recovery. Connect seamlessly to external Model Context Protocol (MCP) servers (SQLite, Git, Filesystem, Brave search) over JSON-RPC 2.0 stdio:
+
+```python
+from local_llm_kit import LLM, tool
+from local_llm_kit.mcp import MCPClient
+
+@tool
+def calculate(expr: str) -> str:
+    """Evaluate math expressions."""
+    return str(eval(expr, {"__builtins__": {}}, {}))
+
+# Connect to any local model and attach Python tools + MCP servers
+llm = LLM("llama3.2:3b", backend="ollama")
+with MCPClient.from_command("python", "mcp_server.py") as mcp:
+    agent = llm.create_agent(tools=[calculate], mcp_clients=[mcp], max_steps=5)
+    result = agent.run("Calculate (100 * 2.5) + 15 and query tables")
+    print(result.content)
+```
+
+## Resilient Structured Outputs & JSON Auto-Repair
+
+Small local models often emit "almost valid" JSON (markdown codeblocks, trailing commas, single quotes, Python literals, or truncated brackets). Local LLM Kit repairs these automatically with zero external dependencies:
+
+```python
+from local_llm_kit import extract_json, repair_json
+
+# Cleans markdown fences, trailing commas, unquoted keys, and balances braces
+data = extract_json(raw_corrupted_model_text)
+
+# Or run self-correcting structured chat with schema validation retries:
+result = llm.chat_structured(messages, schema=MySchema, max_retries=2)
+```
+
+## Hybrid RAG (Dense + BM25 with Reciprocal Rank Fusion)
+
+Combine dense semantic embeddings and Okapi BM25 keyword matching via Reciprocal Rank Fusion ($k=60$) with metadata filtering and index persistence:
+
+```python
+from local_llm_kit.rag import SimpleVectorStore, RAGPipeline
+
+store = SimpleVectorStore(embed_fn=my_embed_fn)
+store.add(["document text"], metadatas=[{"category": "database"}])
+
+# Hybrid search: exact keyword match + semantic cosine similarity
+hits = store.search("PostgreSQL indexes", k=3, mode="hybrid", filter={"category": "database"})
+
+# Save and load vector index to disk
+store.save("my_index.json")
+reloaded = SimpleVectorStore.load("my_index.json", embed_fn=my_embed_fn)
+```
+
+## Hardware VRAM Estimator & Advisor
+
+Avoid Out-Of-Memory (OOM) crashes before downloading or serving models:
+
+```python
+from local_llm_kit.hardware import estimate_model_vram, recommend_quantization
+
+# Estimate exact memory requirement including model weights and KV cache
+est = estimate_model_vram(params_b=8.0, quant="Q4_K_M", context_length=4096)
+print(f"Total VRAM needed: {est['total_gb']} GB")
+
+# Check host hardware fit
+rec = recommend_quantization(params_b=8.0, context_length=4096)
+print(rec["recommendation"])
+```
 
 ## Examples
 
@@ -301,6 +372,10 @@ Server presets and `airllm` are also accepted by the CLI. `pull` reuses reposito
 | `examples/tools_structured.py` | `@tool` + `response_format` | yes |
 | `examples/rag_minimal.py` | chunk → store → retrieve → chat | yes |
 | `examples/vision_chat.py` | `image_url` message, graceful fallback | yes |
+| `examples/mcp_agent.py` | autonomous agent + MCP stdio tools | yes |
+| `examples/hybrid_rag.py` | Dense + Okapi BM25 RRF hybrid search + persistence | yes |
+| `examples/structured_json.py` | JSON auto-repair and structured chat | yes |
+| `examples/vram_advisor.py` | VRAM memory estimator & hardware advisor | yes |
 
 ## Migration: 0.1.x → 0.2.0
 

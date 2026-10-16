@@ -34,7 +34,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 from .backends import BACKEND_ALIASES, OPENAI_SERVER_URLS
 from .backends.base import BaseBackend
@@ -1170,6 +1170,87 @@ class LLM:
         for chunk in gen:
             await asyncio.sleep(0)
             yield chunk
+
+    def create_agent(
+        self,
+        tools: Optional[Sequence[Any]] = None,
+        mcp_clients: Optional[Sequence[Any]] = None,
+        system: Optional[str] = None,
+        max_steps: int = 10,
+    ) -> Any:
+        """Create an autonomous multi-turn Agent powered by this LLM.
+
+        Args:
+            tools: Python functions (e.g. decorated with ``@tool``) or tool specs.
+            mcp_clients: Optional list of :class:`local_llm_kit.mcp.MCPClient` instances.
+            system: Optional system instruction prompt.
+            max_steps: Maximum reasoning turns allowed. Defaults to 10.
+
+        Returns:
+            An :class:`local_llm_kit.agent.Agent` instance.
+        """
+        from .agent import Agent
+
+        return Agent(
+            self,
+            tools=tools,
+            mcp_clients=mcp_clients,
+            system=system,
+            max_steps=max_steps,
+        )
+
+    def chat_structured(
+        self,
+        messages: Sequence[Dict[str, Any]],
+        schema: Optional[Union[Dict[str, Any], type]] = None,
+        max_retries: int = 2,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Chat completion requiring structured JSON output with error self-correction.
+
+        Args:
+            messages: Conversation messages.
+            schema: Optional JSON schema dict or Pydantic model.
+            max_retries: Maximum self-correction retry attempts. Defaults to 2.
+            **kwargs: Additional parameters forwarded to ``self.chat()``.
+
+        Returns:
+            Parsed and validated JSON data dictionary or list.
+        """
+        from .structured import chat_structured
+
+        return chat_structured(
+            self,
+            messages=messages,
+            schema=schema,
+            max_retries=max_retries,
+            **kwargs,
+        )
+
+    def create_rag_pipeline(
+        self,
+        store: Optional[Any] = None,
+        embed_fn: Optional[Any] = None,
+        system_prompt: Optional[str] = None,
+    ) -> Any:
+        """Create a high-level RAG pipeline using this LLM.
+
+        Args:
+            store: Optional :class:`local_llm_kit.rag.SimpleVectorStore`.
+            embed_fn: Optional embedding function.
+            system_prompt: Optional citation instruction prompt.
+
+        Returns:
+            A :class:`local_llm_kit.rag.RAGPipeline` instance.
+        """
+        from .rag import RAGPipeline
+
+        return RAGPipeline(
+            self,
+            store=store,
+            embed_fn=embed_fn,
+            system_prompt=system_prompt,
+        )
 
     def __repr__(self) -> str:
         return "LLM(model_path=%r, backend=%s)" % (self.model_path, type(self.backend).__name__)

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Model Context Protocol (MCP)**: Native stdio JSON-RPC 2.0 client (`local_llm_kit.mcp.MCPClient`) connecting local models to standard MCP tool servers with zero mandatory external dependencies.
+- **Autonomous Agent Loop**: Multi-turn tool execution orchestrator (`local_llm_kit.agent.Agent` and `LLM.create_agent`) with automated self-correcting error recovery. Tool execution exceptions are caught, formatted, and fed back to the model for one-shot retry.
+- **Resilient Structured Outputs & JSON Auto-Repair**: Zero-dependency parser heuristics (`local_llm_kit.structured.repair_json` and `extract_json`) resolving markdown code fences, conversational wrapping, trailing commas, unquoted keys, single quotes, Python literals, and truncated brackets/braces with LIFO stack balancing. Added `LLM.chat_structured` with schema validation retries.
+- **Hybrid RAG (Dense + Okapi BM25 with RRF)**: Added pure stdlib Okapi BM25 scoring (`bm25_scores`), Reciprocal Rank Fusion (`reciprocal_rank_fusion` with $k=60$), metadata filtering (`filter={"key": "val"}` or callable), document deletion (`store.delete`), and high-level `RAGPipeline` grounded question answering.
+- **Hardware & VRAM Estimator**: `local_llm_kit.hardware` module and CLI command `local-llm-kit vram` estimating memory footprints across quantizations (Q4_K_M, Q8_0, FP16) and context lengths, with hardware-aware quantization recommendation.
+- **CLI Commands**: Added `local-llm-kit vram` and `local-llm-kit agent`.
+- **Runnable Examples**: Added `examples/mcp_agent.py`, `examples/hybrid_rag.py`, `examples/structured_json.py`, and `examples/vram_advisor.py`.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added
