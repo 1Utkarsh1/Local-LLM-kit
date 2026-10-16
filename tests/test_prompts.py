@@ -179,6 +179,34 @@ class TestAllFormattersSmoke(unittest.TestCase):
                 out = cls().format_messages(messages)
                 self.assertIsInstance(out, str)
 
+    def test_every_formatter_renders_tool_role_results(self):
+        """Tool-loop output must reach the model, not be silently dropped."""
+        marker = "RESULT-22C-SUNNY"
+        messages = [
+            {"role": "user", "content": "Weather in Paris?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"location": "Paris"}'},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "name": "get_weather",
+                "content": marker,
+            },
+        ]
+        for cls in ALL_FORMATTERS:
+            with self.subTest(formatter=cls.__name__):
+                out = cls().format_messages(messages)
+                self.assertIn(marker, out, msg="%s dropped the tool result" % cls.__name__)
+
 
 class TestIndividualFormatters(unittest.TestCase):
     def test_llama3_tokens_and_assistant_cue(self):

@@ -595,24 +595,68 @@ class SimpleVectorStore:
 
     @classmethod
     def load(cls, path: str, embed_fn: Optional[EmbedFn] = None) -> "SimpleVectorStore":
-        """Load a store previously saved with :meth:`save`."""
+        """Load a store previously saved with :meth:`save`.
+
+        Raises:
+            ValueError: If the file is not a JSON object, or any of the
+                ``ids``/``texts``/``metadatas``/``vectors`` fields is null,
+                not a list, or has a different length than the others, or a
+                vector entry is not a numeric vector, or ``dim`` is neither
+                an integer nor null.
+        """
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             raise ValueError("Invalid vector store file: %r" % (path,))
-        ids = data.get("ids", [])
-        texts = data.get("texts", [])
-        metadatas = data.get("metadatas", [])
-        vectors = data.get("vectors", [])
+
+        def _collection(name: str) -> List[Any]:
+            if name not in data:
+                return []
+            value = data[name]
+            if value is None:
+                raise ValueError("Corrupt vector store file %r: field %r is null" % (path, name))
+            if not isinstance(value, list):
+                raise ValueError(
+                    "Corrupt vector store file %r: field %r must be a list, got %s"
+                    % (path, name, type(value).__name__)
+                )
+            return value
+
+        ids = _collection("ids")
+        texts = _collection("texts")
+        metadatas = _collection("metadatas")
+        vectors = _collection("vectors")
         if not (len(ids) == len(texts) == len(metadatas) == len(vectors)):
             raise ValueError("Corrupt vector store file %r: mismatched field lengths" % (path,))
-        store = cls(embed_fn=embed_fn, dim=data.get("dim"))
+        dim = data.get("dim")
+        if isinstance(dim, float) and dim.is_integer():
+            dim = int(dim)  # __init__ allows int-valued floats; save() writes them back
+        if isinstance(dim, bool) or (dim is not None and not isinstance(dim, int)):
+            raise ValueError(
+                "Corrupt vector store file %r: 'dim' must be an integer or null, got %s"
+                % (path, type(dim).__name__)
+            )
+        store = cls(embed_fn=embed_fn, dim=dim)
+        if any(not isinstance(value, str) or not value for value in ids):
+            raise ValueError("Corrupt vector store file %r: ids must be non-empty strings" % path)
+        if any(not isinstance(value, str) for value in texts):
+            raise ValueError("Corrupt vector store file %r: texts must be strings" % path)
+        if any(value is not None and not isinstance(value, dict) for value in metadatas):
+            raise ValueError(
+                "Corrupt vector store file %r: metadata must be objects or null" % path
+            )
         store.ids = [str(i) for i in ids]
         store.texts = [str(t) for t in texts]
         store.metadatas = [dict(m) if isinstance(m, dict) else {} for m in metadatas]
         # Empty vectors mark lexical-mode entries (no embed_fn at save time).
-        store.vectors = [[] if (isinstance(v, list) and len(v) == 0) else v for v in vectors]
-        store.vectors = [v if len(v) == 0 else store._check_vectors([v])[0] for v in store.vectors]
+        store.vectors = []
+        for vec in vectors:
+            if not isinstance(vec, list):
+                raise ValueError(
+                    "Corrupt vector store file %r: each vector must be a list, got %s"
+                    % (path, type(vec).__name__)
+                )
+            store.vectors.append([] if not vec else store._check_vectors([vec])[0])
         # Keep generated ids collision-free.
         store._id_counter = len(store.ids)
         return store

@@ -24,8 +24,10 @@ __all__ = [
     "MockBackend",
     "OllamaBackend",
     "OpenAICompatBackend",
+    "AirLLMBackend",
     "BACKENDS",
     "BACKEND_ALIASES",
+    "OPENAI_SERVER_URLS",
     "get_backend_class",
     "get_backend",
 ]
@@ -39,11 +41,13 @@ _BACKEND_IMPORTS = {
     "MockBackend": (".echo", "MockBackend"),
     "OllamaBackend": (".ollama", "OllamaBackend"),
     "OpenAICompatBackend": (".openai_compat", "OpenAICompatBackend"),
+    "AirLLMBackend": (".airllm", "AirLLMBackend"),
 }
 
 #: Short backend name -> "module:Class" (module relative to this package).
 BACKENDS: Dict[str, str] = {
     "transformers": ".transformers:TransformersBackend",
+    "airllm": ".airllm:AirLLMBackend",
     "llamacpp": ".llamacpp:LlamaCppBackend",
     "llama_cpp": ".llamacpp:LlamaCppBackend",
     "llama.cpp": ".llamacpp:LlamaCppBackend",
@@ -62,12 +66,37 @@ BACKENDS: Dict[str, str] = {
 BACKEND_ALIASES: Dict[str, str] = {
     "mock": "echo",
     "llama_cpp": "llamacpp",
+    "llama-cpp": "llamacpp",
     "llama.cpp": "llamacpp",
     "openai": "openai-compat",
     "openai_compat": "openai-compat",
     "vllm": "openai-compat",
     "lmstudio": "openai-compat",
     "llama-server": "openai-compat",
+    "sglang": "openai-compat",
+    "localai": "openai-compat",
+    "jan": "openai-compat",
+    "gpt4all": "openai-compat",
+    "mlx-lm": "openai-compat",
+    "koboldcpp": "openai-compat",
+    "dummy": "echo",
+    "test": "echo",
+}
+
+for _alias, _canonical in BACKEND_ALIASES.items():
+    BACKENDS[_alias] = BACKENDS[_canonical]
+
+# Connection presets; callers may override base_url for any server or port.
+OPENAI_SERVER_URLS: Dict[str, str] = {
+    "vllm": "http://localhost:8000/v1",
+    "sglang": "http://localhost:30000/v1",
+    "lmstudio": "http://localhost:1234/v1",
+    "localai": "http://localhost:8080/v1",
+    "llama-server": "http://localhost:8080/v1",
+    "jan": "http://127.0.0.1:1337/v1",
+    "gpt4all": "http://127.0.0.1:4891/v1",
+    "mlx-lm": "http://127.0.0.1:8080/v1",
+    "koboldcpp": "http://localhost:5001/v1",
 }
 
 
@@ -97,6 +126,7 @@ def get_backend_class(name: str) -> Any:
         hints = {
             "transformers": "pip install local-llm-kit[transformers]",
             "llamacpp": "pip install local-llm-kit[llamacpp]",
+            "airllm": "pip install local-llm-kit[airllm]",
         }
         canonical = BACKEND_ALIASES.get(key, key)
         hint = hints.get(canonical)
@@ -108,6 +138,10 @@ def get_backend_class(name: str) -> Any:
 
 def get_backend(name: str, **kwargs: Any) -> BaseBackend:
     """Instantiate a backend from the registry: ``get_backend("ollama", model=...)``."""
+    key = (name or "").strip().lower()
+    if key in OPENAI_SERVER_URLS:
+        kwargs.setdefault("base_url", OPENAI_SERVER_URLS[key])
+        kwargs.setdefault("provider", key)
     return get_backend_class(name)(**kwargs)
 
 

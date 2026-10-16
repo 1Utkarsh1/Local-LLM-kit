@@ -108,6 +108,38 @@ def make_app(echo):
     raise AttributeError("local_llm_kit.server exposes no known app factory")
 
 
+class GeneratorEmbedLLM(EchoLLM):
+    """LLM double whose ``embed()`` yields vectors from a non-list iterable.
+
+    numpy matrices, tuples and generators are all valid embedding
+    containers; they must be served like plain lists.
+    """
+
+    def embed(self, input):  # noqa: A002 (OpenAI field name)
+        texts = [input] if isinstance(input, str) else list(input)
+        return iter([[float(i), -1.0] for i in range(len(texts))])
+
+
+class DictEmbedLLM(EchoLLM):
+    """LLM double whose ``embed()`` returns an OpenAI-shaped dict.
+
+    This mirrors ``local_llm_kit.LLM.embed``, which always answers with
+    ``{"data": [{"embedding": [...]}]}``.
+    """
+
+    def embed(self, input):  # noqa: A002 (OpenAI field name)
+        texts = [input] if isinstance(input, str) else list(input)
+        return {
+            "object": "list",
+            "model": self.model,
+            "data": [
+                {"object": "embedding", "index": i, "embedding": [float(i), 1.5, -2.0]}
+                for i in range(len(texts))
+            ],
+            "usage": {"prompt_tokens": 1, "total_tokens": 1},
+        }
+
+
 @unittest.skipUnless(
     HAS_SERVER and HAS_FASTAPI, "server tests need local_llm_kit.server and fastapi (both optional)"
 )
@@ -167,11 +199,144 @@ class TestOpenAIServer(unittest.TestCase):
         self.assertGreaterEqual(resp.status_code, 400)
         self.assertLess(resp.status_code, 500)
 
+    def test_embeddings_use_the_llm_vectors_when_it_returns_openai_shape(self):
+        """LLM.embed() answers with {"data": [...]}: use those vectors, not a stub."""
+        app = make_app(DictEmbedLLM())
+        client = TestClient(app)
+        resp = client.post("/v1/embeddings", json={"model": "echo-model", "input": ["a", "b"]})
+        if resp.status_code == 404:
+            self.skipTest("/v1/embeddings route not exposed")
+        self.assertEqual(resp.status_code, 200, msg=resp.text[:500])
+        vectors = [item["embedding"] for item in resp.json()["data"]]
+        self.assertEqual(vectors, [[0.0, 1.5, -2.0], [1.0, 1.5, -2.0]])
+
+    def test_embeddings_accept_non_list_iterables(self):
+        """Generators / numpy matrices are valid embedding containers."""
+        app = make_app(GeneratorEmbedLLM())
+        resp = TestClient(app).post("/v1/embeddings", json={"model": "m", "input": ["a", "b"]})
+        if resp.status_code == 404:
+            self.skipTest("/v1/embeddings route not exposed")
+        self.assertEqual(resp.status_code, 200, msg=resp.text[:500])
+        vectors = [item["embedding"] for item in resp.json()["data"]]
+        self.assertEqual(vectors, [[0.0, -1.0], [1.0, -1.0]])
+
+    def test_embeddings_fall_back_when_the_llm_has_no_embed_support(self):
+        """EchoLLM exposes no embed(): a stable local fallback is still served."""
+        body = {"model": "echo-model", "input": "hello"}
+        first = self.client.post("/v1/embeddings", json=body)
+        if first.status_code == 404:
+            self.skipTest("/v1/embeddings route not exposed")
+        self.assertEqual(first.status_code, 200, msg=first.text[:500])
+        first_vec = first.json()["data"][0]["embedding"]
+        second_vec = self.client.post("/v1/embeddings", json=body).json()["data"][0]["embedding"]
+        self.assertTrue(first_vec, msg="fallback embeddings must not be empty")
+        self.assertEqual(first_vec, second_vec, msg="fallback embeddings must be deterministic")
+
 
 @unittest.skipUnless(not HAS_FASTAPI, "fastapi is installed; skip-path test not applicable")
 class TestServerSkipPath(unittest.TestCase):
     def test_missing_fastapi_is_a_skip_not_a_failure(self):
         self.assertIsNone(TestClient)
+
+
+@unittest.skipUnless(HAS_FASTAPI and HAS_SERVER, "server extra unavailable")
+class TestConsolidatedServerValidation(unittest.TestCase):
+    def test_tool_execution_requires_a_boolean_not_a_truthy_value(self):
+        llm = EchoLLM()
+        with TestClient(SERVER_MOD.create_app(llm=llm)) as client:
+            for value in ("false", "true", 1, None, [True]):
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={"messages": [{"role": "user", "content": "hi"}], "execute_tools": value},
+                )
+                self.assertEqual(response.status_code, 400)
+        self.assertEqual(llm.chat_calls, [])
+
+    def test_image_content_parts_reach_the_client(self):
+        llm = EchoLLM()
+        content = [
+            {"type": "text", "text": "Describe this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+        ]
+        with TestClient(SERVER_MOD.create_app(llm=llm)) as client:
+            response = client.post(
+                "/v1/chat/completions", json={"messages": [{"role": "user", "content": content}]}
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(llm.chat_calls[0]["messages"][0]["content"], content)
+
+    def test_invalid_generation_options_return_400_for_both_routes(self):
+        with TestClient(SERVER_MOD.create_app(llm=EchoLLM())) as client:
+            for route, body in (
+                ("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}),
+                ("/v1/completions", {"prompt": "hi"}),
+            ):
+                for options in (
+                    {"temperature": "hot"},
+                    {"temperature": True},
+                    {"max_tokens": 1.5},
+                    {"max_tokens": True},
+                    {"max_tokens": -1},
+                    {"response_format": []},
+                ):
+                    with self.subTest(route=route, options=options):
+                        response = client.post(route, json=dict(body, **options))
+                        self.assertEqual(response.status_code, 400)
+                        self.assertEqual(response.json()["error"]["type"], "invalid_request_error")
+
+    def test_schema_and_completion_token_alias_are_forwarded(self):
+        llm = EchoLLM()
+        schema = {
+            "type": "json_schema",
+            "json_schema": {"name": "out", "schema": {"type": "object"}},
+        }
+        with TestClient(SERVER_MOD.create_app(llm=llm)) as client:
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "messages": [{"role": "user", "content": "JSON please"}],
+                    "response_format": schema,
+                    "max_completion_tokens": 12,
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(llm.chat_calls[-1]["kwargs"]["response_format"], schema)
+        self.assertEqual(llm.chat_calls[-1]["kwargs"]["max_tokens"], 12)
+
+    def test_invalid_embedding_items_return_400(self):
+        with TestClient(SERVER_MOD.create_app(llm=EchoLLM())) as client:
+            self.assertEqual(
+                client.post("/v1/embeddings", json={"input": ["ok", None]}).status_code, 400
+            )
+
+    def test_runtime_type_errors_do_not_repeat_requests(self):
+        class BrokenLLM(EchoLLM):
+            def chat(self, messages, **kwargs):
+                self.chat_calls.append(messages)
+                raise TypeError("backend failed after doing work")
+
+        llm = BrokenLLM()
+        with TestClient(SERVER_MOD.create_app(llm=llm)) as client:
+            response = client.post(
+                "/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]}
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(len(llm.chat_calls), 1)
+
+    def test_legacy_llms_cannot_bypass_tool_execution_opt_in(self):
+        class LegacyLLM:
+            def chat(self, messages, functions=None, function_call="auto"):
+                raise AssertionError("legacy executor must not run")
+
+        with self.assertRaisesRegex(TypeError, "cannot disable tool execution"):
+            SERVER_MOD._call_llm_chat(
+                LegacyLLM(),
+                {
+                    "messages": [],
+                    "functions": [{"name": "dangerous"}],
+                    "execute_tools": False,
+                },
+            )
 
 
 if __name__ == "__main__":

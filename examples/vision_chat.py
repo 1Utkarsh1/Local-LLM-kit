@@ -43,7 +43,8 @@ def main() -> None:
 
     kwargs = {"model_path": args.model, "backend": args.backend}
     if args.base_url:
-        kwargs["backend_kwargs"] = {"base_url": args.base_url}
+        key = "host" if args.backend == "ollama" else "base_url"
+        kwargs["backend_kwargs"] = {key: args.base_url}
 
     messages = build_messages(args.prompt, args.image)
     try:

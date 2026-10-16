@@ -31,6 +31,8 @@ import os
 import sys
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
+from .backends import BACKEND_ALIASES, BACKENDS, OPENAI_SERVER_URLS
+
 try:
     import readline  # noqa: F401  (history + arrow keys on Unix; optional)
 except ImportError:  # pragma: no cover - Windows has no readline
@@ -53,27 +55,7 @@ __all__ = [
 # Constants
 # ---------------------------------------------------------------------------
 
-BACKEND_CHOICES = [
-    "transformers",
-    "llamacpp",
-    "llama-cpp",
-    "ollama",
-    "openai-compat",
-    "openai_compat",
-    "echo",
-    "mock",
-    "auto",
-]
-
-_BACKEND_ALIASES = {
-    "llama-cpp": "llamacpp",
-    "llama_cpp": "llamacpp",
-    "openai_compat": "openai-compat",
-    "openai": "openai-compat",
-    "mock": "echo",
-    "dummy": "echo",
-    "test": "echo",
-}
+BACKEND_CHOICES = sorted(set(BACKENDS) | {"auto"})
 
 _PULL_FUNC_NAMES = (
     "download_model",
@@ -103,10 +85,25 @@ _EMBED_METHOD_NAMES = (
     "embed_texts",
 )
 
-_MODEL_ARG_KEYS = ("model", "model_id", "model_name", "repo_id", "repo", "path", "name")
+_MODEL_ARG_KEYS = (
+    "model",
+    "model_id",
+    "model_name",
+    "repo_id",
+    "repo",
+    "repo_or_path",
+    "path",
+    "name",
+)
 _OUTPUT_DIR_KEYS = ("output_dir", "dest_dir", "destination", "out_dir", "target_dir", "cache_dir")
+_FILENAME_KEYS = ("filename", "file", "file_name")
 _REVISION_KEYS = ("revision", "rev", "ref")
 _FORCE_KEYS = ("force", "overwrite", "force_download")
+
+#: ``response_format["type"]`` values understood by ``LLM._normalize_response_format``.
+#: Used to tell a response_format object apart from a plain JSON Schema, whose
+#: ``type`` key holds a JSON type (``"object"``, ``"array"``, ...).
+_RESPONSE_FORMAT_TYPES = ("json_object", "json_schema", "text")
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +151,7 @@ def _normalize_backend(name: Optional[str]) -> Optional[str]:
     key = str(name).strip().lower()
     if key in ("auto", "none", ""):
         return None
-    return _BACKEND_ALIASES.get(key, key)
+    return key if key in OPENAI_SERVER_URLS else BACKEND_ALIASES.get(key, key)
 
 
 def _load_json_file(path: str, max_bytes: int = 1024 * 1024) -> Any:
@@ -249,12 +246,16 @@ def _parse_choice(value: Optional[str], name: str) -> Optional[Any]:
     if value is None:
         return None
     text = value.strip()
-    if text in ("auto", "none"):
+    if text in ("auto", "none", "required"):
         return text
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        _fail("invalid {0} format: {1!r} " "(expected 'auto', 'none', or JSON)".format(name, value))
+        _fail(
+            "invalid {0} format: {1!r} (expected 'auto', 'none', 'required', or JSON)".format(
+                name, value
+            )
+        )
     return None  # unreachable
 
 
@@ -280,10 +281,11 @@ def _resolve_formats(args: argparse.Namespace) -> Tuple[Optional[str], Optional[
     if text.lower() in ("json", "json_object", "json-object"):
         return "json", {"type": "json_object"}
     loaded = _load_json_value_or_file(text, "--response-format")
-    if isinstance(loaded, dict) and "type" in loaded and "function" not in loaded:
-        # Looks like a full {"type": ..., ...} response_format object.
+    if isinstance(loaded, dict) and loaded.get("type") in _RESPONSE_FORMAT_TYPES:
+        # A full {"type": "json_object"|"json_schema"|"text"} object.
         return "json", loaded
-    # Otherwise treat it as a JSON schema for structured output.
+    # Otherwise treat it as a JSON schema for structured output (a schema's
+    # own "type" key is a JSON type such as "object", not a format type).
     return "json", {
         "type": "json_schema",
         "json_schema": {"name": "response", "schema": loaded},
@@ -316,18 +318,17 @@ def _build_backend_kwargs(args: argparse.Namespace) -> Dict[str, Any]:
         kwargs["n_gpu_layers"] = gpu_layers
 
     device = getattr(args, "device", None)
-    if backend == "transformers" and device:
+    if backend in ("transformers", "airllm") and device:
         kwargs["device"] = device
 
-    base_url = (
-        getattr(args, "base_url", None)
-        or os.environ.get("OPENAI_BASE_URL", "")
-        or os.environ.get("OLLAMA_HOST", "")
+    base_url = getattr(args, "base_url", None) or os.environ.get(
+        "OLLAMA_HOST" if backend == "ollama" else "OPENAI_BASE_URL", ""
     )
-    if base_url and backend in ("ollama", "openai-compat", None):
-        kwargs["base_url"] = base_url
+    is_server = backend in ("ollama", "openai-compat", None) or backend in OPENAI_SERVER_URLS
+    if base_url and is_server:
+        kwargs["host" if backend == "ollama" else "base_url"] = base_url
     api_key = getattr(args, "api_key", None) or os.environ.get("OPENAI_API_KEY", "")
-    if api_key and backend in ("ollama", "openai-compat", None):
+    if api_key and is_server:
         # Only pass through when the kwarg was explicitly given or env set.
         if getattr(args, "api_key", None) or "OPENAI_API_KEY" in os.environ:
             kwargs["api_key"] = api_key
@@ -565,8 +566,8 @@ def _add_common_llm_args(parser: argparse.ArgumentParser, *, require_model: bool
         "-b",
         choices=BACKEND_CHOICES,
         default=None,
-        help="Backend to use: transformers, llamacpp, ollama, "
-        "openai-compat, echo (offline mock). Default: auto-detect.",
+        help="Local backend or server preset (including airllm, sglang, vllm, "
+        "lmstudio, localai, llama-server). Default: auto-detect.",
     )
     parser.add_argument(
         "--temperature",
@@ -606,7 +607,7 @@ def _add_common_backend_tuning(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--device",
         default=None,
-        help="Device for transformers ('cpu', 'cuda', 'mps').",
+        help="Device for transformers or AirLLM (hardware support depends on backend).",
     )
 
 
@@ -801,6 +802,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory to download into (default: helper default).",
     )
     pull_p.add_argument("--revision", default=None, help="Git revision / tag to fetch.")
+    pull_p.add_argument(
+        "--filename", "--file", default=None, help="Filename inside the model repository."
+    )
     pull_p.add_argument(
         "--force",
         action="store_true",
@@ -1118,15 +1122,9 @@ def _instantiate_app(
             candidate["model"] = model
         if backend and "backend" not in candidate:
             candidate["backend"] = backend
-    try:
-        return create_app(**candidate)
-    except TypeError:
-        if candidate:
-            try:
-                return create_app()
-            except TypeError:
-                pass
-        raise
+        if backend_kwargs and "backend_kwargs" not in candidate:
+            candidate["backend_kwargs"] = backend_kwargs
+    return create_app(**candidate)
 
 
 def handle_serve_command(args: argparse.Namespace) -> None:
@@ -1166,7 +1164,12 @@ def handle_serve_command(args: argparse.Namespace) -> None:
 
 
 def _adapt_download_call(
-    func: Any, model: str, output_dir: Optional[str], revision: Optional[str], force: bool
+    func: Any,
+    model: str,
+    output_dir: Optional[str],
+    revision: Optional[str],
+    force: bool,
+    filename: Optional[str] = None,
 ) -> Any:
     """Invoke a models.py download helper across signature variants."""
     try:
@@ -1174,27 +1177,22 @@ def _adapt_download_call(
     except (TypeError, ValueError):
         return func(model)
     params = sig.parameters
-    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
-        kwargs: Dict[str, Any] = {"model": model}
-        if output_dir is not None:
-            kwargs["output_dir"] = output_dir
-        if revision is not None:
-            kwargs["revision"] = revision
-        if force:
-            kwargs["force"] = True
-        return func(**kwargs)
+    accepts_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
 
     def _pick(keys: Tuple[str, ...]) -> Optional[str]:
         for key in keys:
             if key in params:
                 return key
-        return None
+        return keys[0] if accepts_kw else None
 
     model_key = _pick(_MODEL_ARG_KEYS)
     call: Dict[str, Any] = {}
     positional: List[Any] = []
     if model_key is not None:
-        call[model_key] = model
+        if model_key in params and params[model_key].kind == inspect.Parameter.POSITIONAL_ONLY:
+            positional.append(model)
+        else:
+            call[model_key] = model
     else:
         # Single positional parameter with an unfamiliar name.
         positional_params = [
@@ -1206,11 +1204,14 @@ def _adapt_download_call(
         if len(positional_params) == 1 and len(params) == 1:
             return func(model)
         _fail(
-            "download helper {0}{1} has an unrecognised signature; "
+            "download helper {0}.{1} has an unrecognised signature; "
             "cannot pass the model name.".format(
                 getattr(func, "__module__", ""), getattr(func, "__name__", func)
             )
         )
+    filename_key = _pick(_FILENAME_KEYS)
+    if filename_key is not None and filename is not None:
+        call[filename_key] = filename
     out_key = _pick(_OUTPUT_DIR_KEYS)
     if out_key is not None and output_dir is not None:
         call[out_key] = output_dir
@@ -1256,6 +1257,7 @@ def handle_pull_command(args: argparse.Namespace) -> None:
             getattr(args, "output_dir", None),
             getattr(args, "revision", None),
             bool(getattr(args, "force", False)),
+            getattr(args, "filename", None),
         )
     except KeyboardInterrupt:
         _fail("download interrupted.", code=130)

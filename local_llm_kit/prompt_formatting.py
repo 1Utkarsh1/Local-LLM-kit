@@ -55,15 +55,19 @@ class ChatMLPromptFormatter(BasePromptFormatter):
             elif role == "user":
                 formatted_messages.append(f"<|im_start|>user\n{content}<|im_end|>")
             elif role == "assistant":
-                if message.get("function_call"):
+                if message.get("tool_calls"):
+                    tool_calls_str = json.dumps({"tool_calls": message["tool_calls"]})
+                    formatted_messages.append(f"<|im_start|>assistant\n{tool_calls_str}<|im_end|>")
+                elif message.get("function_call"):
                     func_call = message["function_call"]
                     func_call_str = json.dumps({"function_call": func_call})
                     formatted_messages.append(f"<|im_start|>assistant\n{func_call_str}<|im_end|>")
                 else:
                     formatted_messages.append(f"<|im_start|>assistant\n{content or ''}<|im_end|>")
-            elif role == "function":
+            elif role in ("function", "tool"):
+                name = message.get("name") or message.get("tool_call_id") or "tool"
                 formatted_messages.append(
-                    f"<|im_start|>function\nname: {message.get('name')}\ncontent: {content}<|im_end|>"
+                    f"<|im_start|>function\nname: {name}\ncontent: {content}<|im_end|>"
                 )
 
         # Add function definitions if provided
@@ -135,18 +139,28 @@ class Llama2ChatPromptFormatter(BasePromptFormatter):
                     conversation.append(current_turn)
                     current_turn = {"user": "", "assistant": ""}
 
-                current_turn["user"] = content
+                if current_turn["user"]:
+                    current_turn["user"] += "\n\n" + (content or "")
+                else:
+                    current_turn["user"] = content or ""
             elif role == "assistant":
-                if message.get("function_call"):
+                if message.get("tool_calls"):
+                    current_turn["assistant"] = json.dumps(message["tool_calls"])
+                elif message.get("function_call"):
                     # Format function call as JSON
                     func_call = message["function_call"]
                     func_call_str = json.dumps(func_call)
                     current_turn["assistant"] = func_call_str
                 else:
                     current_turn["assistant"] = content or ""
-            elif role == "function":
+            elif role in ("function", "tool"):
                 # Add function result as part of user's next message
-                func_result = f"[Function Result: {message.get('name')}]\n{content}"
+                name = message.get("name") or message.get("tool_call_id") or "tool"
+                label = "Tool" if role == "tool" else "Function"
+                func_result = f"[{label} Result: {name}]\n{content}"
+                if current_turn["assistant"]:
+                    conversation.append(current_turn)
+                    current_turn = {"user": "", "assistant": ""}
                 if current_turn["user"]:
                     current_turn["user"] += f"\n\n{func_result}"
                 else:
@@ -189,24 +203,19 @@ class Llama2ChatPromptFormatter(BasePromptFormatter):
 
             if i == 0 and system_content:
                 # First turn includes system message
-                formatted_parts.append(
-                    f"<s>[INST] {system_content}\n\n{user_text} [/INST] {assistant_text}"
-                )
+                prefix = f"<s>[INST] {system_content}\n\n{user_text} [/INST]"
             else:
                 # Subsequent turns
-                formatted_parts.append(f"[INST] {user_text} [/INST] {assistant_text}")
+                prefix = f"[INST] {user_text} [/INST]"
+
+            if assistant_text:
+                formatted_parts.append(f"{prefix} {assistant_text}")
+            else:
+                formatted_parts.append(prefix)
 
         # If there was no conversation but we have a system message, create a prompt for it
         if not conversation and system_content:
             formatted_parts.append(f"<s>[INST] {system_content} [/INST]")
-
-        # Handle the case where the last message is from the user (awaiting assistant response)
-        elif conversation and not conversation[-1]["assistant"]:
-            last_user_text = conversation[-1]["user"]
-            if system_content and len(conversation) == 1:
-                formatted_parts.append(f"<s>[INST] {system_content}\n\n{last_user_text} [/INST]")
-            else:
-                formatted_parts.append(f"[INST] {last_user_text} [/INST]")
 
         return " ".join(formatted_parts)
 
@@ -275,22 +284,21 @@ class MistralInstructPromptFormatter(BasePromptFormatter):
                 else:
                     conversation_parts.append(f"[INST] {content} [/INST]")
             elif role == "assistant":
-                if message.get("function_call"):
+                if message.get("tool_calls"):
+                    conversation_parts.append(json.dumps(message["tool_calls"]))
+                elif message.get("function_call"):
                     # Format function call as JSON
                     func_call = message["function_call"]
                     func_call_str = json.dumps(func_call)
                     conversation_parts.append(func_call_str)
                 else:
                     conversation_parts.append(content or "")
-            elif role == "function":
+            elif role in ("function", "tool"):
                 # Add function result to next user message
-                func_result = f"[Function Result: {message.get('name')}]\n{content}"
-                if i + 1 < len(messages) and messages[i + 1]["role"] == "user":
-                    # Will be added to the next user message
-                    pass
-                else:
-                    # Add as a separate message
-                    conversation_parts.append(f"[INST] {func_result} [/INST]")
+                name = message.get("name") or message.get("tool_call_id") or "tool"
+                label = "Tool" if role == "tool" else "Function"
+                func_result = f"[{label} Result: {name}]\n{content}"
+                conversation_parts.append(f"[INST] {func_result} [/INST]")
 
         return " ".join(conversation_parts)
 
@@ -353,16 +361,19 @@ class VicunaPromptFormatter(BasePromptFormatter):
             elif role == "user":
                 formatted_parts.append(f"HUMAN: {content}")
             elif role == "assistant":
-                if message.get("function_call"):
+                if message.get("tool_calls"):
+                    formatted_parts.append(f"ASSISTANT: {json.dumps(message['tool_calls'])}")
+                elif message.get("function_call"):
                     # Format function call as JSON
                     func_call = message["function_call"]
                     func_call_str = json.dumps(func_call)
                     formatted_parts.append(f"ASSISTANT: {func_call_str}")
                 else:
                     formatted_parts.append(f"ASSISTANT: {content or ''}")
-            elif role == "function":
+            elif role in ("function", "tool"):
                 # Add function result
-                func_result = f"FUNCTION {message.get('name')}: {content}"
+                name = message.get("name") or message.get("tool_call_id") or "tool"
+                func_result = f"FUNCTION {name}: {content}"
                 formatted_parts.append(func_result)
 
         # Add final assistant prompt if the last message wasn't from the assistant
@@ -431,16 +442,19 @@ class PlainInstructPromptFormatter(BasePromptFormatter):
             elif role == "user":
                 conversation.append(f"User: {content}")
             elif role == "assistant":
-                if message.get("function_call"):
+                if message.get("tool_calls"):
+                    conversation.append(f"Assistant: {json.dumps(message['tool_calls'])}")
+                elif message.get("function_call"):
                     # Format function call as JSON
                     func_call = message["function_call"]
                     func_call_str = json.dumps(func_call)
                     conversation.append(f"Assistant: {func_call_str}")
                 else:
                     conversation.append(f"Assistant: {content or ''}")
-            elif role == "function":
+            elif role in ("function", "tool"):
                 # Add function result
-                conversation.append(f"Function {message.get('name')}: {content}")
+                name = message.get("name") or message.get("tool_call_id") or "tool"
+                conversation.append(f"Function {name}: {content}")
 
         # Add conversation history
         if conversation:
@@ -462,6 +476,8 @@ def message_text(message: Dict[str, Any]) -> str:
     original structured messages separately.
     """
     content = message.get("content", "")
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -470,7 +486,9 @@ def message_text(message: Dict[str, Any]) -> str:
             if not isinstance(part, dict):
                 texts.append(str(part))
             elif part.get("type") == "text":
-                texts.append(part.get("text", ""))
+                text = part.get("text")
+                if text is not None:
+                    texts.append(str(text))
             elif part.get("type") in ("image_url", "image"):
                 texts.append("[image]")
         return "\n".join(t for t in texts if t)

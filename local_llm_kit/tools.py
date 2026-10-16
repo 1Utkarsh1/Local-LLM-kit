@@ -145,6 +145,12 @@ class ToolCall:
         arguments: Dict[str, Any],
         call_id: Optional[str] = None,
     ):
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("ToolCall 'name' must be a non-empty string.")
+        if not isinstance(arguments, dict):
+            raise TypeError("ToolCall 'arguments' must be a dict.")
+        if call_id is not None and not isinstance(call_id, str):
+            raise ValueError("ToolCall 'id' must be a string or None.")
         self.name = name
         self.arguments = arguments
         self.id = (
@@ -161,11 +167,23 @@ class ToolCall:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolCall":
+        """Build a :class:`ToolCall` from an OpenAI-style ``tool_calls`` entry.
+
+        Raises:
+            TypeError: if *data* (or its ``function`` payload) is not a dict.
+            ValueError: if ``function.name`` is missing, null, or not a
+                non-empty string, or ``function.arguments`` is null or not a
+                dict/JSON-object string.
+        """
+        if not isinstance(data, dict):
+            raise TypeError("ToolCall record must be a dict, got %r" % type(data).__name__)
         fn = data.get("function", data)
-        args = fn.get("arguments", {})
-        if isinstance(args, str):
-            args = json.loads(args) if args.strip() else {}
-        return cls(name=fn["name"], arguments=args, call_id=data.get("id"))
+        if not isinstance(fn, dict):
+            raise TypeError("ToolCall record 'function' must be a dict, got %r" % type(fn).__name__)
+        call = FunctionCall.from_dict(
+            {"name": fn.get("name"), "arguments": fn.get("arguments", {})}
+        )
+        return cls(name=call.name, arguments=call.arguments, call_id=data.get("id"))
 
     def to_function_call(self) -> FunctionCall:
         return FunctionCall(name=self.name, arguments=self.arguments)
@@ -272,7 +290,7 @@ def parse_tool_calls(text: str) -> List[ToolCall]:
         data = json.loads(text)
         if isinstance(data, dict) and "tool_calls" in data:
             return [ToolCall.from_dict(tc) for tc in data["tool_calls"]]
-    except (json.JSONDecodeError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError):
         pass
 
     # 2/3. Tagged blocks — may contain a JSON array or single object
@@ -289,18 +307,11 @@ def parse_tool_calls(text: str) -> List[ToolCall]:
                 items = data if isinstance(data, list) else [data]
                 calls = []
                 for item in items:
-                    if "function" in item:
+                    if isinstance(item, dict) and ("function" in item or "name" in item):
                         calls.append(ToolCall.from_dict(item))
-                    elif "name" in item:
-                        args = item.get("arguments", {})
-                        if isinstance(args, str):
-                            args = json.loads(args) if args.strip() else {}
-                        calls.append(
-                            ToolCall(name=item["name"], arguments=args, call_id=item.get("id"))
-                        )
                 if calls:
                     return calls
-            except (json.JSONDecodeError, KeyError, TypeError):
+            except (ValueError, KeyError, TypeError):
                 continue
 
     # 4. Legacy formats (also covers bare {"name","arguments"} JSON)

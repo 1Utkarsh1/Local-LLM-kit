@@ -8,7 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Future features and improvements will be listed here
+- Native chat, tool-call responses, streaming argument assembly and structured-output forwarding for Ollama and OpenAI-compatible servers.
+- Server presets for SGLang, vLLM, LM Studio, LocalAI, llama-server, Jan, GPT4All, MLX-LM and KoboldCpp, shared between the Python API, registry and CLI; documented limits across 12 distinct runtimes.
+- An experimental optional AirLLM adapter with PyTorch/MLX contract tests, serialized generation, explicit context limits and buffered streaming.
+- High-level helper options for per-call tool execution, iteration/time limits and sampling, preserving existing positional argument positions.
+- `pull --filename/--file` and working `--force` cache refresh; optional custom recommended-model tables.
+- Accurate quickstart/API/backend references and `llms.txt` for project discovery.
+- Regression and protocol tests, including local HTTP fixtures without model downloads.
+
+### Fixed
+- Broken CLI download-helper argument mapping, JSON Schema detection and missing backend-configuration forwarding.
+- Native embedding responses were discarded for pseudo-embeddings by the development server.
+- Failed, truncated or interrupted downloads could replace/delete complete cached models. Unique temporary siblings are now atomically replaced only after validation.
+- Cache lookup could select another repository's same-named file or an arbitrary revision. Lookups now follow repository/revision identity and Hugging Face refs.
+- Invalid/null function and tool-call records raised low-level exceptions or propagated invalid arguments. Deserializers and parsers now validate consistently.
+- Per-request callable tools leaked into a shared client's persistent registry.
+- Tool timeout handling waited for timed-out workers, non-JSON tool results escaped as exceptions, and nested JSON extraction truncated valid output.
+- Prompt templates dropped tool calls/results; Llama-2 duplicated the final user turn and Mistral dropped results before a follow-up user message.
+- Malformed message batches could poison shared history; token estimates omitted tool arguments.
+- Corrupt vector-store collections and values were accepted or raised unclear exceptions.
+- Server generation options now return HTTP 400 for invalid values, schemas are forwarded, and runtime TypeErrors do not repeat requests.
+- Ollama CLI host overrides were passed under an unused parameter name.
+- Image content is preserved through the bundled server and inline image parts map to Ollama's native base64 image field.
+- Remote tool execution now requires a boolean flag; truthy strings cannot enable it.
+- The documented offline simple-chat example rejected its advertised arguments.
+
+### Compatibility notes
+- Explicit nulls, JSON arrays/scalars and malformed call arguments are rejected; existing empty-string tool arguments still mean an empty object. Empty chat lists and empty completion prompts remain accepted by the Python API.
+- URL caches now include the full URL's hash; older flat URL cache files are preserved but may be downloaded once again.
+- Tool timeouts bound waiting; already-running Python functions continue in their worker thread.
+- No new core runtime dependencies. AirLLM is optional, experimental and not GPU-certified; external-server features depend on runtime/model configuration.
 
 ## [0.2.0] - 2026-09-18
 
@@ -126,4 +155,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - N/A (Initial release)
 
 ### Security
-- N/A (Initial release) 
+- N/A (Initial release)

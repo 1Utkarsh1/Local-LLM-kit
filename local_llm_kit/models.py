@@ -18,11 +18,14 @@ like a GGUF (``.gguf`` suffix, case-insensitive, or legacy ``ggml``)
 suggests ``"llamacpp"``, everything else suggests ``"transformers"``.
 """
 
+import hashlib
 import logging
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -186,13 +189,15 @@ def is_hf_repo_id(spec: str) -> bool:
     if not isinstance(spec, str):
         return False
     s = spec.strip()
-    if not s or "://" in s or any(c.isspace() for c in s):
+    if not s or "\x00" in s or "://" in s or any(c.isspace() for c in s):
         return False
     if s.lower().endswith(GGUF_SUFFIXES):
         return False
     if os.path.exists(os.path.expanduser(s)):
         return False
     if "/" not in s or s.startswith("/") or s.endswith("/"):
+        return False
+    if any(part in (".", "..") for part in s.split("/")):
         return False
     return _HF_REPO_RE.match(s) is not None
 
@@ -204,7 +209,9 @@ def suggested_backend_for(spec: str, filename: Optional[str] = None) -> str:
     :func:`resolve_model` agrees with :class:`LLM`.
     """
     if not isinstance(spec, str):
-        spec = str(spec)
+        raise ValueError("spec must be a string.")
+    if filename is not None and not isinstance(filename, str):
+        raise ValueError("filename must be a string or None.")
     return "llamacpp" if _looks_like_llamacpp(spec, filename) else "transformers"
 
 
@@ -238,12 +245,30 @@ def _hf_hub_cache_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
 
 
-def _dest_for_repo_file(repo_id: str, filename: str, cache_dir: Optional[str]) -> str:
+def _dest_for_repo_file(
+    repo_id: str, filename: str, cache_dir: Optional[str], revision: str = DEFAULT_REVISION
+) -> str:
     """Map ``(repo_id, filename)`` to a path inside our cache dir."""
+    if not is_hf_repo_id(repo_id):
+        raise ValueError("Invalid repo_id: %r" % (repo_id,))
+    if not isinstance(filename, str) or "\x00" in filename:
+        raise ValueError("filename must be a string without NUL bytes.")
+    name = os.path.basename(filename.strip().lstrip("/"))
+    if not name or name in (".", ".."):
+        raise ValueError("Invalid filename: %r" % (filename,))
+    if (
+        not isinstance(revision, str)
+        or "\x00" in revision
+        or any(part in (".", "..") for part in revision.split("/"))
+    ):
+        raise ValueError("Invalid revision: %r" % (revision,))
     base = os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir()
-    # Nested layout keeps caches browsable: <cache>/<owner>/<name>/<file>
-    rel = os.path.join(*repo_id.strip().split("/"), os.path.basename(filename))
-    return os.path.join(base, rel)
+    repo_dir = os.path.join(base, *repo_id.strip().split("/"))
+    if revision != DEFAULT_REVISION:
+        repo_dir = os.path.join(repo_dir, ".revisions", quote(revision, safe=""))
+    dest = os.path.join(repo_dir, name)
+    _assert_within_cache(dest, base)
+    return dest
 
 
 # ---------------------------------------------------------------------------
@@ -254,19 +279,43 @@ def _dest_for_repo_file(repo_id: str, filename: str, cache_dir: Optional[str]) -
 _MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024 * 1024
 
 
+def _remove_quietly(path: str) -> None:
+    """Best-effort file removal (never raises)."""
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
 def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> str:
-    """Download *url* to *dest_path* with stdlib urllib. Returns dest path."""
+    """Download *url* to *dest_path* with stdlib urllib. Returns dest path.
+
+    The body is written to a unique temporary sibling and renamed into place only
+    after the transfer completes, so a failed or interrupted download can
+    never leave a truncated file that later looks like a cached model.
+    """
     # Local import keeps module import light.
     import urllib.request
 
+    if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size < 1:
+        raise ValueError("chunk_size must be a positive integer.")
     dest = os.path.abspath(dest_path)
-    _assert_within_cache(dest, os.path.dirname(dest))
+    if os.path.isdir(dest):
+        raise ValueError("Download destination is a directory: %r" % dest)
     parent = os.path.dirname(dest)
     if parent:
         os.makedirs(parent, exist_ok=True)
+    part = None
     req = urllib.request.Request(url, headers={"User-Agent": "local-llm-kit/0.2.0"})
     try:
-        with urllib.request.urlopen(req) as resp, open(dest, "wb") as fh:
+        with (
+            urllib.request.urlopen(req, timeout=30) as resp,
+            tempfile.NamedTemporaryFile(
+                mode="wb", dir=parent, prefix=".download-", suffix=".part", delete=False
+            ) as fh,
+        ):
+            part = fh.name
             total = resp.getheader("Content-Length")
             total_n = int(total) if total and total.isdigit() else 0
             if total_n > _MAX_DOWNLOAD_BYTES:
@@ -289,13 +338,17 @@ def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> st
                 if total_n:
                     pct = done * 100 // total_n
                     logger.info("Downloading %s: %d%% (%d/%d bytes)", url, pct, done, total_n)
-    except Exception as exc:
-        # Remove partial file so a retry/cache scan never sees it as valid.
-        try:
-            if os.path.exists(dest):
-                os.remove(dest)
-        except OSError:
-            pass
+            if total is not None and total.isdigit() and done != total_n:
+                raise RuntimeError(
+                    "Truncated download of %s: got %d of %d bytes" % (url, done, total_n)
+                )
+        os.replace(part, dest)
+    except BaseException as exc:
+        # Drop the partial file so a retry/cache scan never sees it as valid.
+        if part is not None:
+            _remove_quietly(part)
+        if not isinstance(exc, Exception):
+            raise  # KeyboardInterrupt / SystemExit: clean up, then propagate as-is
         raise RuntimeError("Failed to download {}: {}".format(url, exc)) from exc
     logger.info("Saved %s -> %s", url, dest)
     return dest
@@ -303,9 +356,9 @@ def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> st
 
 def _assert_within_cache(path: str, cache_root: str) -> None:
     """Reject paths escaping the cache root (path-traversal mitigation)."""
-    root = os.path.abspath(cache_root)
-    target = os.path.abspath(path)
-    if target != root and not target.startswith(root + os.sep):
+    root = os.path.realpath(cache_root)
+    target = os.path.realpath(path)
+    if os.path.commonpath([target, root]) != root:
         raise ValueError("Refusing to write outside the cache directory: %r" % path)
 
 
@@ -314,6 +367,7 @@ def _try_hf_hub_download(
     filename: str,
     cache_dir: Optional[str],
     revision: str = DEFAULT_REVISION,
+    force: bool = False,
 ) -> Optional[str]:
     """Try ``huggingface_hub.hf_hub_download``; return path or None.
 
@@ -326,6 +380,8 @@ def _try_hf_hub_download(
     except ImportError:
         return None
     kwargs = {"repo_id": repo_id, "filename": filename, "revision": revision}
+    if force:
+        kwargs["force_download"] = True
     if cache_dir:
         # NOTE: this is the HF hub cache root, files land under
         # models--<org>--<name>/snapshots/... upstream layout.
@@ -349,9 +405,9 @@ def _download_hf_via_urllib(
 ) -> str:
     """Fallback downloader hitting ``huggingface.co/.../resolve/...``."""
     url = "https://huggingface.co/{}/resolve/{}/{}".format(
-        repo_id.strip(), revision.strip() or DEFAULT_REVISION, filename.strip()
+        repo_id.strip(), quote(revision, safe=""), quote(filename, safe="")
     )
-    return _download_url(url, _dest_for_repo_file(repo_id, filename, cache_dir))
+    return _download_url(url, _dest_for_repo_file(repo_id, filename, cache_dir, revision))
 
 
 def _split_shorthand(spec: str) -> Tuple[str, Optional[str]]:
@@ -386,6 +442,7 @@ def download_model(
     filename: Optional[str] = None,
     cache_dir: Optional[str] = None,
     revision: str = DEFAULT_REVISION,
+    force: bool = False,
 ) -> str:
     """Download (or locate) a model and return its local path.
 
@@ -402,6 +459,8 @@ def download_model(
         cache_dir: cache root (default
             ``$LOCAL_LLM_KIT_CACHE`` or ``~/.cache/local-llm-kit``).
         revision: HF branch/tag/commit (default ``"main"``).
+        force: bypass cached repo/URL files and download again. Explicit local
+            paths are always returned unchanged.
 
     Uses ``huggingface_hub.hf_hub_download`` when that package is
     installed, else falls back to a stdlib ``urllib`` download from
@@ -410,6 +469,12 @@ def download_model(
     """
     if not isinstance(repo_or_path, str) or not repo_or_path.strip():
         raise ValueError("repo_or_path must be a non-empty string.")
+    if filename is not None and (not isinstance(filename, str) or "\x00" in filename):
+        raise ValueError("filename must be a string without NUL bytes, or None.")
+    revision = revision or DEFAULT_REVISION
+    if not isinstance(revision, str):
+        raise ValueError("revision must be a string.")
+    revision = revision.strip() or DEFAULT_REVISION
     spec = repo_or_path.strip()
     if "\x00" in spec:
         raise ValueError("Invalid model spec (NUL byte).")
@@ -441,8 +506,16 @@ def download_model(
                 % (", ".join(allowed_hosts), parsed.hostname)
             )
         name = filename or os.path.basename(spec.split("?", 1)[0].split("#", 1)[0]) or "model.gguf"
+        name = os.path.basename(name.strip().lstrip("/"))
+        if not name or name in (".", ".."):
+            raise ValueError("Invalid URL filename; pass filename='model.gguf'.")
         base = os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir()
-        return _download_url(spec, os.path.join(base, "urls", os.path.basename(name)))
+        key = hashlib.sha256(spec.encode("utf-8")).hexdigest()
+        dest = os.path.join(base, "urls", key, name)
+        _assert_within_cache(dest, base)
+        if not force and os.path.isfile(dest):
+            return dest
+        return _download_url(spec, dest)
 
     # 4. Hugging Face repo id.
     if is_hf_repo_id(spec):
@@ -457,7 +530,12 @@ def download_model(
         filename = os.path.basename(filename.strip().lstrip("/"))
         if not filename or filename in (".", ".."):
             raise ValueError("Invalid filename: %r." % filename)
-        hit = _try_hf_hub_download(spec, filename, cache_dir, revision or DEFAULT_REVISION)
+        _dest_for_repo_file(spec, filename, cache_dir, revision)
+        if not force:
+            hit = _find_cached_repo_file(spec, filename, cache_dir, revision)
+            if hit:
+                return hit
+        hit = _try_hf_hub_download(spec, filename, cache_dir, revision, force=force)
         if hit is not None:
             return os.path.abspath(hit)
         logger.info(
@@ -480,6 +558,7 @@ def download_gguf(
     filename: str,
     cache_dir: Optional[str] = None,
     revision: str = DEFAULT_REVISION,
+    force: bool = False,
 ) -> str:
     """Download a single ``.gguf`` file from a Hugging Face repo.
 
@@ -493,7 +572,7 @@ def download_gguf(
         )
     if not isinstance(filename, str) or not is_gguf_path(filename.strip()):
         raise ValueError("filename must end in '.gguf', got {!r}.".format(filename))
-    return download_model(repo_id.strip(), filename.strip(), cache_dir, revision)
+    return download_model(repo_id.strip(), filename.strip(), cache_dir, revision, force=force)
 
 
 # ---------------------------------------------------------------------------
@@ -586,43 +665,38 @@ def _find_cached_repo_file(
     repo_id: str,
     filename: Optional[str],
     cache_dir: Optional[str],
+    revision: str = DEFAULT_REVISION,
 ) -> Optional[str]:
-    """Search caches for a previously downloaded repo file (or snapshot)."""
-    roots: List[str] = []
-    roots.append(
-        os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir()
-    )
-    roots.append(_hf_hub_cache_dir())
-    want = os.path.basename(filename) if filename else None
-    # Our nested layout first: <cache>/<owner>/<name>/<file>.
-    if want:
-        direct = os.path.join(roots[0], *repo_id.split("/"), want)
-        if os.path.isfile(direct):
-            return os.path.abspath(direct)
+    """Find a cached file for this repo and revision, never by basename alone."""
+    if not is_hf_repo_id(repo_id):
+        return None
+    base = os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir()
+    # Validate the filename and revision before either is used in a path.
+    direct = _dest_for_repo_file(repo_id, filename or "config.json", base, revision)
+    want = os.path.basename(filename.strip().lstrip("/")) if filename is not None else None
+    if want and os.path.isfile(direct):
+        return direct
+    roots = [base, _hf_hub_cache_dir()]
     for root in roots:
-        base = Path(root).expanduser()
-        if not base.is_dir():
-            continue
+        repo_cache = Path(root).expanduser() / ("models--" + "--".join(repo_id.split("/")))
         try:
-            if want:
-                for p in base.rglob(want):
-                    try:
-                        if p.is_file():
-                            return os.path.abspath(str(p))
-                    except OSError:
-                        continue
+            ref = repo_cache / "refs" / revision
+            _assert_within_cache(str(ref), root)
+            if ref.is_file():
+                snapshot = ref.read_text(encoding="utf-8").strip()
             else:
-                # Any snapshot dir for this repo (HF hub layout is
-                # models--<org>--<name>/snapshots/<rev>/...).
-                marker = "models--" + "--".join(repo_id.split("/"))
-                cand = base / marker
-                if cand.is_dir():
-                    snaps = cand / "snapshots"
-                    if snaps.is_dir():
-                        revs = sorted([d for d in snaps.iterdir() if d.is_dir()])
-                        if revs:
-                            return os.path.abspath(str(revs[0]))
-        except (OSError, PermissionError):
+                snapshot = revision
+            if not re.fullmatch(r"[a-fA-F0-9]{40}", snapshot):
+                continue
+            candidate = repo_cache / "snapshots" / snapshot
+            if want:
+                candidate = candidate / want
+            _assert_within_cache(str(candidate), root)
+            if (want and candidate.is_file()) or (
+                want is None and (candidate / "config.json").is_file()
+            ):
+                return os.path.abspath(str(candidate))
+        except (OSError, ValueError):
             continue
     return None
 
@@ -638,6 +712,7 @@ def resolve_model(
     cache_dir: Optional[str] = None,
     download: bool = False,
     revision: str = DEFAULT_REVISION,
+    force: bool = False,
 ) -> Tuple[str, str]:
     """Resolve *spec* to ``(local_path_or_id, suggested_backend)``.
 
@@ -656,6 +731,12 @@ def resolve_model(
     """
     if not isinstance(spec, str) or not spec.strip():
         raise ValueError("spec must be a non-empty string.")
+    if filename is not None and not isinstance(filename, str):
+        raise ValueError("filename must be a string or None.")
+    revision = revision or DEFAULT_REVISION
+    if not isinstance(revision, str):
+        raise ValueError("revision must be a string.")
+    revision = revision.strip() or DEFAULT_REVISION
     raw = spec.strip()
 
     expanded = os.path.abspath(os.path.expanduser(raw))
@@ -668,18 +749,19 @@ def resolve_model(
 
     if is_url(norm):
         if download:
-            path = download_model(norm, filename, cache_dir, revision)
+            path = download_model(norm, filename, cache_dir, revision, force=force)
             return path, suggested_backend_for(path, filename)
         return norm, suggested_backend_for(norm, filename)
 
     if is_hf_repo_id(norm):
-        hit = _find_cached_repo_file(norm, filename, cache_dir)
-        if hit:
-            return hit, suggested_backend_for(hit, filename)
+        if not (download and force):
+            hit = _find_cached_repo_file(norm, filename, cache_dir, revision)
+            if hit:
+                return hit, suggested_backend_for(hit, filename)
         if download:
             if not filename:
                 raise ValueError("download=True for repo '{}' needs filename='...'.".format(norm))
-            path = download_model(norm, filename, cache_dir, revision)
+            path = download_model(norm, filename, cache_dir, revision, force=force)
             return path, suggested_backend_for(path, filename)
         # Not cached: hand back something the backends accept directly.
         model_id = norm if not filename else norm + "/" + filename.strip().lstrip("/")
@@ -700,20 +782,20 @@ def list_recommended_models() -> List[Dict[str, Any]]:
     return [dict(entry) for entry in RECOMMENDED_MODELS]
 
 
-def format_recommended_models() -> str:
+def format_recommended_models(models: Optional[List[Dict[str, Any]]] = None) -> str:
     """Render the starter-models table as Markdown (for CLI/docs)."""
     lines = [
         "| Model | Repo | File | Backend | Size |",
         "|---|---|---|---|---|",
     ]
-    for m in RECOMMENDED_MODELS:
+    for m in RECOMMENDED_MODELS if models is None else models:
         lines.append(
             "| {} | {} | {} | {} | {} |".format(
-                m.get("name", "?"),
-                m.get("repo_id", "-"),
+                m.get("name") or "?",
+                m.get("repo_id") or "-",
                 m.get("filename") or "(any/snapshot)",
-                m.get("backend", "?"),
-                m.get("approx_size", "?"),
+                m.get("backend") or "?",
+                m.get("approx_size") or "?",
             )
         )
     return "\n".join(lines) + "\n"

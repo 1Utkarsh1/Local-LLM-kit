@@ -301,6 +301,8 @@ def hash_embed(
         items = [texts]
     else:
         items = list(texts)
+    if isinstance(dim, bool) or not isinstance(dim, int):
+        raise TypeError("dim must be an integer.")
     if dim < 1:
         raise ValueError("dim must be >= 1, got %r" % (dim,))
     vectors = []
@@ -601,10 +603,15 @@ class EmbeddingClient:
         backend_kwargs: Optional[Dict[str, Any]] = None,
         dim: Optional[int] = None,
     ):
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int):
+            raise TypeError("batch_size must be an integer.")
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1, got %r" % (batch_size,))
-        if dim is not None and dim < 1:
-            raise ValueError("dim must be >= 1, got %r" % (dim,))
+        if dim is not None:
+            if isinstance(dim, bool) or not isinstance(dim, int):
+                raise TypeError("dim must be an integer or None.")
+            if dim < 1:
+                raise ValueError("dim must be >= 1, got %r" % (dim,))
         self.model_path = model_path
         self.batch_size = batch_size
         self.max_cache_size = max_cache_size

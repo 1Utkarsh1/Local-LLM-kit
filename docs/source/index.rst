@@ -1,5 +1,5 @@
 Welcome to local_llm_kit's documentation!
-=====================================
+=========================================
 
 ``local_llm_kit`` is a Python package that provides an OpenAI-like interface for local language models. It allows you to run language models locally while maintaining compatibility with OpenAI's API structure.
 
@@ -9,6 +9,7 @@ Welcome to local_llm_kit's documentation!
 
    installation
    quickstart
+   backends
    tutorials
 
 .. toctree::
@@ -39,7 +40,8 @@ Features
 --------
 
 * OpenAI-compatible API interface
-* Support for multiple model backends (Transformers, llama.cpp)
+* Local model adapters: Transformers, llama.cpp and optional experimental AirLLM
+* Native Ollama chat and HTTP presets covering 12 local runtimes (see :doc:`backends`)
 * Chat completion API
 * Function calling capability
 * Streaming responses
@@ -51,45 +53,44 @@ Features
 * Community-driven development
 
 Quick Installation
------------------
+------------------
 
 .. code-block:: bash
 
    pip install local-llm-kit
 
 Quick Example
-------------
+-------------
 
 .. code-block:: python
 
-   from local_llm_kit import LLMClient
-   
+   from local_llm_kit import LLM
+
    # Initialize the client
-   client = LLMClient(model="llama2")
-   
+   client = LLM(model_path="echo", backend="echo")
+
    # Chat completion
-   response = client.chat.completions.create(
-       model="llama2",
+   response = client.chat(
        messages=[
            {"role": "user", "content": "What is the capital of France?"}
        ]
    )
-   
-   print(response.choices[0].message.content)
+
+   print(response["choices"][0]["message"]["content"])
 
 Getting Help
------------
+------------
 
 If you need help using ``local_llm_kit``, you have several options:
 
 1. Check the :doc:`tutorials` for step-by-step guides
 2. Read the :doc:`api_reference` for detailed API documentation
 3. Look through :doc:`examples` for common use cases
-4. Visit our `GitHub Issues <https://github.com/1Utkarsh1/local_llm_kit/issues>`_ page
+4. Visit our `GitHub Issues <https://github.com/1Utkarsh1/Local-LLM-kit/issues>`_ page
 5. Join our community discussions
 
 Contributing
------------
+------------
 
 We welcome contributions! Please see our :doc:`contributing` guide for details on how to:
 
@@ -108,4 +109,4 @@ Indices and tables
 
 * :ref:`genindex`
 * :ref:`modindex`
-* :ref:`search` 
+* :ref:`search`

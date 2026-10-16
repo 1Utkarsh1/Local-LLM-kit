@@ -28,14 +28,32 @@ class MessageHistory:
         self.context_window = context_window
         self.token_estimator = token_estimator or self._estimate_tokens
 
+    def _check_message(self, message: Any) -> None:
+        """Reject non-dict messages before they can enter (and corrupt) history."""
+        if not isinstance(message, dict):
+            raise TypeError(
+                "messages must be dicts with a 'role' key, got %r" % type(message).__name__
+            )
+        self._count_message_tokens(message)
+
     def add_messages(self, messages: List[Dict[str, Any]]) -> None:
         """
         Add messages to history.
 
+        The whole batch is validated before anything is stored, so a bad
+        entry cannot leave the history in a state that breaks every later
+        call on this instance.
+
         Args:
             messages: List of message dictionaries to add
+
+        Raises:
+            TypeError: If any entry is not a dict.
         """
-        self.messages.extend(messages)
+        batch = list(messages)
+        for message in batch:
+            self._check_message(message)
+        self.messages.extend(batch)
         self._truncate_if_needed()
 
     def add_message(self, message: Dict[str, Any]) -> None:
@@ -44,7 +62,11 @@ class MessageHistory:
 
         Args:
             message: Message dictionary to add
+
+        Raises:
+            TypeError: If the message is not a dict.
         """
+        self._check_message(message)
         self.messages.append(message)
         self._truncate_if_needed()
 
@@ -109,6 +131,8 @@ class MessageHistory:
 
         # Add role
         text_parts.append(message.get("role", ""))
+        if message.get("thinking"):
+            text_parts.append(message["thinking"])
 
         # Add content if present (plain string or vision-style part list)
         content = message.get("content")
@@ -132,18 +156,36 @@ class MessageHistory:
         # Add function call if present
         if message.get("function_call"):
             func_call = message["function_call"]
+            if not isinstance(func_call, dict):
+                raise TypeError("Message 'function_call' must be a dict.")
             text_parts.append(func_call.get("name", ""))
             if isinstance(func_call.get("arguments"), str):
                 text_parts.append(func_call["arguments"])
             elif func_call.get("arguments"):
                 text_parts.append(json.dumps(func_call["arguments"]))
 
+        if message.get("tool_calls"):
+            if not isinstance(message["tool_calls"], list):
+                raise TypeError("Message 'tool_calls' must be a list.")
+            for call in message["tool_calls"]:
+                if not isinstance(call, dict):
+                    raise TypeError("Each tool call must be a dict.")
+                function = call.get("function", call)
+                if not isinstance(function, dict):
+                    raise TypeError("Tool call 'function' must be a dict.")
+                text_parts.append(function.get("name", ""))
+                arguments = function.get("arguments")
+                if isinstance(arguments, str):
+                    text_parts.append(arguments)
+                elif arguments:
+                    text_parts.append(json.dumps(arguments))
+
         # Add function name if present
         if message.get("name"):
             text_parts.append(message["name"])
 
         # Combine all text parts and estimate tokens
-        combined_text = " ".join(text_parts)
+        combined_text = " ".join(str(part) for part in text_parts if part is not None)
         return self.token_estimator(combined_text)
 
     def _estimate_tokens(self, text: str) -> int:
