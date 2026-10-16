@@ -13,19 +13,31 @@ Starting commit: `6230568` (main after PR #8).
 
 ## Honest research counts
 
-Three streams were run in parallel: community demand (Reddit/HN/GitHub issues), server
-probe surfaces (ports, health and capability endpoints), and competitor capabilities.
+Four streams were run in parallel: community demand (GitHub issues, Hacker News, Reddit),
+server probe surfaces (ports, health and capability endpoints), competitor capabilities, and
+the Apple Foundation Models investigation. Each stream kept its own funnel; the table below
+reports them separately rather than summing them into one impressive number.
+
+| Stream | Discovered | Screened | Substantively reviewed |
+|---|---|---|---|
+| Community demand | ~2,220 raw records (1,428 GitHub search results across 34 queries / 15 repos, 400 HN comments, 298 Reddit posts, 91 issue comments, 3 full pages) | 1,278 candidates | **353** |
+| Server probe surfaces | not separately instrumented | 16 servers × all their endpoints/docs/source | **232** |
+| Competitor capabilities | not separately instrumented | 37 projects | **211** |
+| Apple Foundation Models | not separately instrumented | Apple, apfel, llm-apple-foundation, `fm serve`, alternatives | **49** |
+| First-hand by this agent | — | — | **11** (measurements and primary-source reads) |
+
+Measured directly from the retained artefacts:
 
 | Stage | Count | How it was measured |
 |---|---|---|
-| **Discovered** | **2,985** distinct URLs | Unique URLs extracted from the 261 machine-collected candidate files (GitHub search/API result pages, HN stories and comments, Reddit listings) before triage. |
-| **Screened** | **1,203** items opened | Every item written into a per-stream ledger. The community stream emitted four intermediate parts plus one aggregate, so 354 rows were byte-identical duplicates across files. |
-| **Substantively reviewed** | **852** distinct items | Deduplicated rows that carry a concrete finding, an evidence pointer and a relevance note. 436 high / 365 medium / 51 low confidence. |
+| **Discovered** | **2,985** distinct URLs | Unique URLs extracted from the 261 retained candidate files. This is a *floor*: the probe and competitor streams ran their own searches whose result pages were not kept in the same pool. |
+| **Screened** | **1,278** candidates in the community stream alone, plus the probe/competitor/Apple triage | Community-stream figure as reported by that stream; the others were not instrumented separately. |
+| **Substantively reviewed** | **852** distinct, deduplicated items | 856 rows were written across the streams (353 + 232 + 211 + 49 + 11); 4 collided and were merged, along with 354 byte-identical duplicate rows from the community stream's four intermediate parts. 436 high / 365 medium / 51 low confidence. |
 
 Breakdown of the 852: 283 issues · 203 documentation pages · 146 source files · 94 source-code
 items · 50 Reddit threads · 28 forum posts · 17 package-metadata records · 10 pull requests ·
-6 releases · 5 example files · 2 test files · 2 discussions · plus 11 first-hand measurements
-and source reads recorded by this agent.
+6 releases · 5 example files · 2 test files · 2 discussions · 2 measurements · plus the Apple
+and first-hand source reads.
 
 Across **79 distinct projects** and **20 domains**. The largest contributors were
 `ollama/ollama` (154), `ollama/ollama-python` (56), r/ollama (50), the Apple Foundation Models
@@ -35,7 +47,9 @@ spellings), `vllm-project/vllm` (20) and `BerriAI/litellm` (18).
 **Stated plainly:** the review reached **852** substantively reviewed items against the
 1,000–2,000 aspiration in the brief. The count is not inflated to reach the target. The 354
 merged duplicates are reported rather than counted twice, and the 2,985 discovered URLs are
-not presented as reviewed.
+not presented as reviewed. Every stream recorded its own limitations per row — most GitHub
+rows are issue-body-level (comments were read for 8 flagship threads only), and Reddit rows
+are post-level because Reddit rate-limits its comment APIs.
 
 ## The problem this PR solves
 
