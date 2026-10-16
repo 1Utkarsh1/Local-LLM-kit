@@ -604,6 +604,16 @@ class SimpleVectorStore:
         texts = data.get("texts", [])
         metadatas = data.get("metadatas", [])
         vectors = data.get("vectors", [])
+        for field_name, field in (
+            ("ids", ids),
+            ("texts", texts),
+            ("metadatas", metadatas),
+            ("vectors", vectors),
+        ):
+            if not isinstance(field, list):
+                raise ValueError(
+                    "Corrupt vector store file %r: field %r must be a list" % (path, field_name)
+                )
         if not (len(ids) == len(texts) == len(metadatas) == len(vectors)):
             raise ValueError("Corrupt vector store file %r: mismatched field lengths" % (path,))
         store = cls(embed_fn=embed_fn, dim=data.get("dim"))

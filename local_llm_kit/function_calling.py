@@ -43,8 +43,32 @@ class FunctionCall:
 
         Returns:
             FunctionCall instance
+
+        Raises:
+            TypeError: if *data* is not a dict.
+            ValueError: if ``name`` is missing, null, or not a non-empty
+                string, or ``arguments`` is null or not a dict/JSON string.
         """
-        return cls(name=data["name"], arguments=json.loads(data["arguments"]))
+        if not isinstance(data, dict):
+            raise TypeError("FunctionCall record must be a dict, got %r" % type(data).__name__)
+        name = data.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                "FunctionCall record 'name' must be a non-empty string, got %r" % (name,)
+            )
+        if "arguments" not in data:
+            raise ValueError("FunctionCall record is missing 'arguments'")
+        arguments = data["arguments"]
+        if arguments is None:
+            raise ValueError("FunctionCall record 'arguments' must not be null")
+        if isinstance(arguments, dict):
+            return cls(name=name, arguments=arguments)
+        if isinstance(arguments, str):
+            return cls(name=name, arguments=json.loads(arguments) if arguments.strip() else {})
+        raise ValueError(
+            "FunctionCall record 'arguments' must be a dict or JSON string, got %r"
+            % type(arguments).__name__
+        )
 
 
 class FunctionRegistry:

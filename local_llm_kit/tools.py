@@ -161,11 +161,35 @@ class ToolCall:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolCall":
+        """Build a :class:`ToolCall` from an OpenAI-style ``tool_calls`` entry.
+
+        Raises:
+            TypeError: if *data* (or its ``function`` payload) is not a dict.
+            ValueError: if ``function.name`` is missing, null, or not a
+                non-empty string, or ``function.arguments`` is null or not a
+                dict/JSON-object string.
+        """
+        if not isinstance(data, dict):
+            raise TypeError("ToolCall record must be a dict, got %r" % type(data).__name__)
         fn = data.get("function", data)
+        if not isinstance(fn, dict):
+            raise TypeError("ToolCall record 'function' must be a dict, got %r" % type(fn).__name__)
+        name = fn.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                "ToolCall record 'function.name' must be a non-empty string, got %r" % (name,)
+            )
         args = fn.get("arguments", {})
+        if args is None:
+            raise ValueError("ToolCall record 'function.arguments' must not be null")
         if isinstance(args, str):
             args = json.loads(args) if args.strip() else {}
-        return cls(name=fn["name"], arguments=args, call_id=data.get("id"))
+        if not isinstance(args, dict):
+            raise ValueError(
+                "ToolCall record 'function.arguments' must be a dict or JSON string, "
+                "got %r" % type(args).__name__
+            )
+        return cls(name=name, arguments=args, call_id=data.get("id"))
 
     def to_function_call(self) -> FunctionCall:
         return FunctionCall(name=self.name, arguments=self.arguments)

@@ -260,7 +260,15 @@ def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> st
     import urllib.request
 
     dest = os.path.abspath(dest_path)
+    if os.path.isdir(dest):
+        raise ValueError("Download destination %r is a directory; refusing to overwrite." % dest)
     _assert_within_cache(dest, os.path.dirname(dest))
+    if os.path.exists(dest) and os.path.getsize(dest) > _MAX_DOWNLOAD_BYTES:
+        raise ValueError(
+            "Cached file %r (%d bytes) exceeds the %d byte limit; "
+            "remove it or raise the limit before retrying."
+            % (dest, os.path.getsize(dest), _MAX_DOWNLOAD_BYTES)
+        )
     parent = os.path.dirname(dest)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -441,8 +449,16 @@ def download_model(
                 % (", ".join(allowed_hosts), parsed.hostname)
             )
         name = filename or os.path.basename(spec.split("?", 1)[0].split("#", 1)[0]) or "model.gguf"
+        name = os.path.basename(name.strip().lstrip("/"))
+        if not name or name in (".", ".."):
+            raise ValueError(
+                "Cannot determine a filename for URL %r. "
+                "Pass filename='...' explicitly." % (spec,)
+            )
         base = os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else default_cache_dir()
-        return _download_url(spec, os.path.join(base, "urls", os.path.basename(name)))
+        dest = os.path.join(base, "urls", name)
+        _assert_within_cache(dest, base)
+        return _download_url(spec, dest)
 
     # 4. Hugging Face repo id.
     if is_hf_repo_id(spec):

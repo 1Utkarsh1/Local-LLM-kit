@@ -205,6 +205,10 @@ def _normalize_response_format(
         if response_format in ("json_object", "json"):
             return {"type": "json_object"}
         raise ValueError("Unsupported response_format string: %r" % (response_format,))
+    if not isinstance(response_format, dict):
+        raise TypeError(
+            "response_format must be a str or dict, got %r" % type(response_format).__name__
+        )
     rtype = response_format.get("type")
     if rtype in ("json_object", "json_schema"):
         return response_format
@@ -284,6 +288,9 @@ class LLM:
         self.top_k = top_k
         self.repetition_penalty = repetition_penalty
         self.backend_kwargs = dict(backend_kwargs or {})
+
+        if not isinstance(model_path, str) or not model_path:
+            raise ValueError("model_path must be a non-empty string, got %r" % (model_path,))
 
         if backend_instance is not None:
             self.backend = backend_instance
@@ -618,6 +625,16 @@ class LLM:
             (None = no timeout).
         :param max_iterations: maximum tool-execution rounds.
         """
+        if not isinstance(messages, list):
+            raise TypeError(
+                "messages must be a list of message dicts, got %r" % type(messages).__name__
+            )
+        for i, message in enumerate(messages):
+            if not isinstance(message, dict):
+                raise TypeError("messages[%d] must be a dict, got %r" % (i, type(message).__name__))
+            role = message.get("role")
+            if not isinstance(role, str) or not role:
+                raise ValueError("messages[%d] is missing a non-empty string 'role'" % (i,))
         # Register per-call callables so the loop can execute them.
         for item in tools or []:
             if callable(item) and not isinstance(item, dict):

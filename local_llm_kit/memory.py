@@ -35,6 +35,13 @@ class MessageHistory:
         Args:
             messages: List of message dictionaries to add
         """
+        if not isinstance(messages, list):
+            raise TypeError(
+                "messages must be a list of message dicts, got %r" % type(messages).__name__
+            )
+        for i, message in enumerate(messages):
+            if not isinstance(message, dict):
+                raise TypeError("messages[%d] must be a dict, got %r" % (i, type(message).__name__))
         self.messages.extend(messages)
         self._truncate_if_needed()
 
@@ -45,6 +52,8 @@ class MessageHistory:
         Args:
             message: Message dictionary to add
         """
+        if not isinstance(message, dict):
+            raise TypeError("message must be a dict, got %r" % type(message).__name__)
         self.messages.append(message)
         self._truncate_if_needed()
 
