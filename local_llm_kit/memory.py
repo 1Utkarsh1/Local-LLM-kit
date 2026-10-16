@@ -84,25 +84,51 @@ class MessageHistory:
         self.messages = []
 
     def _truncate_if_needed(self) -> None:
-        """Truncate message history if it exceeds the context window."""
+        """Truncate message history if it exceeds the context window.
+
+        Tool exchanges are removed atomically: an assistant message carrying
+        ``tool_calls``/``function_call`` is always dropped together with its
+        following ``tool`` result messages, so truncation never strands a
+        call without its results (or results without their call).
+        """
         total_tokens = self._count_tokens(self.messages)
 
         if total_tokens <= self.context_window:
             return
 
-        # Keep removing oldest messages until we're under the token limit
+        # Keep removing oldest exchanges until we're under the token limit
         while total_tokens > self.context_window and len(self.messages) > 2:
             # Always keep the system message if present
             start_idx = 1 if self.messages and self.messages[0].get("role") == "system" else 0
 
-            # Remove the oldest non-system message
+            # Remove the oldest non-system message plus any tool results
+            # that belong to the same exchange.
             if start_idx < len(self.messages):
-                removed_msg = self.messages.pop(start_idx)
-                total_tokens -= self._count_message_tokens(removed_msg)
+                end_idx = self._exchange_end(self.messages, start_idx)
+                removed = self.messages[start_idx:end_idx]
+                del self.messages[start_idx:end_idx]
+                total_tokens -= sum(self._count_message_tokens(msg) for msg in removed)
 
         # If still over limit, add a summary message and remove more
         if total_tokens > self.context_window:
             self._summarize_history()
+
+    @staticmethod
+    def _exchange_end(messages: List[Dict[str, Any]], start: int) -> int:
+        """Exclusive end of the tool exchange starting at ``start``.
+
+        An assistant message with ``tool_calls``/``function_call`` owns the
+        consecutive ``tool``/``function`` result messages that follow it;
+        anything else is a single-message exchange.
+        """
+        end = start + 1
+        first = messages[start]
+        if first.get("role") == "assistant" and (
+            first.get("tool_calls") or first.get("function_call")
+        ):
+            while end < len(messages) and messages[end].get("role") in ("tool", "function"):
+                end += 1
+        return end
 
     def _count_tokens(self, messages: List[Dict[str, Any]]) -> int:
         """
@@ -216,14 +242,19 @@ class MessageHistory:
         else:
             remaining_messages = self.messages
 
-        # Keep the most recent messages (last 4 turns = 8 messages)
+        # Keep the most recent messages (last 4 turns = 8 messages), but
+        # never start inside a tool exchange: expand backwards over leading
+        # tool results to include their owning assistant message.
         keep_count = min(8, max(2, len(remaining_messages) // 2))
-        recent_messages = remaining_messages[-keep_count:] if keep_count > 0 else []
+        start = max(0, len(remaining_messages) - keep_count)
+        while start > 0 and remaining_messages[start].get("role") in ("tool", "function"):
+            start -= 1
+        recent_messages = remaining_messages[start:]
 
         # Create a simple summary message
         summary_message = {
             "role": "system",
-            "content": f"[Previous conversation history summarized: {len(remaining_messages) - keep_count} messages omitted]",
+            "content": f"[Previous conversation history summarized: {start} messages omitted]",
         }
 
         # Rebuild message list

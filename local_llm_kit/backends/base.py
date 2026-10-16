@@ -14,7 +14,84 @@ so existing subclasses keep working unmodified):
 
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, TypeVar, Union
+
+_T = TypeVar("_T")
+
+_STATUS_RE = None  # compiled lazily to keep import time minimal
+
+
+def _status_code(text: str) -> Optional[int]:
+    """Extract an ``HTTP <code>`` status from a mapped backend error message."""
+    global _STATUS_RE
+    if _STATUS_RE is None:
+        import re
+
+        _STATUS_RE = re.compile(r"HTTP (\d{3})")
+    match = _STATUS_RE.search(text)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def is_transient_error(exc: BaseException) -> bool:
+    """Whether an HTTP backend failure is worth retrying.
+
+    Covers connection-level failures (the ``ConnectionError`` raised for
+    unreachable servers, timeouts, and raw ``urllib.error.URLError``) and
+    HTTP 429 / 5xx — both as raw ``urllib.error.HTTPError`` and as mapped
+    by the HTTP backends into ``RuntimeError("... HTTP <code> ...")``.
+    Client errors and payload problems are never retried.
+    """
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    try:
+        import socket
+        import urllib.error
+
+        if isinstance(exc, urllib.error.HTTPError):
+            return exc.code == 429 or 500 <= exc.code < 600
+        if isinstance(exc, urllib.error.URLError):
+            return True
+        if isinstance(exc, socket.timeout):
+            return True
+    except Exception:
+        pass
+    if isinstance(exc, RuntimeError):
+        code = _status_code(str(exc))
+        if code is not None:
+            return code == 429 or 500 <= code < 600
+    return False
+
+
+def retry_delay(attempt: int, backoff: float) -> float:
+    """Exponential backoff delay for a 0-based ``attempt``, in seconds."""
+    return max(0.0, backoff) * (2.0**attempt)
+
+
+def run_with_retries(
+    action: Callable[[], _T],
+    retries: int = 2,
+    backoff: float = 0.5,
+) -> _T:
+    """Run ``action()``, retrying transient failures.
+
+    Retries at most ``retries`` times (so ``retries=0`` fails fast) with
+    exponential ``backoff`` between attempts. Non-transient errors (see
+    :func:`is_transient_error`) are raised immediately.
+    """
+    attempt = 0
+    while True:
+        try:
+            return action()
+        except Exception as exc:
+            if attempt >= max(0, retries) or not is_transient_error(exc):
+                raise
+            time.sleep(retry_delay(attempt, backoff))
+            attempt += 1
 
 
 class BaseBackend(ABC):

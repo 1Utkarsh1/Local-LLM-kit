@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-from .base import BaseBackend
+from .base import BaseBackend, run_with_retries
 
 _GENERATE_PATH = "/api/generate"
 _CHAT_PATH = "/api/chat"
@@ -60,6 +60,8 @@ class OllamaBackend(BaseBackend):
         context_window: int = 4096,
         keep_alive: str = "5m",
         headers: Optional[Dict[str, str]] = None,
+        retries: int = 2,
+        retry_backoff: float = 0.5,
         **kwargs: Any,
     ) -> None:
         """Args:
@@ -71,6 +73,10 @@ class OllamaBackend(BaseBackend):
             this parameter).
         keep_alive: Ollama ``keep_alive`` value sent with requests.
         headers: Extra HTTP headers.
+        retries: How many times to retry transient failures (connection
+            errors, timeouts, HTTP 429/5xx) on non-streaming calls.
+            ``0`` fails fast. Streaming calls are never retried.
+        retry_backoff: Base backoff in seconds between retries (exponential).
         """
         self.model = model
         self.model_path = model
@@ -79,6 +85,16 @@ class OllamaBackend(BaseBackend):
         self.context_window = context_window
         self.keep_alive = keep_alive
         self.extra_headers = dict(headers or {})
+        if isinstance(retries, bool) or not isinstance(retries, int) or retries < 0:
+            raise ValueError("'retries' must be a non-negative integer.")
+        if (
+            isinstance(retry_backoff, bool)
+            or not isinstance(retry_backoff, (int, float))
+            or retry_backoff < 0
+        ):
+            raise ValueError("'retry_backoff' must be a non-negative number.")
+        self.retries = retries
+        self.retry_backoff = float(retry_backoff)
         self.default_options = dict(kwargs)  # e.g. num_ctx=8192
 
     # -- prompt API ----------------------------------------------------
@@ -500,6 +516,13 @@ class OllamaBackend(BaseBackend):
         return headers
 
     def _post_json(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return run_with_retries(
+            lambda: self._post_json_once(path, payload),
+            retries=self.retries,
+            backoff=self.retry_backoff,
+        )
+
+    def _post_json_once(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             self.host + path,
@@ -555,6 +578,13 @@ class OllamaBackend(BaseBackend):
             ) from e
 
     def _get_json(self, path: str) -> Dict[str, Any]:
+        return run_with_retries(
+            lambda: self._get_json_once(path),
+            retries=self.retries,
+            backoff=self.retry_backoff,
+        )
+
+    def _get_json_once(self, path: str) -> Dict[str, Any]:
         req = urllib.request.Request(self.host + path, headers=self._headers(), method="GET")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:

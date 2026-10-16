@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-from .base import BaseBackend
+from .base import BaseBackend, run_with_retries
 
 _DONE = "[DONE]"
 
@@ -41,6 +41,8 @@ class OpenAICompatBackend(BaseBackend):
         context_window: int = 4096,
         headers: Optional[Dict[str, str]] = None,
         provider: str = "openai-compat",
+        retries: int = 2,
+        retry_backoff: float = 0.5,
         **kwargs: Any,
     ) -> None:
         """Args:
@@ -51,10 +53,24 @@ class OpenAICompatBackend(BaseBackend):
         timeout: HTTP timeout in seconds.
         context_window: Reported context window (override per server).
         headers: Extra HTTP headers.
+        retries: How many times to retry transient failures (connection
+            errors, timeouts, HTTP 429/5xx) on non-streaming calls.
+            ``0`` fails fast. Streaming calls are never retried.
+        retry_backoff: Base backoff in seconds between retries (exponential).
         """
         self.model = model
         self.provider = provider
         self.supports_embeddings = provider not in ("gpt4all", "mlx-lm")
+        if isinstance(retries, bool) or not isinstance(retries, int) or retries < 0:
+            raise ValueError("'retries' must be a non-negative integer.")
+        if (
+            isinstance(retry_backoff, bool)
+            or not isinstance(retry_backoff, (int, float))
+            or retry_backoff < 0
+        ):
+            raise ValueError("'retry_backoff' must be a non-negative number.")
+        self.retries = retries
+        self.retry_backoff = float(retry_backoff)
         self.model_path = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -461,6 +477,13 @@ class OpenAICompatBackend(BaseBackend):
         return headers
 
     def _post_json(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return run_with_retries(
+            lambda: self._post_json_once(path, payload),
+            retries=self.retries,
+            backoff=self.retry_backoff,
+        )
+
+    def _post_json_once(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + path,
@@ -485,7 +508,11 @@ class OpenAICompatBackend(BaseBackend):
             ) from e
 
     def _post_sse(self, path: str, payload: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """POST with ``stream=True``; parses SSE ``data:`` frames."""
+        """POST with ``stream=True``; parses SSE ``data:`` frames.
+
+        Streaming calls are never retried (a partial stream cannot resume
+        safely); use the non-streaming methods when retry tolerance matters.
+        """
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             self.base_url + path,
@@ -523,6 +550,13 @@ class OpenAICompatBackend(BaseBackend):
             ) from e
 
     def _get_json(self, path: str) -> Dict[str, Any]:
+        return run_with_retries(
+            lambda: self._get_json_once(path),
+            retries=self.retries,
+            backoff=self.retry_backoff,
+        )
+
+    def _get_json_once(self, path: str) -> Dict[str, Any]:
         req = urllib.request.Request(self.base_url + path, headers=self._headers(), method="GET")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:

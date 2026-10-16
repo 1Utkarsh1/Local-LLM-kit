@@ -90,6 +90,9 @@ Use a model ID that the running server actually serves. These presets use the sh
 | GPT4All | `"gpt4all"` | `http://127.0.0.1:4891/v1`; enable Local API Server in settings |
 | MLX-LM | `"mlx-lm"` | `http://127.0.0.1:8080/v1`; run `mlx_lm.server` on Apple Silicon |
 | KoboldCpp | `"koboldcpp"` | `http://localhost:5001/v1` |
+| Transformers serve | `"transformers-serve"` | `http://localhost:8000/v1`; run `transformers serve` (shares vLLM's default port; one at a time or override `base_url`) |
+
+HTTP backends (`ollama`, `openai-compat` and its presets) retry transient failures (connection errors, timeouts, HTTP 429/5xx) on non-streaming calls: `retries=2` with exponential `retry_backoff=0.5`s by default, `retries=0` to fail fast, via `backend_kwargs`. Streaming calls are never retried.
 
 Together with native Ollama, Transformers and AirLLM, these cover **12 distinct local runtimes** (llama.cpp has both in-process and server paths). This is a compatibility selection, not a measured popularity ranking. GPT4All and MLX-LM presets provide text/chat; use a separate embedding backend. Native tools, schemas and vision require explicit upstream/model support. See the [capability matrix and setup references](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/docs/source/backends.rst) before choosing a runtime.
 
@@ -156,7 +159,7 @@ print(resp.choices[0].message.content)
 
 See `examples/openai_compatible.py` (falls back to direct `LLM(backend="echo")` when no server / no `openai` package is present, so it runs offline).
 
-Supported routes: `GET /health`, `GET /v1/models`, `POST /v1/chat/completions` (incl. `stream=true` SSE), `POST /v1/completions`, `POST /v1/embeddings`.
+Supported routes: `GET /health`, `GET /v1/models` (upstream listing when the backend reports one, else the configured model), `POST /v1/chat/completions` (incl. `stream=true` SSE), `POST /v1/completions`, `POST /v1/responses` (Responses-API subset: string/message-list `input`, `instructions`, SSE `response.output_text.delta` events, `function_call` output items; stateful options rejected explicitly), `POST /v1/embeddings`.
 
 > **Security note:** the server returns tool calls **without executing them** unless a request sets `"execute_tools": true`. Only enable that for callers you trust — auto-executing model-chosen functions is arbitrary-code-execution-as-a-feature if your tools are powerful.
 
@@ -250,6 +253,12 @@ print(resp["choices"][0]["message"]["content"])
 ```
 
 Full runnable version: `examples/rag_minimal.py`.
+
+Retrieval quality options: `store.search(q, k, lambda_mult=0.3)` applies
+Maximal Marginal Relevance to diversify near-duplicate hits, and
+`store.search_hybrid(q, k, alpha=0.5)` fuses dense cosine similarity with
+TF-IDF lexical scores (each normalised to [0, 1]); both accept an optional
+`lambda_mult` rerank and work offline with deterministic results.
 
 ## Vision snippet (graceful degradation)
 

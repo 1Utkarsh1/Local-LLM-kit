@@ -1173,3 +1173,20 @@ class LLM:
 
     def __repr__(self) -> str:
         return "LLM(model_path=%r, backend=%s)" % (self.model_path, type(self.backend).__name__)
+
+    # -- introspection ----------------------------------------------------
+    def list_models(self) -> List[Dict[str, Any]]:
+        """List models reported by the backend.
+
+        Server backends (Ollama, OpenAI-compatible) report their models;
+        single-model local backends return ``[]`` from the backend, in
+        which case this falls back to a single entry for ``model_path``.
+        Never raises: backend listing failures degrade to the fallback.
+        """
+        try:
+            models = self.backend.list_models()
+        except Exception:
+            models = []
+        if not models:
+            return [{"id": self.model_path, "object": "model", "owned_by": "local"}]
+        return list(models)

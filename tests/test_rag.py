@@ -354,5 +354,120 @@ class TestRagStaysLight(unittest.TestCase):
         self.assertEqual(out.stdout.strip(), "")
 
 
+@unittest.skipUnless(HAS_RAG, "local_llm_kit.rag not available")
+class TestMMR(unittest.TestCase):
+    def _dense_store(self):
+        from local_llm_kit.rag import SimpleVectorStore
+
+        def fake_embed(texts):
+            vecs = []
+            for text in texts:
+                if "sky" in text:
+                    vecs.append([0.0, 0.0, 1.0])
+                elif "company" in text:
+                    vecs.append([0.9, 0.1, 0.0])
+                else:
+                    vecs.append([1.0, 0.0, 0.0])
+            return vecs
+
+        store = SimpleVectorStore(embed_fn=fake_embed)
+        store.add(
+            ["red apple fruit", "red apple company", "green apple fruit", "blue sky ocean"],
+            embeddings=[
+                [1.0, 0.0, 0.0],
+                [0.9, 0.1, 0.0],
+                [0.9, 0.0, 0.1],
+                [0.0, 0.0, 1.0],
+            ],
+        )
+        return store
+
+    def test_mmr_function_selects_diverse_order(self):
+        from local_llm_kit.rag import mmr
+
+        picked = mmr(
+            [1.0, 0.0, 0.0],
+            [[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.0, 0.0, 1.0]],
+            k=2,
+            lambda_mult=0.0,
+        )
+        self.assertEqual(picked[0], 0)
+        self.assertEqual(picked[1], 2)
+        pure = mmr(
+            [1.0, 0.0, 0.0],
+            [[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.0, 0.0, 1.0]],
+            k=2,
+            lambda_mult=1.0,
+        )
+        self.assertEqual(pure, [0, 1])
+
+    def test_mmr_validates_inputs(self):
+        from local_llm_kit.rag import mmr
+
+        with self.assertRaises(ValueError):
+            mmr([1.0], [[1.0]], k=0)
+        with self.assertRaises(ValueError):
+            mmr([1.0], [[1.0]], k=2, lambda_mult=1.5)
+        self.assertEqual(mmr([1.0], [], k=3), [])
+
+    def test_search_lambda_none_matches_pure_relevance(self):
+        store = self._dense_store()
+        plain = store.search([1.0, 0.0, 0.0], k=3)
+        diversified = store.search([1.0, 0.0, 0.0], k=3, lambda_mult=1.0)
+        self.assertEqual([h["id"] for h in plain], [h["id"] for h in diversified])
+
+    def test_search_lambda_zero_diversifies(self):
+        store = self._dense_store()
+        hits = store.search([1.0, 0.0, 0.0], k=3, lambda_mult=0.0)
+        texts = [h["text"] for h in hits]
+        self.assertEqual(texts[0], "red apple fruit")
+        self.assertIn("blue sky ocean", texts[1:])
+        self.assertTrue(all(h["score"] >= 0 for h in hits))
+
+    def test_search_lambda_rejects_lexical_and_bad_values(self):
+        store = make_store()
+        store_add(store, ["the cat sat", "quantum physics"])
+        with self.assertRaisesRegex(ValueError, "dense vectors"):
+            store.search("cat", k=2, lambda_mult=0.5)
+        dense = self._dense_store()
+        with self.assertRaisesRegex(ValueError, "lambda_mult"):
+            dense.search([1.0, 0.0, 0.0], k=2, lambda_mult=2.0)
+
+    def test_hybrid_alpha_endpoints(self):
+        store = self._dense_store()
+        dense_only = store.search_hybrid("apple fruit", k=3, alpha=1.0)
+        pure_dense = store.search("apple fruit", k=3, lambda_mult=None)
+        self.assertEqual([h["id"] for h in dense_only], [h["id"] for h in pure_dense])
+        lex_only = store.search_hybrid("apple fruit", k=3, alpha=0.0)
+        self.assertEqual(len(lex_only), 3)
+        self.assertTrue(all(h["score"] >= 0 for h in lex_only))
+
+    def test_hybrid_blends_dense_and_lexical(self):
+        store = self._dense_store()
+        hits = store.search_hybrid("blue sky", k=4, alpha=0.5)
+        self.assertEqual(hits[0]["text"], "blue sky ocean")
+        with_mmr = store.search_hybrid("apple", k=3, alpha=0.5, lambda_mult=0.0)
+        self.assertEqual(len(with_mmr), 3)
+
+    def test_hybrid_validates_inputs(self):
+        store = self._dense_store()
+        with self.assertRaisesRegex(ValueError, "text query"):
+            store.search_hybrid([1.0, 0.0, 0.0], k=2)
+        with self.assertRaisesRegex(ValueError, "alpha"):
+            store.search_hybrid("apple", k=2, alpha=1.5)
+        lexical_only = make_store()
+        store_add(lexical_only, ["the cat sat", "quantum physics"])
+        with self.assertRaisesRegex(ValueError, "dense vectors"):
+            lexical_only.search_hybrid("apple", k=2)
+
+    def test_retrieve_passes_lambda_through(self):
+        from local_llm_kit.rag import retrieve
+
+        store = self._dense_store()
+        hits = retrieve([1.0, 0.0, 0.0], store, k=2, lambda_mult=0.0)
+        self.assertEqual(len(hits), 2)
+        self.assertEqual(hits[0]["text"], "red apple fruit")
+
+
 if __name__ == "__main__":
     unittest.main()
