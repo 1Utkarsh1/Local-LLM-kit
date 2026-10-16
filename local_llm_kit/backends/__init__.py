@@ -25,6 +25,7 @@ __all__ = [
     "OllamaBackend",
     "OpenAICompatBackend",
     "AirLLMBackend",
+    "AppleFMBackend",
     "BACKENDS",
     "BACKEND_ALIASES",
     "OPENAI_SERVER_URLS",
@@ -42,6 +43,7 @@ _BACKEND_IMPORTS = {
     "OllamaBackend": (".ollama", "OllamaBackend"),
     "OpenAICompatBackend": (".openai_compat", "OpenAICompatBackend"),
     "AirLLMBackend": (".airllm", "AirLLMBackend"),
+    "AppleFMBackend": (".apple_fm", "AppleFMBackend"),
 }
 
 #: Short backend name -> "module:Class" (module relative to this package).
@@ -60,6 +62,7 @@ BACKENDS: Dict[str, str] = {
     "vllm": ".openai_compat:OpenAICompatBackend",
     "lmstudio": ".openai_compat:OpenAICompatBackend",
     "llama-server": ".openai_compat:OpenAICompatBackend",
+    "apple-fm": ".apple_fm:AppleFMBackend",
 }
 
 #: Canonical-name aliases kept as a separate dict for docs/CLI completion.
@@ -79,6 +82,13 @@ BACKEND_ALIASES: Dict[str, str] = {
     "gpt4all": "openai-compat",
     "mlx-lm": "openai-compat",
     "koboldcpp": "openai-compat",
+    "apfel": "openai-compat",
+    "apple-server": "openai-compat",
+    "apple-bridge": "openai-compat",
+    "apple_fm": "apple-fm",
+    "apple-foundation": "apple-fm",
+    "apple-intelligence": "apple-fm",
+    "apple": "apple-fm",
     "dummy": "echo",
     "test": "echo",
 }
@@ -97,6 +107,9 @@ OPENAI_SERVER_URLS: Dict[str, str] = {
     "gpt4all": "http://127.0.0.1:4891/v1",
     "mlx-lm": "http://127.0.0.1:8080/v1",
     "koboldcpp": "http://localhost:5001/v1",
+    "apfel": "http://127.0.0.1:11434/v1",
+    "apple-server": "http://127.0.0.1:11434/v1",
+    "apple-bridge": "http://127.0.0.1:11434/v1",
 }
 
 
@@ -127,6 +140,7 @@ def get_backend_class(name: str) -> Any:
             "transformers": "pip install local-llm-kit[transformers]",
             "llamacpp": "pip install local-llm-kit[llamacpp]",
             "airllm": "pip install local-llm-kit[airllm]",
+            "apple-fm": "pip install local-llm-kit[apple-fm]",
         }
         canonical = BACKEND_ALIASES.get(key, key)
         hint = hints.get(canonical)

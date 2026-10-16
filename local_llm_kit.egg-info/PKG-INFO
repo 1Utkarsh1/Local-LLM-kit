@@ -1,249 +1,419 @@
 Metadata-Version: 2.4
 Name: local-llm-kit
-Version: 0.1.2
-Summary: OpenAI-like interface for local LLMs
-Home-page: https://github.com/1Utkarsh1/local-llm-kit
-Author: Utkarsh Rajput
-Author-email: utkarshrajput815@gmail.com
-Classifier: Development Status :: 3 - Alpha
+Version: 0.2.0
+Summary: One Python API for offline LLMs and local servers: Ollama, AirLLM, SGLang, vLLM, LM Studio and llama.cpp
+Author-email: Utkarsh Rajput <utkarshrajput815@gmail.com>
+Maintainer-email: Utkarsh Rajput <utkarshrajput815@gmail.com>
+License: MIT
+Project-URL: Homepage, https://github.com/1Utkarsh1/Local-LLM-kit
+Project-URL: Repository, https://github.com/1Utkarsh1/Local-LLM-kit
+Project-URL: Documentation, https://github.com/1Utkarsh1/Local-LLM-kit#readme
+Project-URL: Changelog, https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/CHANGELOG.md
+Project-URL: Issues, https://github.com/1Utkarsh1/Local-LLM-kit/issues
+Keywords: llm,local-llm,offline-ai,openai-compatible,transformers,llama.cpp,ollama,airllm,sglang,vllm,lm-studio,tool-calling,structured-output,rag,embeddings
+Classifier: Development Status :: 4 - Beta
 Classifier: Intended Audience :: Developers
 Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
 Classifier: Programming Language :: Python :: 3
-Classifier: Programming Language :: Python :: 3.8
 Classifier: Programming Language :: Python :: 3.9
 Classifier: Programming Language :: Python :: 3.10
 Classifier: Programming Language :: Python :: 3.11
-Requires-Python: >=3.8
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3.14
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Typing :: Typed
+Requires-Python: >=3.9
 Description-Content-Type: text/markdown
 License-File: LICENSE
-Requires-Dist: typing-extensions>=4.0.0
+Requires-Dist: typing-extensions>=4.6.0
+Provides-Extra: airllm
+Requires-Dist: airllm<5,>=2.11; extra == "airllm"
+Requires-Dist: numpy>=1.24.0; extra == "airllm"
+Requires-Dist: mlx>=0.12.0; (sys_platform == "darwin" and platform_machine == "arm64") and extra == "airllm"
 Provides-Extra: transformers
-Requires-Dist: torch>=1.12.0; extra == "transformers"
-Requires-Dist: transformers>=4.25.0; extra == "transformers"
-Requires-Dist: accelerate>=0.16.0; extra == "transformers"
+Requires-Dist: torch>=2.0.0; extra == "transformers"
+Requires-Dist: transformers>=4.41.0; extra == "transformers"
+Requires-Dist: accelerate>=0.30.0; extra == "transformers"
+Requires-Dist: huggingface-hub>=0.23.0; extra == "transformers"
+Requires-Dist: tokenizers>=0.19.0; extra == "transformers"
+Requires-Dist: tqdm>=4.66.0; extra == "transformers"
 Provides-Extra: llamacpp
-Requires-Dist: llama-cpp-python>=0.1.77; extra == "llamacpp"
+Requires-Dist: llama-cpp-python>=0.2.11; extra == "llamacpp"
+Provides-Extra: ollama
+Requires-Dist: ollama>=0.4.0; extra == "ollama"
+Requires-Dist: requests>=2.31.0; extra == "ollama"
+Provides-Extra: server
+Requires-Dist: fastapi>=0.110.0; extra == "server"
+Requires-Dist: uvicorn[standard]>=0.29.0; extra == "server"
+Requires-Dist: pydantic>=2.6.0; extra == "server"
+Requires-Dist: sse-starlette>=1.8.0; extra == "server"
+Requires-Dist: requests>=2.31.0; extra == "server"
+Provides-Extra: embeddings
+Requires-Dist: numpy>=1.24.0; extra == "embeddings"
+Requires-Dist: sentence-transformers>=2.7.0; extra == "embeddings"
+Provides-Extra: rag
+Requires-Dist: numpy>=1.24.0; extra == "rag"
+Requires-Dist: faiss-cpu>=1.8.0; extra == "rag"
+Requires-Dist: pypdf>=4.0.0; extra == "rag"
+Provides-Extra: apple-fm
+Requires-Dist: apple-fm-sdk>=0.1.0; (sys_platform == "darwin" and platform_machine == "arm64") and extra == "apple-fm"
 Provides-Extra: all
-Requires-Dist: torch>=1.12.0; extra == "all"
-Requires-Dist: transformers>=4.25.0; extra == "all"
-Requires-Dist: accelerate>=0.16.0; extra == "all"
-Requires-Dist: llama-cpp-python>=0.1.77; extra == "all"
-Dynamic: author
-Dynamic: author-email
-Dynamic: classifier
-Dynamic: description
-Dynamic: description-content-type
-Dynamic: home-page
+Requires-Dist: airllm<5,>=2.11; extra == "all"
+Requires-Dist: mlx>=0.12.0; (sys_platform == "darwin" and platform_machine == "arm64") and extra == "all"
+Requires-Dist: apple-fm-sdk>=0.1.0; (sys_platform == "darwin" and platform_machine == "arm64") and extra == "all"
+Requires-Dist: torch>=2.0.0; extra == "all"
+Requires-Dist: transformers>=4.41.0; extra == "all"
+Requires-Dist: accelerate>=0.30.0; extra == "all"
+Requires-Dist: huggingface-hub>=0.23.0; extra == "all"
+Requires-Dist: tokenizers>=0.19.0; extra == "all"
+Requires-Dist: tqdm>=4.66.0; extra == "all"
+Requires-Dist: llama-cpp-python>=0.2.11; extra == "all"
+Requires-Dist: ollama>=0.4.0; extra == "all"
+Requires-Dist: requests>=2.31.0; extra == "all"
+Requires-Dist: fastapi>=0.110.0; extra == "all"
+Requires-Dist: uvicorn[standard]>=0.29.0; extra == "all"
+Requires-Dist: pydantic>=2.6.0; extra == "all"
+Requires-Dist: sse-starlette>=1.8.0; extra == "all"
+Requires-Dist: numpy>=1.24.0; extra == "all"
+Requires-Dist: sentence-transformers>=2.7.0; extra == "all"
+Requires-Dist: faiss-cpu>=1.8.0; extra == "all"
+Requires-Dist: pypdf>=4.0.0; extra == "all"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.1.0; extra == "dev"
+Requires-Dist: ruff>=0.4.0; extra == "dev"
+Requires-Dist: black>=24.4.0; extra == "dev"
+Requires-Dist: mypy>=1.10.0; extra == "dev"
+Requires-Dist: build>=1.2.0; extra == "dev"
+Requires-Dist: twine>=5.0.0; extra == "dev"
 Dynamic: license-file
-Dynamic: provides-extra
-Dynamic: requires-dist
-Dynamic: requires-python
-Dynamic: summary
 
 # Local LLM Kit
 
-An OpenAI-like interface for local Large Language Models. This package allows you to interact with local LLMs using an API similar to OpenAI's, including support for chat completions, function calling, streaming responses, and more.
+[![PyPI version](https://badge.fury.io/py/local-llm-kit.svg)](https://pypi.org/project/local-llm-kit/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/LICENSE)
+[![CI](https://github.com/1Utkarsh1/Local-LLM-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/1Utkarsh1/Local-LLM-kit/actions)
+[![Docs](https://readthedocs.org/projects/local-llm-kit-package/badge/?version=latest)](https://local-llm-kit-package.readthedocs.io/)
+[![Offline ready](https://img.shields.io/badge/offline-echo%20backend-lightgrey.svg)](#offline-mode-no-model-needed)
 
-**Created by Utkarsh Rajput (GitHub: [1Utkarsh1](https://github.com/1Utkarsh1))** - A powerful tool for working with local language models with all the convenience of the OpenAI API.
+**One Python API for offline models and local LLM servers.** Use the same chat and completion interface with Ollama, AirLLM, SGLang, vLLM, LM Studio, LocalAI, llama.cpp or Hugging Face Transformers; tools, schemas and embeddings follow backend capabilities. Start with the offline echo backend, then connect a real model. Core install stays light (stdlib + `typing-extensions`); inference dependencies are optional.
 
-## Features
+Version **0.2.0** includes the local runtime presets and reliability fixes below. See the [backend compatibility guide](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/docs/source/backends.rst) for tested contracts and runtime limitations, and [llms.txt](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/llms.txt) for a concise project reference.
 
-- 🗣️ **Chat and Completion API**: Similar to OpenAI's API
-- 🧩 **Multiple Backend Support**: Works with Hugging Face Transformers and llama.cpp
-- 🛠️ **Function Calling**: Register Python functions that LLMs can call
-- 📱 **Streaming Support**: Stream responses token by token
-- 🧠 **Memory Management**: Auto-truncation and context management
-- 📊 **Logprobs**: Get token probabilities for generations
-- 📝 **Prompt Formatting**: Supports various model template formats (Llama, Mistral, etc.)
-- 🌐 **JSON Mode**: Enforce structured JSON output
+> **Scope, honestly stated:** this is a zero-heavy-dependency client + adapter + offline mock — code once against the OpenAI shape, swap backends without rewriting, and test in CI without a GPU. It is not an inference engine (use vLLM/Ollama to serve traffic) and `serve` is a development shim, not production infra.
+
+**Created by Utkarsh Rajput ([1Utkarsh1](https://github.com/1Utkarsh1))**
+
+## 60-second quickstart (Ollama)
+
+```bash
+pip install "local-llm-kit[ollama]"
+ollama pull llama3.2:3b
+ollama serve &  # usually already running on http://localhost:11434
+```
+
+```python
+from local_llm_kit import LLM
+
+llm = LLM(model_path="llama3.2:3b", backend="ollama")
+resp = llm.chat(messages=[{"role": "user", "content": "Say hi in one sentence."}])
+print(resp["choices"][0]["message"]["content"])
+```
+
+CLI equivalent:
+
+```bash
+local-llm-kit chat --model llama3.2:3b --backend ollama
+```
+
+## Offline mode (no model needed)
+
+Every example and the test-suite run without downloads via the `echo` backend:
+
+```bash
+python examples/simple_chat.py --backend echo
+python examples/tools_structured.py --backend echo
+```
 
 ## Installation
 
-### Basic Installation
-
 ```bash
-pip install local-llm-kit
+pip install local-llm-kit                                   # core only (light)
+pip install "local-llm-kit[apple-fm]"                       # Apple Foundation Models (Apple Silicon, macOS 26+)
+pip install "local-llm-kit[transformers]"                   # HF Transformers
+pip install "local-llm-kit[airllm]"                        # optional AirLLM adapter
+pip install "local-llm-kit[llamacpp]"                       # llama.cpp (GGUF)
+pip install "local-llm-kit[ollama]"                         # Ollama convenience client
+pip install "local-llm-kit[server]"                         # `serve` command (FastAPI/uvicorn)
+pip install "local-llm-kit[embeddings]"                     # sentence-transformers, numpy
+pip install "local-llm-kit[rag]"                            # numpy, faiss-cpu, pypdf
+pip install "local-llm-kit[all]"                            # everything
 ```
 
-### With Backend Support
+Requires Python 3.9+. The generic `openai-compat` backend (vLLM, LM Studio, llama-server, apfel) needs no extra — it speaks HTTP with the standard library.
 
-```bash
-# For Hugging Face Transformers support
-pip install "local-llm-kit[transformers]"
+## Backend comparison
 
-# For llama.cpp support
-pip install "local-llm-kit[llamacpp]"
+| Backend | `backend=` value | What it runs | Needs | Best for | Vision | Embeddings |
+|---|---|---|---|---|---|---|
+| Echo (mock) | `"echo"` | offline deterministic echo, no model | nothing | tests, CI, docs, offline dev | passes messages through | deterministic stub |
+| Apple Foundation Models | `"apple-fm"` | Apple's built-in on-device system model (AFM 3B) | Apple Silicon Mac, macOS 26+, `pip install "local-llm-kit[apple-fm]"` | zero-download, private, 100% on-device | text and image parts | no (use sentence-transformers) |
+| Transformers | `"transformers"` | HF models via `transformers`+`torch` | `pip install "local-llm-kit[transformers]"` | HF text models on GPU/CPU | text adapter | separate embeddings client |
+| AirLLM (experimental adapter) | `"airllm"` | AirLLM offloaded inference | `pip install "local-llm-kit[airllm]"`, prepared weights and suitable hardware | fitting larger models into limited accelerator memory | text only in this adapter | no |
+| llama.cpp | `"llamacpp"` | `.gguf` via `llama-cpp-python` | `pip install "local-llm-kit[llamacpp]"` | quantized local text models | use HTTP server for vision | use HTTP server for embeddings |
+| Ollama | `"ollama"` | models served by `ollama serve` | Ollama daemon | 5-min local setup | model-dependent | `nomic-embed-text` etc. |
+| OpenAI-compatible | `"openai-compat"` | any `POST /v1/chat/completions` server (vLLM, LM Studio, Ollama, llama-server, Apfel) | server URL | pointing at an existing server | model-dependent | model-dependent |
 
-# For all backends
-pip install "local-llm-kit[all]"
-```
+Auto-detect: `apple`/`apple-fm` → `apple-fm`, `http(s)` model path → `openai-compat`, `ollama:` prefix → `ollama`, `.gguf`/GGML path → `llamacpp`, anything else → `transformers`. Pass `backend=` explicitly for `echo`.
 
-## Quick Start
+### Local server presets
 
-### Chat with a Model
+Use a model ID that the running server actually serves. These presets use the shared OpenAI-compatible adapter; `backend_kwargs={"base_url": "http://host:port/v1"}` overrides the URL.
+
+| Server | `backend=` | Connection preset |
+|---|---|---|
+| SGLang | `"sglang"` | `http://localhost:30000/v1` |
+| vLLM | `"vllm"` | `http://localhost:8000/v1` |
+| LM Studio | `"lmstudio"` | `http://localhost:1234/v1` |
+| LocalAI | `"localai"` | `http://localhost:8080/v1` |
+| llama-server | `"llama-server"` | `http://localhost:8080/v1`; launch with `--port 8080` |
+| Jan | `"jan"` | `http://127.0.0.1:1337/v1`; enable its local server and supply its API key |
+| GPT4All | `"gpt4all"` | `http://127.0.0.1:4891/v1`; enable Local API Server in settings |
+| MLX-LM | `"mlx-lm"` | `http://127.0.0.1:8080/v1`; run `mlx_lm.server` on Apple Silicon |
+| KoboldCpp | `"koboldcpp"` | `http://localhost:5001/v1` |
+| Apfel | `"apfel"` | `http://127.0.0.1:11434/v1`; on-device Apple Intelligence bridge server |
+
+Together with native Apple FM, Ollama, Transformers and AirLLM, these cover **13 distinct local runtimes** (llama.cpp has both in-process and server paths). This is a compatibility selection, not a measured popularity ranking. GPT4All, MLX-LM and Apfel presets provide text/chat; use a separate embedding backend. Native tools, schemas and vision require explicit upstream/model support. See the [capability matrix and setup references](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/docs/source/backends.rst) before choosing a runtime.
 
 ```python
-from local_llm_kit import chat
+from local_llm_kit import LLM
 
-response = chat(
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Tell me about the solar system."}
-    ],
-    model_path="path/to/your/model",  # Local model path or HF model name
-    temperature=0.7,
-    max_tokens=512
-)
-
-print(response["choices"][0]["message"]["content"])
+llm = LLM(model_path="your-served-model-id", backend="sglang")
+result = llm.chat([{"role": "user", "content": "Hello!"}])
+print(result["choices"][0]["message"]["content"])
 ```
 
-### Text Completion
+Native chat forwards messages, tools, JSON schemas, seed and stop sequences to Ollama and OpenAI-compatible servers. Tool calls returned outside the text are preserved, including fragmented streamed arguments. Tool and schema support depends on the server configuration and selected model. Ollama's native API offers automatic tool selection; named choices narrow the available tools, while `required` is not guaranteed by that API.
+
+Compatibility tests exercise adapter contracts and a local HTTP fixture. They do not certify every server release, model, accelerator or performance level. Setup links and feature limits are in the [backend guide](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/docs/source/backends.rst).
+
+### AirLLM
 
 ```python
-from local_llm_kit import complete
+from local_llm_kit import LLM
 
-response = complete(
-    prompt="The solar system consists of",
-    model_path="path/to/your/model",
-    temperature=0.7,
-    max_tokens=512
+llm = LLM(
+    model_path="/path/to/trusted/local/checkpoint",
+    backend="airllm",
+    backend_kwargs={"device": "cuda:0", "max_seq_len": 2048},
 )
-
+response = llm.complete("Explain local inference briefly.", max_tokens=64)
 print(response["choices"][0]["text"])
 ```
 
-### Function Calling
+The AirLLM adapter is **experimental**: its PyTorch and macOS MLX call contracts have offline tests; real model/GPU inference has not been certified here. Generation is serialized per cached model because offloaded layers are stateful. Streaming returns one completed chunk, and per-call seeds/logprobs are unsupported. The MLX path exposes temperature sampling only. AirLLM may need significant checkpoint/shard disk space and may load model-supplied code; use trusted checkpoints and follow [AirLLM's setup instructions](https://github.com/lyogavin/airllm).
+
+For offline inference, prepare weights and dependencies first, use local checkpoint paths, and set `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` when using Hugging Face loaders. The kit does not install or launch external servers. A server preset connects to the endpoint you configure.
 
 ```python
 from local_llm_kit import LLM
 
-# Define a function with its schema
-def get_weather(location: str, unit: str = "celsius"):
+LLM(model_path="mistralai/Mistral-7B-Instruct-v0.1", backend="transformers")
+LLM(model_path="./models/mistral-7b-q4.gguf", backend="llamacpp")
+LLM(model_path="llama3.2:3b", backend="ollama")
+LLM(model_path="any-name", backend="openai-compat",
+    backend_kwargs={"base_url": "http://localhost:8080/v1"})
+LLM(model_path="echo", backend="echo")  # offline
+```
+
+## OpenAI-SDK drop-in (talk to any OpenAI client)
+
+Start the bundled server, then use the stock `openai` package unchanged:
+
+```bash
+local-llm-kit serve --model llama3.2:3b --backend ollama --port 8000
+# offline smoke test: local-llm-kit serve --backend echo --port 8000
+```
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="not-needed")
+resp = client.chat.completions.create(
+    model="llama3.2:3b",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(resp.choices[0].message.content)
+```
+
+See `examples/openai_compatible.py` (falls back to direct `LLM(backend="echo")` when no server / no `openai` package is present, so it runs offline).
+
+Supported routes: `GET /health`, `GET /v1/models`, `POST /v1/chat/completions` (incl. `stream=true` SSE), `POST /v1/completions`, `POST /v1/embeddings`.
+
+> **Security note:** the server returns tool calls **without executing them** unless a request sets `"execute_tools": true`. Only enable that for callers you trust — auto-executing model-chosen functions is arbitrary-code-execution-as-a-feature if your tools are powerful.
+
+## Server snippet
+
+```bash
+# GGUF file, OpenAI-compatible endpoints on :8000
+local-llm-kit serve --model ./models/mistral-7b-q4.gguf --backend llamacpp --port 8000
+
+# Or backed by an upstream OpenAI-compatible server
+local-llm-kit serve --backend openai-compat --port 8000
+```
+
+```python
+# Programmatic (requires the `server` extra)
+from local_llm_kit.server import create_app, run
+
+app = create_app(model_path="llama3.2:3b", backend="ollama")
+run(app, port=8000)
+```
+
+## Modern tools snippet (`@tool` + `tools`/`tool_choice`)
+
+Legacy `add_function` / `functions=` / `function_call=` still work. New code should use this:
+
+```python
+from local_llm_kit import LLM, tool
+
+@tool(description="Get the current weather for a city")
+def get_weather(location: str, unit: str = "celsius") -> dict:
     """Get the weather for a location."""
-    # In a real app, this would call a weather API
-    return {"temperature": 22, "unit": unit, "description": f"Sunny in {location}"}
+    return {"temperature": 22, "unit": unit, "location": location}
 
-weather_function = {
-    "name": "get_weather",
-    "description": "Get the current weather for a location",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "location": {
-                "type": "string",
-                "description": "The city and state, e.g. San Francisco, CA"
-            },
-            "unit": {
-                "type": "string",
-                "enum": ["celsius", "fahrenheit"],
-                "description": "The unit of temperature"
-            }
-        },
-        "required": ["location"]
-    }
-}
+llm = LLM(model_path="echo", backend="echo")
+llm.add_tool(get_weather)  # legacy: llm.add_function(name, schema, impl) also works
 
-# Create LLM instance
-llm = LLM(model_path="path/to/your/model")
-
-# Register the function
-llm.add_function(
-    name="get_weather",
-    schema=weather_function,
-    implementation=get_weather
+resp = llm.chat(
+    messages=[{"role": "user", "content": "Weather in Paris?"}],
+    tools=[get_weather.spec],
+    tool_choice="auto",
 )
-
-# Chat with function calling
-response = llm.chat(
-    messages=[
-        {"role": "user", "content": "What's the weather like in Paris?"}
-    ],
-    # The function will be automatically called if the model chooses to use it
-)
-
-print(response["choices"][0]["message"]["content"])
+print(resp["choices"][0]["message"])
 ```
 
-### Streaming Responses
+Full runnable version: `examples/tools_structured.py`.
 
-```python
-from local_llm_kit import chat
-
-for chunk in chat(
-    messages=[
-        {"role": "user", "content": "Write a short poem about nature."}
-    ],
-    model_path="path/to/your/model",
-    stream=True
-):
-    # Process each token as it's generated
-    if "choices" in chunk and chunk["choices"] and "delta" in chunk["choices"][0]:
-        delta = chunk["choices"][0]["delta"]
-        if "content" in delta:
-            print(delta["content"], end="", flush=True)
-```
-
-## Command Line Interface
-
-Local LLM Kit includes a CLI for easy interaction with models.
-
-### Interactive Chat
-
-```bash
-local-llm-kit chat --model path/to/your/model --system "You are a helpful assistant."
-```
-
-### Text Completion
-
-```bash
-local-llm-kit complete --model path/to/your/model --prompt "Once upon a time,"
-```
-
-## Advanced Usage
-
-### Using Different Backends
+## Structured output snippet (`response_format`, JSON Schema)
 
 ```python
 from local_llm_kit import LLM
 
-# Using Transformers backend
-llm_transformers = LLM(
-    model_path="mistralai/Mistral-7B-Instruct-v0.1",
-    backend="transformers",
-    backend_kwargs={"device": "cuda", "torch_dtype": "float16"}
-)
-
-# Using llama.cpp backend
-llm_llamacpp = LLM(
-    model_path="path/to/model.gguf",
-    backend="llamacpp",
-    backend_kwargs={"n_gpu_layers": -1, "n_ctx": 4096}
-)
+llm = LLM(model_path="echo", backend="echo")
+schema = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}, "population": {"type": "integer"}},
+    "required": ["name", "population"],
+}
+try:
+    resp = llm.chat(
+        messages=[{"role": "user", "content": "Describe Paris."}],
+        response_format={"type": "json_schema", "json_schema": {"name": "city", "schema": schema}},
+    )
+except TypeError:  # older client fallback
+    resp = llm.chat(
+        messages=[{"role": "user", "content": "Describe Paris."}],
+        format="json",
+    )
+print(resp["choices"][0]["message"]["content"])
 ```
 
-### JSON Mode
+## Minimal RAG snippet
 
 ```python
-from local_llm_kit import chat
+from local_llm_kit import LLM
+from local_llm_kit.rag import SimpleVectorStore, build_rag_prompt
 
-response = chat(
-    messages=[
-        {"role": "user", "content": "Generate a JSON list of 3 planets with their diameter."}
-    ],
-    model_path="path/to/your/model",
-    format="json"
+# Lexical mode: no embeddings needed, keyword search works offline.
+# Pass embed_fn=... (EmbeddingClient, Ollama, OpenAI-compatible endpoint)
+# for semantic retrieval instead.
+store = SimpleVectorStore()
+store.add(
+    ["Paris is the capital of France.", "The Eiffel Tower is in Paris."],
+    metadatas=[{"source": "doc-0"}, {"source": "doc-1"}],
 )
+hits = store.search("Where is the Eiffel Tower?", k=2)
+messages = build_rag_prompt("Where is the Eiffel Tower?", hits)
 
-import json
-planets = json.loads(response["choices"][0]["message"]["content"])
-print(planets)
+llm = LLM(model_path="echo", backend="echo")
+resp = llm.chat(messages=messages)
+print(resp["choices"][0]["message"]["content"])
 ```
 
-## License
+Full runnable version: `examples/rag_minimal.py`.
 
-MIT License
+## Vision snippet (graceful degradation)
 
-## Contributing
+```python
+from local_llm_kit import LLM
 
-Contributions are welcome! Please feel free to submit a Pull Request. 
+messages = [{
+    "role": "user",
+    "content": [
+        {"type": "text", "text": "What is in this image?"},
+        {"type": "image_url", "image_url": {"url": "https://example.com/cat.jpg"}},
+    ],
+}]
+
+for backend in ("ollama", "openai-compat", "echo"):
+    try:
+        llm = LLM(model_path="llava  # or model your server hosts", backend=backend)
+        print(llm.chat(messages=messages)["choices"][0]["message"]["content"])
+        break
+    except Exception as e:
+        print(f"{backend} unavailable, falling back ({e})")
+```
+
+Text-only backends receive the `text` parts and ignore images instead of crashing. Runnable demo: `examples/vision_chat.py`.
+
+## CLI
+
+```bash
+local-llm-kit chat --model llama3.2:3b --backend ollama --system "You are helpful."
+local-llm-kit complete --model ./m.gguf --backend llamacpp --prompt "Once upon a time,"
+local-llm-kit serve --backend echo --port 8000
+local-llm-kit pull owner/repo:file.gguf --output-dir ./models
+local-llm-kit pull owner/repo --filename file.gguf --revision main --force
+local-llm-kit chat --backend sglang --model your-served-model-id -q "Hello"
+local-llm-kit list
+local-llm-kit embed --model nomic-embed-text --backend ollama --text "hello world"
+```
+
+All `chat`/`complete`/`embed` commands accept `--backend echo|transformers|llamacpp|ollama|openai-compat`. Run any command with `--help` for flags.
+
+Server presets and `airllm` are also accepted by the CLI. `pull` reuses repository/revision-specific and URL-specific caches; `--force` refreshes a download. Failed transfers preserve existing complete files. URL cache paths now include a URL hash, so older flat URL caches may be downloaded once again.
+
+## Examples
+
+| File | Shows | Offline? |
+|---|---|---|
+| `examples/simple_chat.py` | streaming chat loop | `--backend echo` |
+| `examples/openai_compatible.py` | stock OpenAI client vs local server | yes (falls back to `echo`) |
+| `examples/tools_structured.py` | `@tool` + `response_format` | yes |
+| `examples/rag_minimal.py` | chunk → store → retrieve → chat | yes |
+| `examples/vision_chat.py` | `image_url` message, graceful fallback | yes |
+
+## Migration: 0.1.x → 0.2.0
+
+Backwards compatible: `LLM` / `chat` / `complete` / `add_function` keep working.
+
+| 0.1.x | 0.2.0 (preferred) | Notes |
+|---|---|---|
+| `functions=[...]` | `tools=[...]` | `functions` still accepted, normalized internally |
+| `function_call="auto"` | `tool_choice="auto"` | same |
+| `format="json"` | `response_format={"type": "json_object"}` or `json_schema` | `format` still accepted as shorthand |
+| backends `transformers`/`llamacpp` | + `echo`, `ollama`, `openai-compat` | `echo` needs no deps |
+| no server | `local-llm-kit serve` + `local_llm_kit.server` | needs `server` extra |
+| no RAG | `local_llm_kit.rag` + `local_llm_kit.embeddings` | stdlib core, numpy optional |
+| images unsupported | `content: [{"type":"image_url",...}]` | text fallback on text-only models |
+
+Rename checklist: replace `functions=` with `tools=` (wrap each spec as `{"type":"function","function":spec}` — or just pass `@tool` functions, the helper does it), replace `format="json"` with `response_format`, pin new extras in your requirements.
+
+## License / Contributing
+
+MIT. Contributions welcome — see `CONTRIBUTING.md`.

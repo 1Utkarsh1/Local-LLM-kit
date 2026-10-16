@@ -69,6 +69,14 @@ llama.cpp's library and server integrations count as one runtime.
      - OpenAI-compatible HTTP
      - Forwarded; model/template-dependent
      - Requires a loaded embedding model
+   * - Apple Foundation Models
+     - In-process native Python (macOS 26+ Apple Silicon)
+     - On-device system model; zero download
+     - No on-device embedding vector endpoint
+   * - Apfel
+     - OpenAI-compatible HTTP bridge
+     - Forwarded; native ToolDefinition on macOS 26/27
+     - HTTP 501 (use separate embedding model)
 
 All server presets have client routing, payload and HTTP/SSE fixture tests.
 This is protocol validation, not a real-engine or hardware certification.
@@ -114,6 +122,9 @@ Server presets
    * - KoboldCpp
      - koboldcpp
      - http://localhost:5001/v1
+   * - Apfel
+     - apfel
+     - http://127.0.0.1:11434/v1 (on-device Apple Intelligence bridge)
 
 Use the ID of a model already loaded by the server. A preset chooses the
 connection URL and protocol parameter mapping. Override the URL with

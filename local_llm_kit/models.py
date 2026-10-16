@@ -70,6 +70,16 @@ _HF_REPO_RE = re.compile(
 #: exact filename to :func:`download_model`.
 RECOMMENDED_MODELS: List[Dict[str, Any]] = [
     {
+        "name": "Apple Intelligence Foundation Model (On-Device 3B)",
+        "repo_id": "apple/system-foundation-model",
+        "filename": "on-device (built into macOS 26+)",
+        "backend": "apple-fm",
+        "params": "3B",
+        "approx_size": "0 MB (system built-in)",
+        "ram": "Apple Silicon (M1+ / A17 Pro+ / A18 Pro+)",
+        "use": "Zero-download, private, 100% on-device model built into macOS with Apple Intelligence.",
+    },
+    {
         "name": "Qwen2.5 0.5B Instruct (GGUF Q4_K_M)",
         "repo_id": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
         "filename": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
@@ -203,7 +213,7 @@ def is_hf_repo_id(spec: str) -> bool:
 
 
 def suggested_backend_for(spec: str, filename: Optional[str] = None) -> str:
-    """Return ``"llamacpp"`` for GGUF/ggml specs, else ``"transformers"``.
+    """Return backend recommendation based on model spec.
 
     Mirrors ``LLM._init_backend`` auto-detection so
     :func:`resolve_model` agrees with :class:`LLM`.
@@ -212,6 +222,11 @@ def suggested_backend_for(spec: str, filename: Optional[str] = None) -> str:
         raise ValueError("spec must be a string.")
     if filename is not None and not isinstance(filename, str):
         raise ValueError("filename must be a string or None.")
+    low = spec.strip().lower()
+    if low in ("apple", "apple-fm", "apple-foundation", "apple-intelligence"):
+        return "apple-fm"
+    if low in ("apfel", "apple-server", "apple-bridge"):
+        return "openai-compat"
     return "llamacpp" if _looks_like_llamacpp(spec, filename) else "transformers"
 
 

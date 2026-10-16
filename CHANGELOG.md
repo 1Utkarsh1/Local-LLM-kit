@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Native Apple Foundation Models backend (`apple-fm`) providing zero-download, 100% on-device inference using Apple Intelligence (AFM-on-device 3B) on macOS 26+ (Apple Silicon M-series, A17 Pro+, A18 Pro+).
+- Support for `apfel`, `apple-server`, and `apple-bridge` connection presets (`http://127.0.0.1:11434/v1`) with automatic routing of prompt completions to `/v1/chat/completions` (resolving HTTP 501 Not Implemented on chat-only servers).
+- Reasoning tokens protocol support: `reasoning_content` is now preserved in chat responses and streamed incremental chunks for reasoning models (DeepSeek-R1, QwQ, vLLM, Ollama, SGLang).
+- Hardened SSE streaming parser in `OpenAICompatBackend` to gracefully handle server keep-alive comments (`: keep-alive`, `: ping`) and whitespace without stream disruption.
+- Executable runnable example `examples/apple_intelligence.py` demonstrating native `apple-fm`, `apfel` local bridge, and offline fallback.
+- Added Apple Foundation Model to `RECOMMENDED_MODELS` starter table (0 MB download, system built-in).
+- Contract test suites `tests/test_apple_fm.py` and `tests/test_openai_compat_apple.py` with mock doubles, cold-start context floor verification, and opt-in real hardware inference check (`LOCAL_LLM_TEST_REAL_APPLE=1`).
+
 ## [0.2.0] - 2026-10-17
 
 ### Added

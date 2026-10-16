@@ -54,7 +54,13 @@ class OpenAICompatBackend(BaseBackend):
         """
         self.model = model
         self.provider = provider
-        self.supports_embeddings = provider not in ("gpt4all", "mlx-lm")
+        self.supports_embeddings = provider not in (
+            "gpt4all",
+            "mlx-lm",
+            "apfel",
+            "apple-server",
+            "apple-bridge",
+        )
         self.model_path = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -92,6 +98,25 @@ class OpenAICompatBackend(BaseBackend):
                 )
             )
             return {"text": text, "finish_reason": "stop", "model": self.model}
+
+        if self.provider in ("apfel", "apple-server", "apple-bridge"):
+            chat_resp = self.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_new_tokens=max_new_tokens,
+                top_p=top_p,
+                top_k=top_k,
+                repetition_penalty=repetition_penalty,
+                **kwargs,
+            )
+            return {
+                "text": chat_resp.get("text", "") or "",
+                "finish_reason": chat_resp.get("finish_reason", "stop"),
+                "usage": chat_resp.get("usage"),
+                "model": chat_resp.get("model", self.model),
+                "raw": chat_resp.get("raw"),
+            }
+
         payload = self._completion_payload(
             prompt,
             temperature,
@@ -102,7 +127,29 @@ class OpenAICompatBackend(BaseBackend):
             stream=False,
             **kwargs,
         )
-        resp = self._post_json("/completions", payload)
+        try:
+            resp = self._post_json("/completions", payload)
+        except RuntimeError as err:
+            # Fallback for servers that only implement /v1/chat/completions (e.g. apfel)
+            if any(code in str(err) for code in ("HTTP 501", "HTTP 404", "HTTP 405")):
+                chat_resp = self.chat(
+                    [{"role": "user", "content": prompt}],
+                    temperature=temperature,
+                    max_new_tokens=max_new_tokens,
+                    top_p=top_p,
+                    top_k=top_k,
+                    repetition_penalty=repetition_penalty,
+                    **kwargs,
+                )
+                return {
+                    "text": chat_resp.get("text", "") or "",
+                    "finish_reason": chat_resp.get("finish_reason", "stop"),
+                    "usage": chat_resp.get("usage"),
+                    "model": chat_resp.get("model", self.model),
+                    "raw": chat_resp.get("raw"),
+                }
+            raise
+
         try:
             choice = (resp.get("choices") or [])[0]
         except IndexError as e:
@@ -127,6 +174,18 @@ class OpenAICompatBackend(BaseBackend):
         top_logprobs: Optional[int] = None,
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
+        if self.provider in ("apfel", "apple-server", "apple-bridge"):
+            yield from self.chat_stream(
+                [{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_new_tokens=max_new_tokens,
+                top_p=top_p,
+                top_k=top_k,
+                repetition_penalty=repetition_penalty,
+                **kwargs,
+            )
+            return
+
         payload = self._completion_payload(
             prompt,
             temperature,
@@ -137,13 +196,27 @@ class OpenAICompatBackend(BaseBackend):
             stream=True,
             **kwargs,
         )
-        for event in self._post_sse("/completions", payload):
-            for choice in event.get("choices", []) or []:
-                chunk: Dict[str, Any] = {"text": choice.get("text", "") or ""}
-                if choice.get("finish_reason"):
-                    chunk["finish_reason"] = choice["finish_reason"]
-                if chunk["text"] or chunk.get("finish_reason"):
-                    yield chunk
+        try:
+            for event in self._post_sse("/completions", payload):
+                for choice in event.get("choices", []) or []:
+                    chunk: Dict[str, Any] = {"text": choice.get("text", "") or ""}
+                    if choice.get("finish_reason"):
+                        chunk["finish_reason"] = choice["finish_reason"]
+                    if chunk["text"] or chunk.get("finish_reason"):
+                        yield chunk
+        except RuntimeError as err:
+            if any(code in str(err) for code in ("HTTP 501", "HTTP 404", "HTTP 405")):
+                yield from self.chat_stream(
+                    [{"role": "user", "content": prompt}],
+                    temperature=temperature,
+                    max_new_tokens=max_new_tokens,
+                    top_p=top_p,
+                    top_k=top_k,
+                    repetition_penalty=repetition_penalty,
+                    **kwargs,
+                )
+                return
+            raise
 
     # -- chat API (/v1/chat/completions) -------------------------------
 
@@ -196,6 +269,9 @@ class OpenAICompatBackend(BaseBackend):
             }
             if tool_calls:
                 result["tool_calls"] = tool_calls
+            reasoning_parts = [c["reasoning_content"] for c in chunks if "reasoning_content" in c]
+            if reasoning_parts:
+                result["reasoning_content"] = "".join(reasoning_parts)
             return result
         payload = self._chat_payload(
             messages,
@@ -218,7 +294,7 @@ class OpenAICompatBackend(BaseBackend):
         except IndexError as e:
             raise RuntimeError("Server returned no chat choices: %r" % (resp,)) from e
         message = choice.get("message", {}) or {}
-        return {
+        res: Dict[str, Any] = {
             "text": self._content_text(message.get("content")),
             "tool_calls": message.get("tool_calls"),
             "finish_reason": choice.get("finish_reason", "stop"),
@@ -226,6 +302,10 @@ class OpenAICompatBackend(BaseBackend):
             "model": resp.get("model", self.model),
             "raw": resp,
         }
+        reasoning = message.get("reasoning_content") or message.get("reasoning")
+        if reasoning:
+            res["reasoning_content"] = reasoning
+        return res
 
     def chat_stream(
         self,
@@ -264,6 +344,9 @@ class OpenAICompatBackend(BaseBackend):
                 chunk: Dict[str, Any] = {
                     "text": self._content_text(delta.get("content")),
                 }
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                if reasoning:
+                    chunk["reasoning_content"] = str(reasoning)
                 if delta.get("tool_calls"):
                     chunk["tool_calls_delta"] = delta["tool_calls"]
                     for part in delta["tool_calls"]:
@@ -286,7 +369,12 @@ class OpenAICompatBackend(BaseBackend):
                     chunk["finish_reason"] = choice["finish_reason"]
                     if calls:
                         chunk["tool_calls"] = [calls[index] for index in sorted(calls)]
-                if chunk["text"] or chunk.get("finish_reason") or "tool_calls_delta" in chunk:
+                if (
+                    chunk["text"]
+                    or chunk.get("finish_reason")
+                    or "tool_calls_delta" in chunk
+                    or "reasoning_content" in chunk
+                ):
                     yield chunk
 
     # -- embeddings (/v1/embeddings) -----------------------------------

@@ -83,10 +83,15 @@ rag = [
     "faiss-cpu>=1.8.0",
     "pypdf>=4.0.0",
 ]
+# Apple Foundation Models backend (lazy: local_llm_kit.backends.apple_fm)
+apple-fm = [
+    "apple-fm-sdk>=0.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 # Everything runnable (all runtime extras, excludes dev tooling)
 all = [
     "airllm>=2.11,<5",
     "mlx>=0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "apple-fm-sdk>=0.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "torch>=2.0.0",
     "transformers>=4.41.0",
     "accelerate>=0.30.0",

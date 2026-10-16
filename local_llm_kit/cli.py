@@ -514,7 +514,13 @@ def _extract_delta_text(chunk: Any) -> str:
         if not choices:
             return ""
         delta = choices[0].get("delta") or {}
-        return delta.get("content") or ""
+        content = delta.get("content")
+        if content:
+            return content
+        reasoning = delta.get("reasoning_content")
+        if reasoning:
+            return reasoning
+        return ""
     except AttributeError:
         return ""
 
@@ -1022,6 +1028,8 @@ def handle_chat_command(
                     assistant_msg = response["choices"][0]["message"]
                     messages.append(assistant_msg)
                     if not _print_tool_calls_from_message(assistant_msg):
+                        if assistant_msg.get("reasoning_content"):
+                            print("\n[Thinking: {0}]".format(assistant_msg["reasoning_content"]))
                         print("\nAssistant: {0}".format(assistant_msg.get("content")))
     except KeyboardInterrupt:
         print("\nExiting chat...")

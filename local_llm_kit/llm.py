@@ -60,6 +60,7 @@ _SUPPORTED_BACKENDS = (
     "llamacpp",
     "ollama",
     "openai-compat",
+    "apple-fm",
     "echo",
 )
 
@@ -345,6 +346,8 @@ class LLM:
                 name = "openai-compat"
             elif lp.startswith("ollama:"):
                 name = "ollama"
+            elif lp in ("apple", "apple-fm", "apple-foundation", "apple-intelligence"):
+                name = "apple-fm"
             elif ".gguf" in lp or "ggml" in lp:
                 name = "llamacpp"
             else:
@@ -361,6 +364,16 @@ class LLM:
                 return EchoBackend(self.model_path, **self.backend_kwargs)
             except Exception:
                 return _EchoBackend(self.model_path, **self.backend_kwargs)
+        if name == "apple-fm":
+            try:
+                from .backends.apple_fm import AppleFMBackend
+
+                return AppleFMBackend(self.model_path, **self.backend_kwargs)
+            except ImportError as exc:
+                raise RuntimeError(
+                    "apple-fm backend needs apple-fm-sdk "
+                    "(pip install 'local-llm-kit[apple-fm]')."
+                ) from exc
         if name == "transformers":
             try:
                 from .backends.transformers import TransformersBackend
@@ -849,6 +862,8 @@ class LLM:
             self.memory.add_messages([message])
         else:
             message = {"role": "assistant", "content": text}
+            if isinstance(result, dict) and result.get("reasoning_content"):
+                message["reasoning_content"] = result["reasoning_content"]
             self.memory.add_messages([message])
 
         response: Dict[str, Any] = {
@@ -913,6 +928,8 @@ class LLM:
                 piece = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
                 accumulated += piece
                 delta: Dict[str, Any] = {"content": piece}
+                if isinstance(chunk, dict) and chunk.get("reasoning_content"):
+                    delta["reasoning_content"] = chunk["reasoning_content"]
                 if first:
                     delta["role"] = "assistant"
                     first = False
