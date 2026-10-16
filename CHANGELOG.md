@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Native `apple-foundation` backend using Apple's on-device Foundation Models (`apple-fm-sdk`). Supports `chat()`/`complete()`, native function calling (OpenAI tools converted to `apple_fm_sdk.Tool` and executed on-device), and JSON `response_format` via Apple's `json_schema` guided generation. Requires macOS 26.0+ with Apple Intelligence enabled; streaming is unsupported.
+- Auto-detection of the Apple backend on macOS 26+ when available (low priority behind the existing server/gguf/ollama/`transformers` resolution).
+- CLI `--backend apple-foundation` / `--backend apple` and a gated `implementations`/`execute_tools` pass-through for tool-needing native backends.
+- Optional `apple-fm` extra (`pip install local-llm-kit[apple-fm]`), included in the `all` extra.
+
+### Fixed
+- AirLLM `generate_stream` now yields a standardized `text`/`finish_reason` chunk (consistent with the other streaming backends) instead of the full `generate()` dict.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added

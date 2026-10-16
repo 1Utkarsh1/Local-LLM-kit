@@ -53,6 +53,7 @@ pip install local-llm-kit                                   # core only (light)
 pip install "local-llm-kit[transformers]"                   # HF Transformers
 pip install "local-llm-kit[airllm]"                        # optional AirLLM adapter
 pip install "local-llm-kit[llamacpp]"                       # llama.cpp (GGUF)
+pip install "local-llm-kit[apple-fm]"                      # Apple Foundation Models (macOS 26+)
 pip install "local-llm-kit[ollama]"                         # Ollama convenience client
 pip install "local-llm-kit[server]"                         # `serve` command (FastAPI/uvicorn)
 pip install "local-llm-kit[embeddings]"                     # sentence-transformers, numpy
@@ -72,8 +73,9 @@ Requires Python 3.9+. The generic `openai-compat` backend (vLLM, LM Studio, llam
 | llama.cpp | `"llamacpp"` | `.gguf` via `llama-cpp-python` | `pip install "local-llm-kit[llamacpp]"` | quantized local text models | use HTTP server for vision | use HTTP server for embeddings |
 | Ollama | `"ollama"` | models served by `ollama serve` | Ollama daemon | 5-min local setup | model-dependent | `nomic-embed-text` etc. |
 | OpenAI-compatible | `"openai-compat"` | any `POST /v1/chat/completions` server (vLLM, LM Studio, Ollama, llama.cpp server) | server URL | pointing at an existing server | model-dependent | model-dependent |
+| Apple Foundation Models | `"apple-foundation"` (alias `"apple"`) | on-device Apple Intelligence model (macOS 26+) | `pip install "local-llm-kit[apple-fm]"`, macOS 26+, Apple Intelligence | native text/chat, tools and JSON on Apple Silicon | no | no |
 
-Auto-detect: `http(s)` model path → `openai-compat`, `ollama:` prefix → `ollama`, `.gguf`/GGML path → `llamacpp`, anything else → `transformers`. Pass `backend=` explicitly for `echo`.
+Auto-detect: `http(s)` model path → `openai-compat`, `ollama:` prefix → `ollama`, `.gguf`/GGML path → `llamacpp`, anything else → `transformers` (or `apple-foundation` on macOS 26+ when the on-device model is available). Pass `backend=` explicitly for `echo`.
 
 ### Local server presets
 
@@ -133,6 +135,50 @@ LLM(model_path="any-name", backend="openai-compat",
     backend_kwargs={"base_url": "http://localhost:8080/v1"})
 LLM(model_path="echo", backend="echo")  # offline
 ```
+For offline inference, prepare weights and dependencies first, use local checkpoint paths, and set `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` when using Hugging Face loaders. The kit does not install or launch external servers. A server preset connects to the endpoint you configure.
+
+```python
+from local_llm_kit import LLM
+
+LLM(model_path="mistralai/Mistral-7B-Instruct-v0.1", backend="transformers")
+LLM(model_path="./models/mistral-7b-q4.gguf", backend="llamacpp")
+LLM(model_path="llama3.2:3b", backend="ollama")
+LLM(model_path="any-name", backend="openai-compat",
+    backend_kwargs={"base_url": "http://localhost:8080/v1"})
+LLM(model_path="echo", backend="echo")  # offline
+```
+
+### Apple Foundation Models
+
+Requires macOS 26.0+ with Apple Intelligence enabled and the optional SDK:
+
+```bash
+pip install "local-llm-kit[apple-fm]"
+```
+
+```python
+from local_llm_kit import LLM
+
+llm = LLM(model_path="system", backend="apple-foundation")
+response = llm.complete("Why is the sky blue?", max_tokens=64)
+print(response["choices"][0]["text"])
+```
+
+The backend talks to the on-device Apple Intelligence model directly — no network, no downloaded weights. It supports native chat messages, OpenAI-style `tools` (converted to `apple_fm_sdk.Tool` and executed on-device), and JSON `response_format` via Apple's `json_schema` guided generation. Streaming (`stream=True`) is unsupported because the SDK yields full snapshots rather than deltas.
+
+```python
+from local_llm_kit import LLM
+
+def get_weather(location: str) -> str:
+    return f"22C and sunny in {location}"
+
+llm = LLM(model_path="system", backend="apple-foundation")
+llm.add_tool(get_weather, name="get_weather")
+response = llm.chat([{"role": "user", "content": "Weather in Paris?"}])
+print(response["choices"][0]["message"]["content"])
+```
+
+On non-macOS systems or when Apple Intelligence is unavailable, the backend raises a clear error. The `auto` backend detects macOS 26+ availability at construction time and selects `apple-foundation` automatically.
 
 ## OpenAI-SDK drop-in (talk to any OpenAI client)
 

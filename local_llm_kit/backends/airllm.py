@@ -120,7 +120,16 @@ class AirLLMBackend(BaseBackend):
 
     def generate_stream(self, prompt: str, **kwargs: Any) -> Iterator[Dict[str, Any]]:
         # shortcut: AirLLM streaming is buffered; upgrade when both upstream APIs expose stable token callbacks.
-        yield self.generate(prompt, **kwargs)
+        result = self.generate(prompt, **kwargs)
+        # Yield a standardized chunk shape (text + finish_reason) consistent
+        # with the other streaming backends, rather than the full generate()
+        # dict (which also carries model/usage/raw keys consumers ignore).
+        yield {
+            "text": result.get("text", "") if isinstance(result, dict) else str(result),
+            "finish_reason": (
+                result.get("finish_reason", "stop") if isinstance(result, dict) else "stop"
+            ),
+        }
 
     def get_context_window(self) -> int:
         return self.max_seq_len

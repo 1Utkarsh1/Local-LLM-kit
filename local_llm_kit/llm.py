@@ -60,6 +60,7 @@ _SUPPORTED_BACKENDS = (
     "llamacpp",
     "ollama",
     "openai-compat",
+    "apple-foundation",
     "echo",
 )
 
@@ -348,7 +349,15 @@ class LLM:
             elif ".gguf" in lp or "ggml" in lp:
                 name = "llamacpp"
             else:
-                name = "transformers"
+                # Low-priority auto-detection: prefer Apple's on-device model
+                # (macOS 26+ with Apple Intelligence) over downloading a
+                # Transformers checkpoint when no server/gguf/ollama path matched.
+                from .backends.apple_foundation import apple_fm_available
+
+                if apple_fm_available():
+                    name = "apple-foundation"
+                else:
+                    name = "transformers"
         if name not in _SUPPORTED_BACKENDS:
             raise ValueError(
                 "Unsupported backend %r; choose from %s" % (backend_name, list(_SUPPORTED_BACKENDS))
@@ -395,6 +404,10 @@ class LLM:
                     "ollama backend module missing; ensure a running "
                     "`ollama serve` (no extra package required)."
                 ) from exc
+        if name == "apple-foundation":
+            from .backends.apple_foundation import AppleFoundationBackend
+
+            return AppleFoundationBackend(self.model_path, **self.backend_kwargs)
         # openai-compat: stdlib-only backend module.
         try:
             from .backends.openai_compat import OpenAICompatBackend  # type: ignore
@@ -723,6 +736,13 @@ class LLM:
                 )
             if rf is not None:
                 gen_params["response_format"] = rf
+            # Backends that execute tools natively on-device (e.g. Apple
+            # Foundation Models) additionally receive registered callables and
+            # the execute_tools policy. Gated on an opt-in marker so other
+            # native backends (ollama, openai-compat) are unaffected.
+            if getattr(self.backend, "_accepts_tool_impls", False):
+                gen_params["implementations"] = self.tool_registry.implementations
+                gen_params["execute_tools"] = execute_tools
 
         loop_kwargs = {
             "forced_name": forced_name,

@@ -25,6 +25,7 @@ __all__ = [
     "OllamaBackend",
     "OpenAICompatBackend",
     "AirLLMBackend",
+    "AppleFoundationBackend",
     "BACKENDS",
     "BACKEND_ALIASES",
     "OPENAI_SERVER_URLS",
@@ -42,6 +43,7 @@ _BACKEND_IMPORTS = {
     "OllamaBackend": (".ollama", "OllamaBackend"),
     "OpenAICompatBackend": (".openai_compat", "OpenAICompatBackend"),
     "AirLLMBackend": (".airllm", "AirLLMBackend"),
+    "AppleFoundationBackend": (".apple_foundation", "AppleFoundationBackend"),
 }
 
 #: Short backend name -> "module:Class" (module relative to this package).
@@ -57,6 +59,7 @@ BACKENDS: Dict[str, str] = {
     "openai": ".openai_compat:OpenAICompatBackend",
     "openai_compat": ".openai_compat:OpenAICompatBackend",
     "openai-compat": ".openai_compat:OpenAICompatBackend",
+    "apple-foundation": ".apple_foundation:AppleFoundationBackend",
     "vllm": ".openai_compat:OpenAICompatBackend",
     "lmstudio": ".openai_compat:OpenAICompatBackend",
     "llama-server": ".openai_compat:OpenAICompatBackend",
@@ -79,6 +82,7 @@ BACKEND_ALIASES: Dict[str, str] = {
     "gpt4all": "openai-compat",
     "mlx-lm": "openai-compat",
     "koboldcpp": "openai-compat",
+    "apple": "apple-foundation",
     "dummy": "echo",
     "test": "echo",
 }
@@ -127,6 +131,7 @@ def get_backend_class(name: str) -> Any:
             "transformers": "pip install local-llm-kit[transformers]",
             "llamacpp": "pip install local-llm-kit[llamacpp]",
             "airllm": "pip install local-llm-kit[airllm]",
+            "apple-foundation": "pip install local-llm-kit[apple-fm]",
         }
         canonical = BACKEND_ALIASES.get(key, key)
         hint = hints.get(canonical)

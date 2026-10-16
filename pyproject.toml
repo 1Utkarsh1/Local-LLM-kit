@@ -46,6 +46,11 @@ airllm = [
     "numpy>=1.24.0",
     "mlx>=0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+# Apple Foundation Models / Apple Intelligence (lazy: local_llm_kit.backends.apple_foundation)
+# Requires macOS 26.0+ (Python 3.10+) with Apple Intelligence enabled.
+apple-fm = [
+    "apple-fm-sdk>=1.0; sys_platform == 'darwin' and python_version >= '3.10'",
+]
 # HF transformers backend (lazy: local_llm_kit.backends.transformers)
 transformers = [
     "torch>=2.0.0",
@@ -87,6 +92,7 @@ rag = [
 all = [
     "airllm>=2.11,<5",
     "mlx>=0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "apple-fm-sdk>=1.0; sys_platform == 'darwin' and python_version >= '3.10'",
     "torch>=2.0.0",
     "transformers>=4.41.0",
     "accelerate>=0.30.0",

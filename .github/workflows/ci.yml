@@ -46,6 +46,35 @@ jobs:
           pip install -e .[server] httpx numpy
           pytest tests/test_server.py
 
+  apple-foundation:
+    name: Apple Foundation Models (macOS)
+    runs-on: macos-latest
+    if: github.repository == '1Utkarsh1/Local-LLM-kit'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install package with apple-fm extra
+        run: pip install -e ".[apple-fm]"
+
+      - name: Lint (ruff)
+        run: ruff check local_llm_kit/backends/apple_foundation.py
+
+      - name: Format check (black)
+        run: black --check local_llm_kit/backends/apple_foundation.py
+
+      - name: Run Apple FM tests
+        run: pytest tests/test_apple_foundation.py -v
+
       - name: Import smoke test (light core, no heavy deps)
         run: >
           python -c

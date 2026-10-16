@@ -197,6 +197,45 @@ model-supplied code and need substantial disk space for prepared layer shards.
 Use trusted checkpoints, and follow `AirLLM's hardware and installation guide
 <https://github.com/lyogavin/airllm>`_.
 
+Apple Foundation Models
+-----------------------
+
+Use ``backend="apple-foundation"`` (alias ``"apple"``) to access Apple's on-device
+Foundation Models (Apple Intelligence). Requires macOS 26.0+ with Apple Intelligence
+enabled and the optional SDK:
+
+.. code-block:: bash
+
+   pip install "local-llm-kit[apple-fm]"
+
+.. code-block:: python
+
+   from local_llm_kit import LLM
+
+   llm = LLM(model_path="system", backend="apple-foundation")
+   response = llm.complete("Why is the sky blue?", max_tokens=64)
+
+The backend talks to the on-device model directly — no network, no downloaded weights.
+It supports native chat messages, OpenAI-style ``tools`` (converted to
+``apple_fm_sdk.Tool`` instances and executed on-device), and JSON ``response_format``
+via Apple's ``json_schema`` guided generation.
+
+Streaming (``stream=True``) is unsupported: the SDK's ``respond`` method yields full
+snapshots rather than token deltas, which conflicts with this client's streaming
+framing. Calling ``generate_stream`` / ``chat_stream`` raises
+``NotImplementedError``.
+
+The ``auto`` backend detects macOS 26+ availability at construction time and
+selects ``apple-foundation`` automatically when no server URL, Ollama prefix, or
+GGUF path matches and the on-device model is usable. On other platforms the
+backend module still imports (the SDK is a lazy dependency) but instantiation
+raises an ``ImportError`` with an install hint.
+
+Offline unit tests (mock-based, any platform) cover message conversion, response
+extraction, JSON schema guidance, tool building and the streaming contract. A
+macOS-only test exercises the real ``apple_fm_available()`` availability check.
+See ``tests/test_apple_foundation.py``.
+
 Transformers and llama.cpp
 --------------------------
 
