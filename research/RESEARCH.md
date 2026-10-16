@@ -3,8 +3,10 @@
 Agent-authored research for the Local LLM Kit repository (`1Utkarsh1/Local-LLM-kit`).
 Starting commit: `6230568` (main after PR #8).
 
-- **Ledger:** [`research/ledger.jsonl`](./ledger.jsonl) — one JSON object per line with
-  `url, project, type, date_or_version, what_examined, finding, relevance, confidence, limitation`.
+- **Ledger:** [`research/discovery_ledger.jsonl`](./discovery_ledger.jsonl) — one JSON object per
+  line with `url, project, type, date_or_version, what_examined, finding, relevance, confidence, limitation`.
+  Named distinctly from the other open PRs' ledgers (`research/ledger.jsonl` in #9 and #11) so the
+  three do not collide on the same path.
 - **Supporting reports:** [`server_probe_matrix.md`](./server_probe_matrix.md) (verified
   endpoint/port/health matrix for 16 local servers), [`competitor_gap_analysis.md`](./competitor_gap_analysis.md)
   (capability gap matrix for 37 projects), [`apple_foundation_models.md`](./apple_foundation_models.md)
@@ -123,12 +125,17 @@ Fully documented in [`apple_foundation_models.md`](./apple_foundation_models.md)
   probed on 127.0.0.1:1976 but is documented as unverified: Apple publishes no primary
   documentation for it.
 
-## Overlap and dependencies on other PRs
+## Overlap with other PRs
 
-| PR | Overlap | Handling |
+Seven PRs were open when this one was opened; four of them touch the same backend files. Each is
+disclosed rather than glossed over.
+
+| PR | Overlap | Handling and tradeoffs |
 |---|---|---|
-| #9 `agent/apple-fm-support` | Apple Foundation Models backend + apfel bridge | Not duplicated. This PR touches the shared `OPENAI_SERVER_URLS` catalog and the retry layer, which that PR may also touch; any conflict is mechanical. |
-| #10 `feat/apple-fm-integration` | Apple Foundation Models backend, apfel 501 handling, reasoning fields | Not duplicated. Its apfel work and this PR's `doctor`/capability work are complementary; it reports apfel capabilities per request, this PR reports them for any server via discovery. |
+| **#11** `agent/local-toolkit-upgrades` | **Genuine and material: it also adds bounded retries** for `ollama`/`openai-compat` (`retries=2`, `retry_backoff=0.5s`, `retries=0` to fail fast, via `backend_kwargs`), and touches `ollama.py`, `openai_compat.py`, `backends/__init__.py`, `llm.py`. | Two independent designs for the same problem. #11 is smaller and applies to non-streaming calls. This PR adds coverage #11 does not claim: a tested `RetryPolicy` value object, `Retry-After` parsing/clamping to 120s, jitter, retrying the **streaming connection phase** (only before the first frame, so tokens are never replayed), and an explicit single-attempt path for capability detection so `doctor` never sleeps. The kwarg names differ (`max_retries` here to match the official OpenAI client; `retries` there). **Whoever merges second should converge on one policy object and one kwarg name rather than shipping both** — this is called out rather than silently duplicated. |
+| #9 `agent/apple-fm-support` | Apple FM backend + apfel bridge; also creates `research/ledger.jsonl` and touches `__init__.py`, `backends/__init__.py`, `openai_compat.py`, `llm.py`, `cli.py`. | Not duplicated. This PR's ledger was renamed to `research/discovery_ledger.jsonl` so the three `research/ledger.jsonl` writers do not collide. |
+| #10 `feat/apple-fm-integration` | Apple FM backend, apfel 501 handling, reasoning fields; touches the same shared backend files. | Not duplicated. Complementary: that reports apfel capabilities per request; this reports capabilities for any server via discovery. |
+| #12, #13 `agent/*` (MCP, hybrid RAG, VRAM advisor, Responses API) | New modules (`mcp.py`, `agent.py`, `hardware.py`, `structured.py`) plus `llm.py`, `cli.py`, `rag.py`, `server.py`. | No feature overlap with this PR. Shared-file conflicts would be mechanical; `rag.py` and `server.py` are untouched here. |
 | #7, #8 (merged) | Reliability fixes, 0.2.0 release | This PR is based on the merge of #8 and preserves those changes. |
 
 No other agent's changes were copied, reverted or rewritten.
