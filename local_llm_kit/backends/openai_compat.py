@@ -10,6 +10,13 @@ Endpoints used:
   - ``POST /v1/embeddings``
   - ``GET  /v1/models``
 
+Provider profiles: ``provider`` selects protocol quirks. ``"apfel"`` targets
+``apfel --serve`` (https://github.com/Arthur-Ficial/apfel), whose server
+answers 400 to sampling fields it does not implement (``top_k``/penalties)
+and 501 to ``POST /v1/completions`` and ``POST /v1/embeddings``. That
+profile therefore omits those fields, rejects prompt-completion calls with
+a pointer to ``chat()``, and reports no embedding support.
+
 Stdlib-only (``urllib`` + ``json``). ``api_key`` is optional — local
 servers usually don't need one.
 """
@@ -54,7 +61,8 @@ class OpenAICompatBackend(BaseBackend):
         """
         self.model = model
         self.provider = provider
-        self.supports_embeddings = provider not in ("gpt4all", "mlx-lm")
+        self.supports_embeddings = provider not in ("gpt4all", "mlx-lm", "apfel")
+        self._chat_only = provider == "apfel"
         self.model_path = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -78,6 +86,12 @@ class OpenAICompatBackend(BaseBackend):
         top_logprobs: Optional[int] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        if self._chat_only:
+            raise RuntimeError(
+                "The 'apfel' server exposes only POST /v1/chat/completions "
+                "(POST /v1/completions answers 501). Use chat() instead of "
+                "generate()/complete() with this provider."
+            )
         if stream:
             text = "".join(
                 c["text"]
@@ -127,6 +141,12 @@ class OpenAICompatBackend(BaseBackend):
         top_logprobs: Optional[int] = None,
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
+        if self._chat_only:
+            raise RuntimeError(
+                "The 'apfel' server exposes only POST /v1/chat/completions "
+                "(POST /v1/completions answers 501). Use chat_stream() instead "
+                "of generate_stream() with this provider."
+            )
         payload = self._completion_payload(
             prompt,
             temperature,
@@ -379,13 +399,15 @@ class OpenAICompatBackend(BaseBackend):
     ) -> Dict[str, Any]:
         # top_k / repetition_penalty are not OpenAI fields; most local
         # servers accept them as extra body params, so pass through.
-        kwargs.setdefault("top_k", top_k)
-        penalty_key = (
-            "repetition_penalty"
-            if self.provider in ("vllm", "sglang", "mlx-lm")
-            else "repeat_penalty"
-        )
-        kwargs.setdefault(penalty_key, repetition_penalty)
+        # Exception: the apfel profile rejects them with HTTP 400, so omit.
+        if self.provider != "apfel":
+            kwargs.setdefault("top_k", top_k)
+            penalty_key = (
+                "repetition_penalty"
+                if self.provider in ("vllm", "sglang", "mlx-lm")
+                else "repeat_penalty"
+            )
+            kwargs.setdefault(penalty_key, repetition_penalty)
         payload = self._base_sampling(temperature, max_new_tokens, top_p, stream=stream, **kwargs)
         payload["prompt"] = prompt
         return payload
@@ -406,13 +428,16 @@ class OpenAICompatBackend(BaseBackend):
         seed: Optional[int],
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        kwargs.setdefault("top_k", top_k)
-        penalty_key = (
-            "repetition_penalty"
-            if self.provider in ("vllm", "sglang", "mlx-lm")
-            else "repeat_penalty"
-        )
-        kwargs.setdefault(penalty_key, repetition_penalty)
+        # See _completion_payload: the apfel profile rejects top_k/penalty
+        # fields with HTTP 400, so omit them there.
+        if self.provider != "apfel":
+            kwargs.setdefault("top_k", top_k)
+            penalty_key = (
+                "repetition_penalty"
+                if self.provider in ("vllm", "sglang", "mlx-lm")
+                else "repeat_penalty"
+            )
+            kwargs.setdefault(penalty_key, repetition_penalty)
         payload = self._base_sampling(temperature, max_new_tokens, top_p, stream=stream, **kwargs)
         payload["messages"] = [
             {

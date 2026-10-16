@@ -8,7 +8,7 @@ not install, launch or reconfigure it.
 Runtime coverage and feature limits
 -----------------------------------
 
-These 12 runtimes cover desktop apps, local files, Apple Silicon, GPU servers
+These 14 runtimes cover desktop apps, local files, Apple Silicon, GPU servers
 and offloaded inference. This is a compatibility selection, not a top-ten
 ranking: no comparable active-user measurement has been established.
 llama.cpp's library and server integrations count as one runtime.
@@ -21,6 +21,14 @@ llama.cpp's library and server integrations count as one runtime.
      - Integration
      - Tools and structured output
      - Embeddings
+   * - Apple FM (native)
+     - In-process SDK (``apple-fm``)
+     - Prompted tools/JSON loop; native ``json_schema`` enforcement
+     - Not available on-device; use a separate embedding backend
+   * - Apfel bridge
+     - OpenAI-compatible HTTP
+     - Forwarded; native tools + ``json_schema`` server-side
+     - No endpoint in this preset
    * - Ollama
      - Native HTTP
      - Native tools/schema forwarding; model-dependent
@@ -70,12 +78,56 @@ llama.cpp's library and server integrations count as one runtime.
      - Forwarded; model/template-dependent
      - Requires a loaded embedding model
 
+All server presets have client routing and payload and HTTP/SSE fixture tests.
+This is protocol validation, not a real-engine or hardware certification.
+Unsupported native tool/schema options may be rejected by the upstream server;
+the client does not silently claim those features were enforced. Native vision
+is forwarded only through the HTTP adapters. In-process adapters currently
+format text; use an HTTP vision model for image inputs.
+
 All server presets have client routing, payload and HTTP/SSE fixture tests.
 This is protocol validation, not a real-engine or hardware certification.
 Unsupported native tool/schema options may be rejected by the upstream server;
 the client does not silently claim those features were enforced. Native vision
 is forwarded only through the HTTP adapters. In-process adapters currently
 format text; use an HTTP vision model for image inputs.
+
+Apple Foundation Models (native backend + apfel bridge)
+-------------------------------------------------------
+
+Apple Silicon Macs ship an on-device model via the Foundation Models
+framework. Local LLM Kit reaches it two ways:
+
+* **Native** (``backend="apple-fm"``): Apple's official
+  `python-apple-fm-sdk <https://github.com/apple/python-apple-fm-sdk>`_
+  (``pip install "local-llm-kit[apple-fm]"``). Requires macOS 26+, Xcode 26+
+  with the SDK agreement accepted, Python 3.10+, and Apple Intelligence
+  turned on (`support article <https://support.apple.com/en-us/121115>`_).
+  Sessions are created per request (backend instances are shared through
+  the client cache), tool calls use the uniform client-side loop, and
+  ``response_format={"type": "json_schema", ...}`` is enforced natively by
+  the SDK. ``temperature`` (``0`` selects greedy sampling), ``seed``,
+  ``max_tokens`` and ``stop`` are honoured; ``top_p``/``top_k``/penalties
+  and logprobs have no SDK equivalent and are ignored. Image parts degrade
+  to placeholders (the SDK takes image *files*, not data URLs), and there
+  is no on-device embedding endpoint. Everything runs on device; nothing
+  falls back to Private Cloud Compute or any remote endpoint.
+* **Bridge** (``backend="apfel"``): no Xcode needed. Run
+  `apfel --serve <https://github.com/Arthur-Ficial/apfel>`_ (macOS 26+,
+  Apple Silicon, Apple Intelligence on), which serves OpenAI-compatible
+  ``POST /v1/chat/completions`` on ``http://localhost:11434/v1``. The
+  preset strips the sampling fields apfel rejects (``top_k``/penalties),
+  rejects prompt-completion calls (apfel answers 501 there; use ``chat()``),
+  and reports no embedding support (apfel answers 501 there too).
+
+``python examples/apple_foundation.py`` demonstrates both paths and prints
+setup steps when the model or server is unavailable. Contracts are covered
+by offline tests with an SDK double
+(``tests/test_apple_fm.py``); the opt-in live test
+(``LOCAL_LLM_KIT_APPLE_FM_LIVE=1``) needs an eligible Mac and is skipped in
+CI. See also `simonw/llm-apple-foundation
+<https://github.com/simonw/llm-apple-foundation>`_ for the same SDK used
+through the ``llm`` CLI, which informed the sampling/schema mapping here.
 
 Server presets
 --------------
@@ -114,6 +166,9 @@ Server presets
    * - KoboldCpp
      - koboldcpp
      - http://localhost:5001/v1
+   * - Apfel bridge
+     - apfel
+     - http://localhost:11434/v1 (run ``apfel --serve``; shares Ollama's port)
 
 Use the ID of a model already loaded by the server. A preset chooses the
 connection URL and protocol parameter mapping. Override the URL with
@@ -141,6 +196,7 @@ Upstream setup references:
 * `MLX-LM project <https://github.com/ml-explore/mlx-lm>`_ and its
   `server endpoints/options <https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/server.py>`_
 * `KoboldCpp API and setup <https://github.com/LostRuins/koboldcpp#apis-and-integrations>`_
+* `apfel OpenAI API compatibility <https://github.com/Arthur-Ficial/apfel#openai-api-compatibility>`_
 
 For example, launch MLX-LM with prepared weights using
 ``mlx_lm.server --model /path/to/local/mlx-model --host 127.0.0.1 --port 8080``,

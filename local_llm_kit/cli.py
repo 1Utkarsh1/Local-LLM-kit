@@ -566,8 +566,8 @@ def _add_common_llm_args(parser: argparse.ArgumentParser, *, require_model: bool
         "-b",
         choices=BACKEND_CHOICES,
         default=None,
-        help="Local backend or server preset (including airllm, sglang, vllm, "
-        "lmstudio, localai, llama-server). Default: auto-detect.",
+        help="Local backend or server preset (including apple-fm, apfel, airllm, "
+        "sglang, vllm, lmstudio, localai, llama-server). Default: auto-detect.",
     )
     parser.add_argument(
         "--temperature",

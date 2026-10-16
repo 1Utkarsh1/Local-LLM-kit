@@ -1,8 +1,9 @@
 """
 local_llm_kit - OpenAI-compatible interface for local LLMs.
 
-Backends: transformers, llama.cpp (GGUF), Ollama, generic OpenAI-compatible
-servers (vLLM, LM Studio, llama-server), and an offline ``echo`` mock.
+Backends: transformers, llama.cpp (GGUF), Ollama, Apple Foundation Models
+(on-device system model), generic OpenAI-compatible
+servers (vLLM, LM Studio, llama-server, apfel), and an offline ``echo`` mock.
 
 Core install stays light (stdlib + typing-extensions); heavy dependencies
 are optional extras, lazily imported.

@@ -25,6 +25,7 @@ __all__ = [
     "OllamaBackend",
     "OpenAICompatBackend",
     "AirLLMBackend",
+    "AppleFMBackend",
     "BACKENDS",
     "BACKEND_ALIASES",
     "OPENAI_SERVER_URLS",
@@ -42,12 +43,14 @@ _BACKEND_IMPORTS = {
     "OllamaBackend": (".ollama", "OllamaBackend"),
     "OpenAICompatBackend": (".openai_compat", "OpenAICompatBackend"),
     "AirLLMBackend": (".airllm", "AirLLMBackend"),
+    "AppleFMBackend": (".apple_fm", "AppleFMBackend"),
 }
 
 #: Short backend name -> "module:Class" (module relative to this package).
 BACKENDS: Dict[str, str] = {
     "transformers": ".transformers:TransformersBackend",
     "airllm": ".airllm:AirLLMBackend",
+    "apple-fm": ".apple_fm:AppleFMBackend",
     "llamacpp": ".llamacpp:LlamaCppBackend",
     "llama_cpp": ".llamacpp:LlamaCppBackend",
     "llama.cpp": ".llamacpp:LlamaCppBackend",
@@ -57,6 +60,7 @@ BACKENDS: Dict[str, str] = {
     "openai": ".openai_compat:OpenAICompatBackend",
     "openai_compat": ".openai_compat:OpenAICompatBackend",
     "openai-compat": ".openai_compat:OpenAICompatBackend",
+    "apfel": ".openai_compat:OpenAICompatBackend",
     "vllm": ".openai_compat:OpenAICompatBackend",
     "lmstudio": ".openai_compat:OpenAICompatBackend",
     "llama-server": ".openai_compat:OpenAICompatBackend",
@@ -65,11 +69,16 @@ BACKENDS: Dict[str, str] = {
 #: Canonical-name aliases kept as a separate dict for docs/CLI completion.
 BACKEND_ALIASES: Dict[str, str] = {
     "mock": "echo",
+    "apple": "apple-fm",
+    "apple-foundation": "apple-fm",
+    "foundation-models": "apple-fm",
+    "foundationmodels": "apple-fm",
     "llama_cpp": "llamacpp",
     "llama-cpp": "llamacpp",
     "llama.cpp": "llamacpp",
     "openai": "openai-compat",
     "openai_compat": "openai-compat",
+    "apfel": "openai-compat",
     "vllm": "openai-compat",
     "lmstudio": "openai-compat",
     "llama-server": "openai-compat",
@@ -88,6 +97,7 @@ for _alias, _canonical in BACKEND_ALIASES.items():
 
 # Connection presets; callers may override base_url for any server or port.
 OPENAI_SERVER_URLS: Dict[str, str] = {
+    "apfel": "http://localhost:11434/v1",
     "vllm": "http://localhost:8000/v1",
     "sglang": "http://localhost:30000/v1",
     "lmstudio": "http://localhost:1234/v1",
