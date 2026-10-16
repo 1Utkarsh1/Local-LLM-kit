@@ -6,6 +6,7 @@ import argparse
 import sys
 
 from local_llm_kit import chat
+from local_llm_kit.backends import BACKENDS
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simple chat with a local LLM")
@@ -18,7 +19,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--backend",
         "-b",
-        choices=["transformers", "llamacpp", "ollama", "openai-compat", "echo"],
+        choices=sorted(BACKENDS),
         help="Backend to use (default: auto-detect; 'echo' mocks offline)",
     )
     args = parser.parse_args()
@@ -66,6 +67,6 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"\nError: {e}")
 
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         print("\nGoodbye!")
         sys.exit(0)

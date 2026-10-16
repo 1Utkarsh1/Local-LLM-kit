@@ -7,58 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- `tool_timeout` did not actually bound tool execution: the
-  `ThreadPoolExecutor` context manager joined its worker, so a slow or
-  hanging tool blocked the request for its full runtime before the
-  "timed out" result was produced. Timed-out calls now return promptly.
-- A tool returning a non-JSON-serializable value (e.g. a `datetime`)
-  raised `TypeError` out of `LLM.chat` instead of becoming tool output,
-  and left a dangling tool call in memory. Results are now serialized with
-  a `str` fallback, keeping the documented "failures become tool-output
-  strings, never tracebacks" behaviour.
-- `role: "tool"` messages were silently dropped by the ChatML, Llama-2,
-  Mistral, Vicuna and plain-instruction prompt formatters (the default one
-  for unknown models), so tool results never reached the model and the
-  call loop repeated the same call. All formatters now render them.
-- JSON mode (`response_format={"type": "json_object"}`) discarded nested
-  JSON: the brace-matching regex stopped at the first closing brace and
-  replaced the model's answer with a `{"error": "Failed to generate valid
-  JSON", ...}` object. Extraction now uses a real JSON decoder.
-- A malformed `messages` argument (a non-dict entry) was appended to the
-  history before validation, leaving the instance — and every caller
-  sharing a cached client — unable to serve *any* later request. The batch
-  is now validated before anything is stored.
-- CLI `pull`: the download-helper signature adapter did not know
-  `download_model`'s `repo_or_path` parameter, so every `pull` invocation
-  aborted with "unrecognised signature". `pull owner/repo:file.gguf`,
-  `--output-dir` and `--revision` now reach the helper.
-- CLI `--response-format`: a plain JSON Schema was mistaken for a
-  `response_format` object whenever it carried a `"type"` key (e.g.
-  `{"type": "object", ...}`), which failed deep inside `LLM.chat` with
-  "Unsupported response_format type". Schemas are now wrapped as
-  `json_schema`; only `json_object`/`json_schema`/`text` are treated as
-  response_format objects.
-- Server `POST /v1/embeddings`: an LLM whose `embed()` returns the
-  OpenAI-shaped `{"data": [{"embedding": ...}]}` dict (i.e.
-  `local_llm_kit.LLM.embed`) had its vectors discarded and replaced by the
-  deterministic pseudo-embedding fallback. Real vectors are now served.
-- Downloads write to `<dest>.part` and are renamed into place only after a
-  complete transfer, so a failed, truncated or interrupted download can no
-  longer leave a file that `list_cached_models()` / `resolve_model()` would
-  report as a usable cached model.
-- `SimpleVectorStore.load` raises the documented `ValueError` (with the
-  offending field named) for persisted records with null or wrongly-typed
-  fields instead of leaking `TypeError: object of type 'NoneType' has no
-  len()`.
-- `examples/simple_chat.py --backend echo` (the README's offline
-  invocation) failed: `echo` was not an accepted `--backend` choice and
-  `--model` was mandatory. Both now work as documented.
-
 ### Added
-- Regression tests for the fixes above (`tests/test_cli.py`,
-  `tests/test_models.py`, plus cases in `tests/test_rag.py` and
-  `tests/test_server.py`).
+- Native chat, tool-call responses, streaming argument assembly and structured-output forwarding for Ollama and OpenAI-compatible servers.
+- Server presets for SGLang, vLLM, LM Studio, LocalAI, llama-server, Jan, GPT4All, MLX-LM and KoboldCpp, shared between the Python API, registry and CLI; documented limits across 12 distinct runtimes.
+- An experimental optional AirLLM adapter with PyTorch/MLX contract tests, serialized generation, explicit context limits and buffered streaming.
+- High-level helper options for per-call tool execution, iteration/time limits and sampling, preserving existing positional argument positions.
+- `pull --filename/--file` and working `--force` cache refresh; optional custom recommended-model tables.
+- Accurate quickstart/API/backend references and `llms.txt` for project discovery.
+- Regression and protocol tests, including local HTTP fixtures without model downloads.
+
+### Fixed
+- Broken CLI download-helper argument mapping, JSON Schema detection and missing backend-configuration forwarding.
+- Native embedding responses were discarded for pseudo-embeddings by the development server.
+- Failed, truncated or interrupted downloads could replace/delete complete cached models. Unique temporary siblings are now atomically replaced only after validation.
+- Cache lookup could select another repository's same-named file or an arbitrary revision. Lookups now follow repository/revision identity and Hugging Face refs.
+- Invalid/null function and tool-call records raised low-level exceptions or propagated invalid arguments. Deserializers and parsers now validate consistently.
+- Per-request callable tools leaked into a shared client's persistent registry.
+- Tool timeout handling waited for timed-out workers, non-JSON tool results escaped as exceptions, and nested JSON extraction truncated valid output.
+- Prompt templates dropped tool calls/results; Llama-2 duplicated the final user turn and Mistral dropped results before a follow-up user message.
+- Malformed message batches could poison shared history; token estimates omitted tool arguments.
+- Corrupt vector-store collections and values were accepted or raised unclear exceptions.
+- Server generation options now return HTTP 400 for invalid values, schemas are forwarded, and runtime TypeErrors do not repeat requests.
+- Ollama CLI host overrides were passed under an unused parameter name.
+- Image content is preserved through the bundled server and inline image parts map to Ollama's native base64 image field.
+- Remote tool execution now requires a boolean flag; truthy strings cannot enable it.
+- The documented offline simple-chat example rejected its advertised arguments.
+
+### Compatibility notes
+- Explicit nulls, JSON arrays/scalars and malformed call arguments are rejected; existing empty-string tool arguments still mean an empty object. Empty chat lists and empty completion prompts remain accepted by the Python API.
+- URL caches now include the full URL's hash; older flat URL cache files are preserved but may be downloaded once again.
+- Tool timeouts bound waiting; already-running Python functions continue in their worker thread.
+- No new core runtime dependencies. AirLLM is optional, experimental and not GPU-certified; external-server features depend on runtime/model configuration.
 
 ## [0.2.0] - 2026-09-18
 
@@ -176,4 +155,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - N/A (Initial release)
 
 ### Security
-- N/A (Initial release) 
+- N/A (Initial release)

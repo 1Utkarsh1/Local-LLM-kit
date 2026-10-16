@@ -7,7 +7,7 @@ name = "local-llm-kit"
 # Single-sourced: resolved at build time from local_llm_kit/__init__.py
 # (__version__ = "0.2.0"). Do NOT duplicate the version string here.
 dynamic = ["version"]
-description = "OpenAI-compatible interface for local LLMs (transformers, llama.cpp, Ollama, OpenAI-compatible servers, offline mock)"
+description = "One Python API for offline LLMs and local servers: Ollama, AirLLM, SGLang, vLLM, LM Studio and llama.cpp"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -17,7 +17,7 @@ authors = [
 maintainers = [
     { name = "Utkarsh Rajput", email = "utkarshrajput815@gmail.com" },
 ]
-keywords = ["llm", "local-llm", "openai-compatible", "transformers", "llama.cpp", "ollama", "rag", "embeddings", "chat"]
+keywords = ["llm", "local-llm", "offline-ai", "openai-compatible", "transformers", "llama.cpp", "ollama", "airllm", "sglang", "vllm", "lm-studio", "tool-calling", "structured-output", "rag", "embeddings"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -28,6 +28,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -39,6 +41,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+airllm = [
+    "airllm>=2.11,<5",
+    "numpy>=1.24.0",
+    "mlx>=0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 # HF transformers backend (lazy: local_llm_kit.backends.transformers)
 transformers = [
     "torch>=2.0.0",
@@ -78,6 +85,8 @@ rag = [
 ]
 # Everything runnable (all runtime extras, excludes dev tooling)
 all = [
+    "airllm>=2.11,<5",
+    "mlx>=0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "torch>=2.0.0",
     "transformers>=4.41.0",
     "accelerate>=0.30.0",

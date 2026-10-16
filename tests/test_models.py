@@ -8,6 +8,7 @@ never touches the network. Stdlib unittest only; Py3.9 compatible.
 Run: python -m pytest tests/test_models.py -q
 """
 
+import hashlib
 import os
 import shutil
 import tempfile
@@ -18,6 +19,7 @@ from unittest import mock
 from local_llm_kit import models
 
 URL = "https://huggingface.co/owner/name/resolve/main/model-q4_k_m.gguf"
+URL_KEY = hashlib.sha256(URL.encode("utf-8")).hexdigest()
 
 
 def _all_files(root):
@@ -64,7 +66,7 @@ class TestDownloadLeavesNoPartialFiles(unittest.TestCase):
 
     def _download(self, response):
         with mock.patch.object(urllib.request, "urlopen", lambda *a, **kw: response):
-            return models.download_model(URL, cache_dir=self.tmp)
+            return models.download_model(URL, cache_dir=self.tmp, force=True)
 
     def test_successful_download_is_complete_and_leaves_no_part_file(self):
         payload = b"GGUF" * 500
@@ -105,17 +107,17 @@ class TestDownloadLeavesNoPartialFiles(unittest.TestCase):
         self.assertIn("Truncated download", str(ctx.exception))
         self.assertEqual(_all_files(self.tmp), [])
 
-    def test_unwritable_destination_is_reported_as_runtime_error(self):
-        """A failing final rename must not leave a .part file behind either."""
-        dest = os.path.join(self.tmp, "urls", "model-q4_k_m.gguf")
+    def test_directory_destination_is_rejected(self):
+        """Reject directory destinations before opening a download."""
+        dest = os.path.join(self.tmp, "urls", URL_KEY, "model-q4_k_m.gguf")
         os.makedirs(dest)  # make the destination path a directory
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(ValueError):
             self._download(FakeResponse(b"x" * 16))
         self.assertEqual(_all_files(self.tmp), [])
 
     def test_failed_redownload_keeps_an_existing_model_file(self):
         """A previously downloaded model must survive a later failed attempt."""
-        dest = os.path.join(self.tmp, "urls", "model-q4_k_m.gguf")
+        dest = os.path.join(self.tmp, "urls", URL_KEY, "model-q4_k_m.gguf")
         os.makedirs(os.path.dirname(dest))
         with open(dest, "wb") as fh:
             fh.write(b"COMPLETE")

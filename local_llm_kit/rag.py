@@ -631,12 +631,20 @@ class SimpleVectorStore:
         dim = data.get("dim")
         if isinstance(dim, float) and dim.is_integer():
             dim = int(dim)  # __init__ allows int-valued floats; save() writes them back
-        if dim is not None and not isinstance(dim, int):
+        if isinstance(dim, bool) or (dim is not None and not isinstance(dim, int)):
             raise ValueError(
                 "Corrupt vector store file %r: 'dim' must be an integer or null, got %s"
                 % (path, type(dim).__name__)
             )
         store = cls(embed_fn=embed_fn, dim=dim)
+        if any(not isinstance(value, str) or not value for value in ids):
+            raise ValueError("Corrupt vector store file %r: ids must be non-empty strings" % path)
+        if any(not isinstance(value, str) for value in texts):
+            raise ValueError("Corrupt vector store file %r: texts must be strings" % path)
+        if any(value is not None and not isinstance(value, dict) for value in metadatas):
+            raise ValueError(
+                "Corrupt vector store file %r: metadata must be objects or null" % path
+            )
         store.ids = [str(i) for i in ids]
         store.texts = [str(t) for t in texts]
         store.metadatas = [dict(m) if isinstance(m, dict) else {} for m in metadatas]

@@ -1,0 +1,28 @@
+# Local LLM Kit
+
+> A lightweight Python interface for offline language models and local LLM servers. Import: `local_llm_kit`; distribution: `local-llm-kit`; license: MIT.
+
+## Where it fits
+
+Applications that want one OpenAI-shaped chat/completion interface across local runtimes, native tool calls and structured outputs where supported, an offline deterministic test backend, or small embedding/RAG helpers. The core client uses stdlib HTTP and typing-extensions; inference packages are optional extras.
+
+## Actual API
+
+`from local_llm_kit import LLM, chat, complete, embed, tool`
+
+`LLM(model_path="echo", backend="echo").chat([{"role":"user","content":"Hello"}])` returns a dictionary; text is at `response["choices"][0]["message"]["content"]`.
+
+Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm. Server presets: sglang, vllm, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm and koboldcpp. These cover 12 distinct local runtimes; this is not a usage ranking. A preset connects to an already-running server with a served model ID; it does not install or host that engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate embedding backend.
+
+## Boundaries
+
+Capabilities depend on the chosen model/runtime. Protocol tests are not hardware benchmarks. AirLLM call contracts are tested with doubles; real model/GPU execution is not certified, and its stream is buffered. The bundled HTTP server is a development shim. Remote tool execution defaults to off; per-call Python tools are request-scoped. Weights and dependencies must be prepared before offline use. Unreleased features need a source install until the next package release.
+
+## References
+
+- [Repository and quickstart](https://github.com/1Utkarsh1/Local-LLM-kit)
+- [Backend compatibility](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/backends.rst)
+- [Python API](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/api_reference.rst)
+- [Examples](https://github.com/1Utkarsh1/Local-LLM-kit/tree/main/examples)
+- [Changelog](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/CHANGELOG.md)
+- [Bug reports](https://github.com/1Utkarsh1/Local-LLM-kit/issues)

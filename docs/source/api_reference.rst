@@ -1,130 +1,112 @@
-API Reference
-============
+API reference
+=============
 
-This page provides detailed documentation for the ``local_llm_kit`` API.
+The exported Python client is ``local_llm_kit.LLM``. Responses and streaming
+chunks use OpenAI-shaped dictionaries.
 
-LLMClient
----------
+LLM
+---
 
-.. py:class:: LLMClient(model: str, **kwargs)
+.. code-block:: python
 
-   The main client class for interacting with local language models.
+   from local_llm_kit import LLM
 
-   :param model: The name or path of the model to use
-   :param model_path: Optional path to model weights
-   :param context_length: Maximum context length (default: 2048)
-   :param temperature: Sampling temperature (default: 0.7)
-   :param top_p: Top-p sampling parameter (default: 0.9)
-   :param backend: Model backend to use ('transformers' or 'llama.cpp')
+   llm = LLM(model_path="echo", backend="echo", use_cache=False)
+   response = llm.chat([{"role": "user", "content": "Hello"}])
+   text = response["choices"][0]["message"]["content"]
+   completion = llm.complete("Once upon a time", max_tokens=64)
+   vectors = llm.embed("A short document")
 
-Chat Completions
---------------
+``model_path`` identifies a checkpoint or a server's model ID. ``backend`` selects
+``echo``, ``transformers``, ``airllm``, ``llamacpp``, ``ollama``,
+``openai-compat`` or a named server preset. ``backend_kwargs`` configures the
+selected backend; for servers this includes ``base_url``/``host``, ``api_key``
+and ``timeout``. See :doc:`backends`.
 
-.. py:method:: LLMClient.chat.completions.create(**kwargs)
+``LLM.chat`` accepts ``messages``, sampling options, ``stream``, ``tools``,
+``tool_choice``, ``response_format``, ``execute_tools``, ``max_iterations`` and
+``tool_timeout``. Legacy ``functions``, ``function_call`` and ``format="json"``
+remain available. Tools passed as callables are request-scoped. Register a
+persistent callable with ``llm.add_tool(callable)`` or a legacy implementation
+with ``llm.add_function(name, schema, implementation)``.
 
-   Create a chat completion.
+``LLM.complete`` accepts a text prompt and sampling/format options.
+``LLM.embed`` accepts a string or a list of strings and requires an embedding
+backend. The echo backend returns deterministic test vectors.
 
-   :param model: Model to use for completion
-   :param messages: List of message dictionaries
-   :param temperature: Sampling temperature
-   :param top_p: Top-p sampling parameter
-   :param max_tokens: Maximum tokens to generate
-   :param stream: Whether to stream the response
-   :param functions: List of function definitions
-   :param function_call: Function call behavior
-   :param response_format: Specify response format (e.g., JSON)
-   :return: CompletionResponse object
+Set ``stream=True`` on chat or completion to receive an iterator. Chat chunks
+carry ``choices[0].delta``; text-completion chunks carry ``choices[0].text``.
+AirLLM streaming is buffered into one completed backend chunk.
 
-Memory Management
----------------
+High-level helpers
+------------------
 
-.. py:method:: LLMClient.enable_memory(max_tokens: int = 1000)
+.. code-block:: python
 
-   Enable conversation memory management.
+   from local_llm_kit import chat, complete, embed, get_client
 
-   :param max_tokens: Maximum tokens to store in memory
+   result = chat([{"role": "user", "content": "Hello"}], model_path="echo", backend="echo")
+   result = complete("Hello", model_path="echo", backend="echo")
+   result = embed("Hello", model_path="echo", backend="echo")
+   client = get_client(model_path="echo", backend="echo")
 
-.. py:method:: LLMClient.add_to_memory(messages: List[Dict])
+The helpers reuse clients. ``chat`` forwards ``execute_tools``, ``max_iterations``,
+``tool_timeout``, ``top_p``, ``top_k`` and ``repetition_penalty`` to the request
+rather than the backend constructor. Existing positional arguments retain their
+positions. ``achat`` and ``acomplete`` provide asynchronous non-streaming wrappers.
+``clear_client_cache`` and ``clear_backend_cache`` drop the corresponding caches.
 
-   Add messages to conversation memory.
+Call records and validation
+---------------------------
 
-   :param messages: List of message dictionaries
+``FunctionCall.from_dict`` requires a non-empty string ``name`` and ``arguments``
+as a dict or a JSON object string. ``ToolCall.from_dict`` accepts either a bare
+function record or an OpenAI ``{"function": {...}, "id": ...}`` envelope. Missing
+tool arguments default to an empty object. Empty argument strings also represent
+an empty object. Explicit nulls, JSON arrays/scalars and malformed JSON are rejected.
+Non-dict records raise ``TypeError``; invalid fields raise ``ValueError``.
 
-.. py:method:: LLMClient.clear_memory()
+This validates call-record shape. Tool execution checks required argument names;
+it does not implement a complete JSON Schema validator for argument values.
 
-   Clear all stored conversation memory.
+Model downloads and caches
+--------------------------
 
-Response Objects
---------------
+.. code-block:: python
 
-CompletionResponse
-~~~~~~~~~~~~~~~~
+   from local_llm_kit.models import download_model, resolve_model
 
-.. py:class:: CompletionResponse
+   path = download_model("owner/repo", filename="model.gguf", revision="main", force=False)
+   path_or_id, backend = resolve_model("owner/repo:model.gguf", download=False)
 
-   Represents a completion response.
+Downloads reuse files by repository/revision or full URL identity. ``force=True``
+refreshes downloads; explicit local paths remain unchanged. Transfers use unique
+temporary files and an atomic replacement after size/length checks. Named Hugging
+Face revisions are resolved through their cache refs rather than arbitrary snapshots.
+``list_cached_models`` discovers cached files. ``format_recommended_models``
+accepts an optional list of table rows.
 
-   :param id: Response ID
-   :param object: Object type
-   :param created: Creation timestamp
-   :param model: Model used
-   :param choices: List of completion choices
-   :param usage: Token usage statistics
+Memory and vector stores
+------------------------
 
-Choice
-~~~~~~
+``llm.memory`` is a ``MessageHistory``. Use ``get_messages()`` and ``clear()`` to
+inspect or clear it. Malformed batches are checked before they enter history, and
+token estimates include tool arguments. The conversation sent to ``chat`` is the
+request's supplied messages; applications should maintain the history they send.
 
-.. py:class:: Choice
+``SimpleVectorStore`` supports dense or lexical retrieval. ``save(path)`` writes
+JSON; ``load(path, embed_fn=None)`` validates collection shapes and vector dimensions.
+Corrupt stores raise ``ValueError`` instead of fabricating IDs or vectors.
 
-   Represents a completion choice.
-
-   :param index: Choice index
-   :param message: Message content
-   :param finish_reason: Reason for completion
-
-Message
-~~~~~~~
-
-.. py:class:: Message
-
-   Represents a chat message.
-
-   :param role: Message role (user/assistant/system)
-   :param content: Message content
-   :param function_call: Optional function call
-
-Usage
-~~~~~
-
-.. py:class:: Usage
-
-   Token usage statistics.
-
-   :param prompt_tokens: Number of tokens in prompt
-   :param completion_tokens: Number of tokens in completion
-   :param total_tokens: Total tokens used
-
-Exceptions
----------
-
-.. py:exception:: ModelNotFoundError
-
-   Raised when specified model is not found.
-
-.. py:exception:: InvalidRequestError
-
-   Raised when request parameters are invalid.
-
-.. py:exception:: TokenLimitError
-
-   Raised when token limit is exceeded.
-
-Configuration
+HTTP server
 -----------
 
-The following environment variables can be used to configure the client:
+``local_llm_kit.server.create_app(llm=client)`` builds a FastAPI app. Install the
+``server`` extra to serve it. Routes include ``/health``, ``/v1/models``,
+``/v1/chat/completions``, ``/v1/completions`` and ``/v1/embeddings``. The server
+validates generation options, forwards structured-output formats and preserves
+native embedding vectors. Remote tool execution defaults to disabled and requires
+an explicit ``execute_tools=true`` request.
 
-- ``LOCAL_LLM_KIT_MODEL_PATH``: Default path to model weights
-- ``LOCAL_LLM_KIT_BACKEND``: Default backend to use
-- ``LOCAL_LLM_KIT_CONTEXT_LENGTH``: Default context length
-- ``LOCAL_LLM_KIT_CACHE_DIR``: Directory for caching model weights 
+This bundled server is a development shim. Use a dedicated inference server for
+production serving requirements.

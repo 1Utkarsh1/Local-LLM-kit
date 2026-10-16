@@ -38,6 +38,9 @@ class BaseBackend(ABC):
     #: Set True when the backend implements :meth:`embed`.
     supports_embeddings = False
 
+    #: True when chat/chat_stream preserve native messages and tool calls.
+    supports_native_chat = False
+
     # ------------------------------------------------------------------
     # Required prompt-completion API (unchanged, backwards compatible)
     # ------------------------------------------------------------------

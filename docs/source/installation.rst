@@ -1,101 +1,51 @@
 Installation
 ============
 
-This guide will help you install ``local_llm_kit`` and set up your environment.
-
-Requirements
-----------
-
-- Python 3.8 or higher
-- pip (Python package installer)
-
-Basic Installation
----------------
-
-You can install the package directly from PyPI:
+The core client requires Python 3.9 or newer and ``typing-extensions``. HTTP
+backends use the standard library; selecting a server does not require its
+inference engine to be installed in the client environment.
 
 .. code-block:: bash
 
+   python -m venv .venv
+   source .venv/bin/activate
    pip install local-llm-kit
 
-This will install the core package with minimal dependencies.
-
-Installing Optional Dependencies
-----------------------------
-
-For using specific backends, you can install the package with extra dependencies:
+For unreleased features, install from the branch or checkout containing them:
 
 .. code-block:: bash
 
-   # For Transformers backend
+   git clone https://github.com/1Utkarsh1/Local-LLM-kit.git
+   cd Local-LLM-kit
+   pip install -e .
+
+Select optional dependencies as needed:
+
+.. code-block:: bash
+
    pip install "local-llm-kit[transformers]"
-   
-   # For llama.cpp backend
    pip install "local-llm-kit[llamacpp]"
-   
-   # For all features
-   pip install "local-llm-kit[all]"
+   pip install "local-llm-kit[airllm]"
+   pip install "local-llm-kit[server]"
+   pip install "local-llm-kit[embeddings]"
+   pip install "local-llm-kit[rag]"
 
-Development Installation
---------------------
+AirLLM is experimental. Optional packages have their own Python, operating
+system and accelerator requirements. Install a PyTorch build appropriate to
+your hardware using its upstream instructions. See :doc:`backends` for setup
+links and feature limits rather than installing every extra by default.
 
-For development purposes, you can install the package in editable mode:
-
-.. code-block:: bash
-
-   # Clone the repository
-   git clone https://github.com/1Utkarsh1/local-llm-kit.git
-   cd local-llm-kit
-   
-   # Install in development mode
-   pip install -e ".[all]"
-
-GPU Support
----------
-
-For GPU acceleration with the Transformers backend:
-
-1. Make sure you have a CUDA-compatible GPU
-2. Install the appropriate CUDA toolkit for your system
-3. Install PyTorch with CUDA support:
-
-   .. code-block:: bash
-
-      # Example for CUDA 11.8
-      pip install torch --index-url https://download.pytorch.org/whl/cu118
-
-Verification
-----------
-
-You can verify your installation with:
+Verify without downloading a model:
 
 .. code-block:: python
 
-   from local_llm_kit import LLMClient
-   
-   # This should work if installation was successful
-   client = LLMClient(model="llama2")
-   print(f"Successfully initialized client for model: {client.model}")
+   from local_llm_kit import LLM
 
-Troubleshooting
-------------
+   llm = LLM("echo", backend="echo")
+   response = llm.chat([{"role": "user", "content": "Hello"}])
+   assert isinstance(response["choices"][0]["message"]["content"], str)
 
-Common installation issues:
-
-1. **Missing CUDA**: If you're getting CPU-only execution despite having a GPU, check that PyTorch was installed with CUDA support:
-
-   .. code-block:: python
-   
-      import torch
-      print(f"CUDA available: {torch.cuda.is_available()}")
-      print(f"CUDA devices: {torch.cuda.device_count()}")
-
-2. **ImportError**: If you get an import error for one of the backends, make sure you installed the corresponding extra dependencies.
-
-3. **Version Conflicts**: If you encounter version conflicts, try creating a fresh virtual environment:
-
-   .. code-block:: bash
-   
-      python -m venv llm_env
-      source llm_env/bin/activate  # On Windows: llm_env\Scripts\activate
-      pip install "local-llm-kit[all]" 
+If an optional import fails, install its named extra in the same Python
+environment. Prepare dependencies and weights before disconnecting. For Hugging
+Face loaders, use local paths and the offline environment settings described
+in :doc:`backends`.

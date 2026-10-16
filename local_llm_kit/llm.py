@@ -36,6 +36,7 @@ import time
 import uuid
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
+from .backends import BACKEND_ALIASES, OPENAI_SERVER_URLS
 from .backends.base import BaseBackend
 from .function_calling import FunctionCall  # noqa: F401 (re-exported for compat)
 from .memory import MessageHistory
@@ -52,7 +53,15 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["LLM", "get_client", "clear_backend_cache", "clear_client_cache"]
 
-_SUPPORTED_BACKENDS = ("auto", "transformers", "llamacpp", "ollama", "openai-compat", "echo")
+_SUPPORTED_BACKENDS = (
+    "auto",
+    "transformers",
+    "airllm",
+    "llamacpp",
+    "ollama",
+    "openai-compat",
+    "echo",
+)
 
 #: Maximum characters of model output fed to the tool-call parser.
 #: Bounds the regex work per request (ReDoS mitigation).
@@ -203,7 +212,11 @@ def _normalize_response_format(
     if isinstance(response_format, str):
         if response_format in ("json_object", "json"):
             return {"type": "json_object"}
+        if response_format == "text":
+            return None
         raise ValueError("Unsupported response_format string: %r" % (response_format,))
+    if not isinstance(response_format, dict):
+        raise TypeError("response_format must be a string, dict or None.")
     rtype = response_format.get("type")
     if rtype in ("json_object", "json_schema"):
         return response_format
@@ -276,6 +289,10 @@ class LLM:
         backend_instance: Optional[BaseBackend] = None,
         use_cache: bool = True,
     ):
+        if not isinstance(model_path, str) or not model_path.strip():
+            raise ValueError("model_path must be a non-empty string.")
+        if backend is not None and not isinstance(backend, str):
+            raise TypeError("backend must be a string or None.")
         self.model_path = model_path
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
@@ -320,7 +337,8 @@ class LLM:
 
     # -- backend setup ----------------------------------------------------
     def _init_backend(self, backend_name: Optional[str]) -> BaseBackend:
-        name = (backend_name or "auto").lower()
+        requested = (backend_name or "auto").strip().lower()
+        name = BACKEND_ALIASES.get(requested, requested)
         if name == "auto":
             lp = self.model_path.lower()
             if self.model_path.startswith(("http://", "https://")):
@@ -363,6 +381,10 @@ class LLM:
                     "llamacpp backend needs llama-cpp-python "
                     "(pip install 'local-llm-kit[llamacpp]')."
                 ) from exc
+        if name == "airllm":
+            from .backends.airllm import AirLLMBackend
+
+            return AirLLMBackend(self.model_path, **self.backend_kwargs)
         if name == "ollama":
             try:
                 from .backends.ollama import OllamaBackend  # type: ignore
@@ -377,7 +399,11 @@ class LLM:
         try:
             from .backends.openai_compat import OpenAICompatBackend  # type: ignore
 
-            return OpenAICompatBackend(self.model_path, **self.backend_kwargs)
+            options = dict(self.backend_kwargs)
+            if requested in OPENAI_SERVER_URLS:
+                options.setdefault("base_url", OPENAI_SERVER_URLS[requested])
+                options.setdefault("provider", requested)
+            return OpenAICompatBackend(self.model_path, **options)
         except ImportError as exc:
             raise RuntimeError(
                 "openai-compat backend module missing " "(local_llm_kit/backends/openai_compat.py)."
@@ -465,9 +491,10 @@ class LLM:
         prompt: str,
         gen_params: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Vision passthrough: native ``backend.chat(messages)`` wins when the
-        conversation carries images; otherwise plain prompt generation."""
+        """Use native chat when supported, retaining prompt and vision fallbacks."""
         chat_fn = getattr(self.backend, "chat", None)
+        if getattr(self.backend, "supports_native_chat", False):
+            return chat_fn(messages=full_messages, **gen_params)
         if has_images(full_messages) and callable(chat_fn):
             try:
                 params = {k: v for k, v in gen_params.items() if k != "stream"}
@@ -490,12 +517,21 @@ class LLM:
         except ValueError:
             return []
 
+    def _response_calls(self, result: Any, text: str) -> List[ToolCall]:
+        """Prefer native calls; use text parsing for prompt-only backends."""
+        if isinstance(result, dict) and result.get("tool_calls"):
+            if not isinstance(result["tool_calls"], list):
+                raise ValueError("Backend tool_calls must be a list.")
+            return [ToolCall.from_dict(call) for call in result["tool_calls"]]
+        return self._parse_calls(text)
+
     def _execute_tool_call(
         self,
         call: ToolCall,
         allowed_names: Optional[List[str]] = None,
         spec: Optional[Dict[str, Any]] = None,
         timeout: Optional[float] = 10.0,
+        registry: Optional[ToolRegistry] = None,
     ) -> str:
         """Execute one tool call with scope check, arg validation and timeout.
 
@@ -504,7 +540,8 @@ class LLM:
         """
         if allowed_names is not None and call.name not in allowed_names:
             return "Error: tool '%s' is not available for this request" % call.name
-        if not self.tool_registry.has_function(call.name):
+        registry = self.tool_registry if registry is None else registry
+        if not registry.has_function(call.name):
             return "Error: tool '%s' is not registered" % call.name
         if not isinstance(call.arguments, dict):
             return "Error: tool '%s' received invalid arguments (must be an object)" % call.name
@@ -516,7 +553,7 @@ class LLM:
                     ", ".join(missing),
                 )
         try:
-            impl = self.tool_registry.implementations[call.name]
+            impl = registry.implementations[call.name]
         except (AttributeError, KeyError):
             return "Error: tool '%s' has no implementation" % call.name
         try:
@@ -632,13 +669,27 @@ class LLM:
             (None = no timeout).
         :param max_iterations: maximum tool-execution rounds.
         """
-        # Register per-call callables so the loop can execute them.
+        if not isinstance(messages, list):
+            raise TypeError("messages must be a list of message dicts.")
+        for i, message in enumerate(messages):
+            if not isinstance(message, dict):
+                raise TypeError("messages[%d] must be a dict." % i)
+            role = message.get("role")
+            if not isinstance(role, str) or not role.strip():
+                raise ValueError("messages[%d] must have a non-empty string 'role'." % i)
+        if tools is not None and not isinstance(tools, list):
+            raise TypeError("tools must be a list or None.")
+        if functions is not None and not isinstance(functions, list):
+            raise TypeError("functions must be a list or None.")
+        if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
+            raise TypeError("max_iterations must be an integer.")
+        # Per-call tools must not mutate a shared/cached client's registry.
+        request_registry = ToolRegistry()
+        request_registry.functions = dict(self.tool_registry.functions)
+        request_registry.implementations = dict(self.tool_registry.implementations)
         for item in tools or []:
             if callable(item) and not isinstance(item, dict):
-                try:
-                    self.tool_registry.add_tool(item)
-                except Exception:
-                    logger.debug("Could not auto-register tool %r", item, exc_info=True)
+                request_registry.add_tool(item)
         tools_norm = normalize_tools(tools, functions)
         if functions is None and not tools and self.tool_registry.has_functions():
             tools_norm = self.tool_registry.get_tool_list()
@@ -662,6 +713,16 @@ class LLM:
         gen_params["top_logprobs"] = (
             (top_logprobs if top_logprobs is not None else 5) if logprobs else None
         )
+        if getattr(self.backend, "supports_native_chat", False):
+            if active_tools:
+                gen_params["tools"] = active_tools
+                gen_params["tool_choice"] = (
+                    {"type": "function", "function": {"name": forced_name}}
+                    if forced_name
+                    else tool_choice or function_call
+                )
+            if rf is not None:
+                gen_params["response_format"] = rf
 
         loop_kwargs = {
             "forced_name": forced_name,
@@ -672,6 +733,7 @@ class LLM:
             "max_iterations": max(0, max_iterations),
             "execute_tools": execute_tools,
             "tool_timeout": tool_timeout,
+            "request_registry": request_registry,
         }
         if stream:
             return self._chat_streaming(history, active_tools, gen_params, **loop_kwargs)
@@ -704,6 +766,7 @@ class LLM:
         max_iterations: int = 5,
         execute_tools: bool = True,
         tool_timeout: Optional[float] = 10.0,
+        request_registry: Optional[ToolRegistry] = None,
     ) -> Dict[str, Any]:
         working = list(history)
         created = self._now()
@@ -720,16 +783,16 @@ class LLM:
             )
             result = self._backend_generate(working, prompt, gen_params)
             text = _extract_text(result)
-            if json_mode:
-                text = self._ensure_json_output(text)
-            completion_parts.append(text or "")
             finish = result.get("finish_reason", "stop") if isinstance(result, dict) else "stop"
 
             calls: List[ToolCall] = []
             if active_tools:
-                calls = self._parse_calls(text or "")
+                calls = self._response_calls(result, text or "")
                 if forced_name:
                     calls = [c for c in calls if c.name == forced_name]
+            if json_mode and not calls:
+                text = self._ensure_json_output(text)
+            completion_parts.append(text or "")
             if not calls:
                 pending = []
                 finish = "stop" if finish not in ("length",) else finish
@@ -741,9 +804,11 @@ class LLM:
                 break
             assistant_msg: Dict[str, Any] = {
                 "role": "assistant",
-                "content": None,
+                "content": text or None,
                 "tool_calls": [c.to_dict() for c in calls],
             }
+            if isinstance(result, dict) and result.get("thinking"):
+                assistant_msg["thinking"] = result["thinking"]
             if len(calls) == 1:
                 assistant_msg["function_call"] = {
                     "name": calls[0].name,
@@ -757,6 +822,7 @@ class LLM:
                     allowed_names,
                     specs_by_name.get(call.name),
                     tool_timeout,
+                    request_registry,
                 )
                 tool_msg: Dict[str, Any] = {
                     "role": "tool",
@@ -772,7 +838,7 @@ class LLM:
         if pending:
             message: Dict[str, Any] = {
                 "role": "assistant",
-                "content": None,
+                "content": text or None,
                 "tool_calls": [c.to_dict() for c in pending],
             }
             if len(pending) == 1:
@@ -810,6 +876,7 @@ class LLM:
         max_iterations: int = 5,
         execute_tools: bool = True,
         tool_timeout: Optional[float] = 10.0,
+        request_registry: Optional[ToolRegistry] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Stream OpenAI-style chunks. Multi-turn: each tool-loop iteration
         streams its own deltas (single-pass when no tools are involved)."""
@@ -824,13 +891,25 @@ class LLM:
             )
             stream_params = dict(gen_params)
             accumulated = ""
+            native_calls = []
+            thinking = ""
+            finish = "stop"
             first = True
-            try:
-                chunk_iter = self.backend.generate_stream(prompt, **stream_params)
-            except Exception:
-                result = self._backend_generate(working, prompt, gen_params)
-                chunk_iter = iter([{"text": _extract_text(result)}])
+            if getattr(self.backend, "supports_native_chat", False):
+                chunk_iter = self.backend.chat_stream(messages=working, **stream_params)
+            else:
+                try:
+                    chunk_iter = self.backend.generate_stream(prompt, **stream_params)
+                except Exception:
+                    result = self._backend_generate(working, prompt, gen_params)
+                    chunk_iter = iter([{"text": _extract_text(result)}])
             for chunk in chunk_iter:
+                if isinstance(chunk, dict):
+                    thinking += chunk.get("thinking") or ""
+                    if chunk.get("tool_calls"):
+                        native_calls.extend(chunk["tool_calls"])
+                    if chunk.get("finish_reason"):
+                        finish = chunk["finish_reason"]
                 piece = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
                 accumulated += piece
                 delta: Dict[str, Any] = {"content": piece}
@@ -851,15 +930,21 @@ class LLM:
             raw_text = accumulated
             calls: List[ToolCall] = []
             if active_tools:
-                check_text = self._ensure_json_output(raw_text) if json_mode else raw_text
-                calls = self._parse_calls(check_text)
+                check_text = (
+                    self._ensure_json_output(raw_text)
+                    if json_mode and not native_calls
+                    else raw_text
+                )
+                calls = self._response_calls({"tool_calls": native_calls}, check_text)
                 if forced_name:
                     calls = [c for c in calls if c.name == forced_name]
             if not calls or not execute_tools or turn >= max_iterations:
                 if calls:  # surface the calls (unexecuted in server-safe mode)
                     delta2: Dict[str, Any] = {
                         "content": None,
-                        "tool_calls": [c.to_dict() for c in calls],
+                        "tool_calls": [
+                            dict(call.to_dict(), index=index) for index, call in enumerate(calls)
+                        ],
                     }
                     if legacy_path and len(calls) == 1:
                         delta2["function_call"] = {
@@ -889,15 +974,17 @@ class LLM:
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": self.model_path,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": finish}],
                 }
                 return
             # Execute and continue streaming the follow-up turn.
             assistant_msg = {
                 "role": "assistant",
-                "content": None,
+                "content": accumulated or None,
                 "tool_calls": [c.to_dict() for c in calls],
             }
+            if thinking:
+                assistant_msg["thinking"] = thinking
             working.append(assistant_msg)
             self.memory.add_messages([assistant_msg])
             for call in calls:
@@ -906,6 +993,7 @@ class LLM:
                     allowed_names,
                     specs_by_name.get(call.name),
                     tool_timeout,
+                    request_registry,
                 )
                 tool_msg = {
                     "role": "tool",
@@ -934,6 +1022,8 @@ class LLM:
         repetition_penalty: Optional[float] = None,
         **kwargs: Any,
     ) -> Union[Dict[str, Any], Iterator[Dict[str, Any]]]:
+        if not isinstance(prompt, str):
+            raise TypeError("prompt must be a string.")
         rf = _normalize_response_format(response_format, format)
         if rf is not None:
             prompt = "You must respond with valid JSON only, no other text.\n\n" + prompt
@@ -1008,7 +1098,11 @@ class LLM:
     ) -> Dict[str, Any]:  # noqa: A002 (OpenAI field name)
         """OpenAI-shaped embeddings. Delegates to ``backend.embed`` (ollama /
         openai-compat / echo); raises a helpful error otherwise."""
+        if not isinstance(input, (str, list, tuple)):
+            raise TypeError("embed input must be a string or list of strings.")
         texts = [input] if isinstance(input, str) else list(input)
+        if any(not isinstance(text, str) for text in texts):
+            raise TypeError("embed input must contain only strings.")
         vectors: Any = None
         for attr in ("embed", "embeddings", "get_embeddings"):
             fn = getattr(self.backend, attr, None)

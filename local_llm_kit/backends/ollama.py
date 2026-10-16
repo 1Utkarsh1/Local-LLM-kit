@@ -50,6 +50,7 @@ class OllamaBackend(BaseBackend):
     backend_name = "ollama"
     supports_vision = True  # images pass through in chat messages
     supports_embeddings = True
+    supports_native_chat = True
 
     def __init__(
         self,
@@ -189,10 +190,10 @@ class OllamaBackend(BaseBackend):
                 )
             )
             text = "".join(c.get("text", "") for c in chunks)
-            tool_calls = None
+            tool_calls = []
             for c in chunks:
                 if c.get("tool_calls"):
-                    tool_calls = c["tool_calls"]
+                    tool_calls.extend(c["tool_calls"])
             result: Dict[str, Any] = {
                 "text": text,
                 "finish_reason": "stop",
@@ -218,6 +219,7 @@ class OllamaBackend(BaseBackend):
         message = resp.get("message", {}) or {}
         return {
             "text": message.get("content", "") or "",
+            "thinking": message.get("thinking"),
             "tool_calls": message.get("tool_calls"),
             "finish_reason": resp.get("done_reason", "stop"),
             "model": self.model,
@@ -253,13 +255,15 @@ class OllamaBackend(BaseBackend):
         for obj in self._post_json_lines(_CHAT_PATH, payload):
             message = obj.get("message", {}) or {}
             chunk: Dict[str, Any] = {"text": message.get("content", "") or ""}
+            if message.get("thinking"):
+                chunk["thinking"] = message["thinking"]
             if message.get("tool_calls"):
                 chunk["tool_calls"] = message["tool_calls"]
             if obj.get("done"):
                 chunk["finish_reason"] = obj.get("done_reason", "stop")
                 yield chunk
                 break
-            if chunk["text"]:
+            if chunk["text"] or chunk.get("tool_calls") or chunk.get("thinking"):
                 yield chunk
 
     # -- embeddings ----------------------------------------------------
@@ -405,10 +409,63 @@ class OllamaBackend(BaseBackend):
         response_format: Optional[Dict[str, Any]],
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        from ..tools import ToolCall
+
         options_extra, top_level = self._split_kwargs(kwargs)
+        # Ollama's native endpoint has no tool_choice parameter. Named choices
+        # narrow the offered tools; enforcement remains model-dependent.
+        choice = top_level.pop("tool_choice", None)
+        if choice == "none":
+            tools = None
+        elif isinstance(choice, dict):
+            name = choice.get("function", choice).get("name")
+            tools = [item for item in tools or [] if item["function"]["name"] == name]
+        native_messages = []
+        for message in messages:
+            native = dict(message)
+            if isinstance(native.get("content"), list):
+                texts = []
+                images = list(native.get("images") or [])
+                for part in native["content"]:
+                    if isinstance(part, str):
+                        texts.append(part)
+                        continue
+                    if not isinstance(part, dict):
+                        raise ValueError("Ollama content parts must be text or image objects.")
+                    if part.get("type") == "text":
+                        texts.append(part.get("text", ""))
+                    elif part.get("type") == "image_url":
+                        image = part.get("image_url", {})
+                        url = image.get("url", "") if isinstance(image, dict) else image
+                        if (
+                            not isinstance(url, str)
+                            or not url.startswith("data:image/")
+                            or ";base64," not in url
+                        ):
+                            raise ValueError(
+                                "Ollama image_url parts require inline base64 data URLs."
+                            )
+                        images.append(url.split(";base64,", 1)[1])
+                native["content"] = "\n".join(texts)
+                if images:
+                    native["images"] = images
+            if native.get("tool_calls"):
+                native.pop("function_call", None)
+                calls = [ToolCall.from_dict(item) for item in native["tool_calls"]]
+                native["tool_calls"] = [
+                    {
+                        "type": "function",
+                        "function": {"name": call.name, "arguments": call.arguments},
+                    }
+                    for call in calls
+                ]
+            if native.get("role") == "tool":
+                native["tool_name"] = native.pop("name", native.get("tool_name", ""))
+                native.pop("tool_call_id", None)
+            native_messages.append(native)
         payload: Dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": native_messages,
             "stream": stream,
             "keep_alive": self.keep_alive,
             "options": self._options(

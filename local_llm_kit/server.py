@@ -34,7 +34,9 @@ Design notes:
 
 import argparse
 import hashlib
+import inspect
 import json
+import math
 import time
 from typing import Any, Dict, List, Optional
 
@@ -70,7 +72,8 @@ def _coerce_message_content(content: Any) -> Optional[str]:
             elif isinstance(part, dict):
                 ptype = part.get("type", "text")
                 if ptype == "text":
-                    texts.append(str(part.get("text", "")))
+                    if part.get("text") is not None:
+                        texts.append(str(part.get("text", "")))
                 elif ptype in ("image_url", "image"):
                     url = part.get("image_url", part.get("image", ""))
                     if isinstance(url, dict):
@@ -78,7 +81,7 @@ def _coerce_message_content(content: Any) -> Optional[str]:
                     texts.append("[image: %s]" % url)
                 else:
                     texts.append(str(part))
-            else:
+            elif part is not None:
                 texts.append(str(part))
         return "\n".join(texts)
     return str(content)
@@ -91,7 +94,10 @@ def _coerce_messages(messages: Any) -> List[Dict[str, Any]]:
             continue
         out = dict(msg)
         if "content" in out:
-            out["content"] = _coerce_message_content(out.get("content"))
+            content = out.get("content")
+            out["content"] = (
+                content if isinstance(content, list) else _coerce_message_content(content)
+            )
         coerced.append(out)
     return coerced
 
@@ -242,6 +248,34 @@ def _coerce_vectors(result: Any, n: int) -> Optional[List[List[float]]]:
     return vectors
 
 
+def _generation_params(body: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate shared chat/completion options before calling the backend."""
+    from .llm import _normalize_response_format
+
+    temperature = body.get("temperature")
+    if temperature is not None and (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or not math.isfinite(temperature)
+    ):
+        raise ValueError("'temperature' must be a finite number.")
+    max_tokens = body.get("max_tokens")
+    if max_tokens is None:
+        max_tokens = body.get("max_completion_tokens")
+    if max_tokens is not None and (
+        isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 0
+    ):
+        raise ValueError("'max_tokens' must be a non-negative integer.")
+    params = {
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "response_format": _normalize_response_format(
+            body.get("response_format"), _extract_format(body)
+        ),
+    }
+    return {key: value for key, value in params.items() if value is not None}
+
+
 def _try_get_embeddings(llm: Any, texts: List[str]) -> Optional[List[List[float]]]:
     """Use native embedding support if the llm provides it, else None."""
     for method_name in ("embed", "embeddings", "get_embeddings"):
@@ -263,35 +297,37 @@ def _try_get_embeddings(llm: Any, texts: List[str]) -> Optional[List[List[float]
 
 
 def _call_llm_chat(llm_obj: Any, chat_kwargs: Dict[str, Any]) -> Any:
-    """Call ``llm.chat`` tolerating older signatures.
-
-    Modern keys (``tools``/``tool_choice``/``response_format``/
-    ``execute_tools``) are stripped one round at a time on TypeError so the
-    server also works against v0.1.x-style LLM objects.
-    """
+    """Adapt older signatures before calling; never retry a runtime TypeError."""
     modern_keys = ("tools", "tool_choice", "response_format", "execute_tools")
     kwargs = dict(chat_kwargs)
-    while True:
-        try:
-            return llm_obj.chat(**kwargs)
-        except TypeError:
-            stripped = [k for k in modern_keys if k in kwargs]
-            if not stripped:
-                raise
-            for k in stripped:
-                kwargs.pop(k, None)
+    try:
+        params = inspect.signature(llm_obj.chat).parameters
+    except (TypeError, ValueError):
+        return llm_obj.chat(**kwargs)
+    if not any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
+        if (
+            "execute_tools" not in params
+            and not kwargs.get("execute_tools", False)
+            and (kwargs.get("tools") or kwargs.get("functions"))
+        ):
+            raise TypeError("This LLM cannot disable tool execution; use a current client.")
+        kwargs = {
+            key: value for key, value in kwargs.items() if key not in modern_keys or key in params
+        }
+    return llm_obj.chat(**kwargs)
 
 
 def _call_llm_complete(llm_obj: Any, complete_kwargs: Dict[str, Any]) -> Any:
     kwargs = dict(complete_kwargs)
-    while True:
-        try:
-            return llm_obj.complete(**kwargs)
-        except TypeError:
-            if "response_format" in kwargs:
-                kwargs.pop("response_format", None)
-                continue
-            raise
+    try:
+        params = inspect.signature(llm_obj.complete).parameters
+    except (TypeError, ValueError):
+        return llm_obj.complete(**kwargs)
+    if "response_format" not in params and not any(
+        param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()
+    ):
+        kwargs.pop("response_format", None)
+    return llm_obj.complete(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -425,11 +461,13 @@ def create_app(
         stream = bool(body.get("stream", False))
         # Security default: never execute local tools for remote callers
         # unless they explicitly opt in per request.
-        execute_tools = bool(body.get("execute_tools", False))
-        temperature = body.get("temperature")
-        max_tokens = body.get("max_tokens")
-        if max_tokens is None:
-            max_tokens = body.get("max_completion_tokens")
+        execute_tools = body.get("execute_tools", False)
+        if not isinstance(execute_tools, bool):
+            return _error("'execute_tools' must be a boolean.")
+        try:
+            generation_params = _generation_params(body)
+        except (TypeError, ValueError) as exc:
+            return _error(str(exc))
         logprobs = bool(body.get("logprobs", False))
         top_logprobs = body.get("top_logprobs")
 
@@ -440,8 +478,7 @@ def create_app(
             "tools": tools,
             "tool_choice": tool_choice,
             "execute_tools": execute_tools,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            **generation_params,
             "format": fmt,
             "logprobs": logprobs,
             "top_logprobs": top_logprobs,
@@ -532,12 +569,15 @@ def create_app(
             return _error(str(exc), status=503, err_type="server_error")
 
         fmt = _extract_format(body)
+        try:
+            generation_params = _generation_params(body)
+        except (TypeError, ValueError) as exc:
+            return _error(str(exc))
         stream = bool(body.get("stream", False))
         requested_model = body.get("model") or _model_id()
         complete_kwargs = {
             "prompt": prompt,
-            "temperature": body.get("temperature"),
-            "max_tokens": body.get("max_tokens"),
+            **generation_params,
             "format": fmt,
             "logprobs": body.get("logprobs", False),
             "top_logprobs": body.get("top_logprobs"),
@@ -588,7 +628,9 @@ def create_app(
         if isinstance(raw_input, str):
             texts = [raw_input]
         elif isinstance(raw_input, list):
-            texts = [str(t) for t in raw_input]
+            if any(not isinstance(text, str) for text in raw_input):
+                return _error("'input' must be a string or list of strings.")
+            texts = raw_input
         else:
             return _error("'input' must be a string or list of strings.")
         if not texts:

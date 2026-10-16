@@ -239,5 +239,105 @@ class TestServerSkipPath(unittest.TestCase):
         self.assertIsNone(TestClient)
 
 
+@unittest.skipUnless(HAS_FASTAPI and HAS_SERVER, "server extra unavailable")
+class TestConsolidatedServerValidation(unittest.TestCase):
+    def test_tool_execution_requires_a_boolean_not_a_truthy_value(self):
+        llm = EchoLLM()
+        with TestClient(SERVER_MOD.create_app(llm=llm)) as client:
+            for value in ("false", "true", 1, None, [True]):
+                response = client.post(
+                    "/v1/chat/completions",
+                    json={"messages": [{"role": "user", "content": "hi"}], "execute_tools": value},
+                )
+                self.assertEqual(response.status_code, 400)
+        self.assertEqual(llm.chat_calls, [])
+
+    def test_image_content_parts_reach_the_client(self):
+        llm = EchoLLM()
+        content = [
+            {"type": "text", "text": "Describe this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+        ]
+        with TestClient(SERVER_MOD.create_app(llm=llm)) as client:
+            response = client.post(
+                "/v1/chat/completions", json={"messages": [{"role": "user", "content": content}]}
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(llm.chat_calls[0]["messages"][0]["content"], content)
+
+    def test_invalid_generation_options_return_400_for_both_routes(self):
+        with TestClient(SERVER_MOD.create_app(llm=EchoLLM())) as client:
+            for route, body in (
+                ("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}),
+                ("/v1/completions", {"prompt": "hi"}),
+            ):
+                for options in (
+                    {"temperature": "hot"},
+                    {"temperature": True},
+                    {"max_tokens": 1.5},
+                    {"max_tokens": True},
+                    {"max_tokens": -1},
+                    {"response_format": []},
+                ):
+                    with self.subTest(route=route, options=options):
+                        response = client.post(route, json=dict(body, **options))
+                        self.assertEqual(response.status_code, 400)
+                        self.assertEqual(response.json()["error"]["type"], "invalid_request_error")
+
+    def test_schema_and_completion_token_alias_are_forwarded(self):
+        llm = EchoLLM()
+        schema = {
+            "type": "json_schema",
+            "json_schema": {"name": "out", "schema": {"type": "object"}},
+        }
+        with TestClient(SERVER_MOD.create_app(llm=llm)) as client:
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "messages": [{"role": "user", "content": "JSON please"}],
+                    "response_format": schema,
+                    "max_completion_tokens": 12,
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(llm.chat_calls[-1]["kwargs"]["response_format"], schema)
+        self.assertEqual(llm.chat_calls[-1]["kwargs"]["max_tokens"], 12)
+
+    def test_invalid_embedding_items_return_400(self):
+        with TestClient(SERVER_MOD.create_app(llm=EchoLLM())) as client:
+            self.assertEqual(
+                client.post("/v1/embeddings", json={"input": ["ok", None]}).status_code, 400
+            )
+
+    def test_runtime_type_errors_do_not_repeat_requests(self):
+        class BrokenLLM(EchoLLM):
+            def chat(self, messages, **kwargs):
+                self.chat_calls.append(messages)
+                raise TypeError("backend failed after doing work")
+
+        llm = BrokenLLM()
+        with TestClient(SERVER_MOD.create_app(llm=llm)) as client:
+            response = client.post(
+                "/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]}
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(len(llm.chat_calls), 1)
+
+    def test_legacy_llms_cannot_bypass_tool_execution_opt_in(self):
+        class LegacyLLM:
+            def chat(self, messages, functions=None, function_call="auto"):
+                raise AssertionError("legacy executor must not run")
+
+        with self.assertRaisesRegex(TypeError, "cannot disable tool execution"):
+            SERVER_MOD._call_llm_chat(
+                LegacyLLM(),
+                {
+                    "messages": [],
+                    "functions": [{"name": "dangerous"}],
+                    "execute_tools": False,
+                },
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

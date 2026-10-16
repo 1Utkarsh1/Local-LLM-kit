@@ -30,6 +30,7 @@ class OpenAICompatBackend(BaseBackend):
     backend_name = "openai-compat"
     supports_vision = True  # content parts pass through untouched
     supports_embeddings = True
+    supports_native_chat = True
 
     def __init__(
         self,
@@ -39,6 +40,7 @@ class OpenAICompatBackend(BaseBackend):
         timeout: float = 120.0,
         context_window: int = 4096,
         headers: Optional[Dict[str, str]] = None,
+        provider: str = "openai-compat",
         **kwargs: Any,
     ) -> None:
         """Args:
@@ -51,6 +53,8 @@ class OpenAICompatBackend(BaseBackend):
         headers: Extra HTTP headers.
         """
         self.model = model
+        self.provider = provider
+        self.supports_embeddings = provider not in ("gpt4all", "mlx-lm")
         self.model_path = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -253,6 +257,7 @@ class OpenAICompatBackend(BaseBackend):
             seed=seed,
             **kwargs,
         )
+        calls: Dict[int, Dict[str, Any]] = {}
         for event in self._post_sse("/chat/completions", payload):
             for choice in event.get("choices", []) or []:
                 delta = choice.get("delta", {}) or {}
@@ -261,15 +266,37 @@ class OpenAICompatBackend(BaseBackend):
                 }
                 if delta.get("tool_calls"):
                     chunk["tool_calls_delta"] = delta["tool_calls"]
-                    chunk["tool_calls"] = delta["tool_calls"]
+                    for part in delta["tool_calls"]:
+                        index = part.get("index", 0)
+                        call = calls.setdefault(
+                            index,
+                            {
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            },
+                        )
+                        if part.get("id"):
+                            call["id"] += part["id"]
+                        function = part.get("function") or {}
+                        for key in ("name", "arguments"):
+                            if function.get(key) is not None:
+                                call["function"][key] += function[key]
                 if choice.get("finish_reason"):
                     chunk["finish_reason"] = choice["finish_reason"]
+                    if calls:
+                        chunk["tool_calls"] = [calls[index] for index in sorted(calls)]
                 if chunk["text"] or chunk.get("finish_reason") or "tool_calls_delta" in chunk:
                     yield chunk
 
     # -- embeddings (/v1/embeddings) -----------------------------------
 
     def embed(self, texts: Union[str, List[str]], **kwargs: Any) -> List[List[float]]:
+        if not self.supports_embeddings:
+            raise NotImplementedError(
+                "%s does not expose /v1/embeddings; use a separate embedding backend."
+                % self.provider
+            )
         items = [texts] if isinstance(texts, str) else list(texts)
         if not items:
             return []
@@ -353,7 +380,12 @@ class OpenAICompatBackend(BaseBackend):
         # top_k / repetition_penalty are not OpenAI fields; most local
         # servers accept them as extra body params, so pass through.
         kwargs.setdefault("top_k", top_k)
-        kwargs.setdefault("repeat_penalty", repetition_penalty)
+        penalty_key = (
+            "repetition_penalty"
+            if self.provider in ("vllm", "sglang", "mlx-lm")
+            else "repeat_penalty"
+        )
+        kwargs.setdefault(penalty_key, repetition_penalty)
         payload = self._base_sampling(temperature, max_new_tokens, top_p, stream=stream, **kwargs)
         payload["prompt"] = prompt
         return payload
@@ -375,9 +407,22 @@ class OpenAICompatBackend(BaseBackend):
         **kwargs: Any,
     ) -> Dict[str, Any]:
         kwargs.setdefault("top_k", top_k)
-        kwargs.setdefault("repeat_penalty", repetition_penalty)
+        penalty_key = (
+            "repetition_penalty"
+            if self.provider in ("vllm", "sglang", "mlx-lm")
+            else "repeat_penalty"
+        )
+        kwargs.setdefault(penalty_key, repetition_penalty)
         payload = self._base_sampling(temperature, max_new_tokens, top_p, stream=stream, **kwargs)
-        payload["messages"] = messages
+        payload["messages"] = [
+            {
+                key: value
+                for key, value in message.items()
+                if not (key == "function_call" and message.get("tool_calls"))
+                and not (key == "name" and message.get("role") == "tool")
+            }
+            for message in messages
+        ]
         if stop:
             payload["stop"] = stop
         if tools:

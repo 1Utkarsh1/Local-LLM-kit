@@ -1,144 +1,122 @@
-Quickstart Guide
-==============
+Quickstart
+==========
 
-This guide will help you get started with ``local_llm_kit`` quickly.
+Install and run offline
+-----------------------
 
-Installation
------------
-
-Install the package using pip:
+The core package needs no GPU or model download. Unreleased features need a
+source install until the next PyPI release.
 
 .. code-block:: bash
 
    pip install local-llm-kit
-
-Basic Usage
-----------
-
-1. Initialize the Client
-~~~~~~~~~~~~~~~~~~~~~~~
+   # From a checkout, including unreleased changes:
+   pip install -e .
 
 .. code-block:: python
 
-   from local_llm_kit import LLMClient
-   
-   # Initialize with default settings
-   client = LLMClient(model="llama2")
+   from local_llm_kit import LLM
 
-2. Chat Completions
-~~~~~~~~~~~~~~~~~~
+   llm = LLM(model_path="echo", backend="echo")
+   response = llm.chat([{"role": "user", "content": "Hello"}])
+   print(response["choices"][0]["message"]["content"])
+
+Echo is a deterministic test backend. For model-generated answers, select an
+in-process backend or connect to a running local server.
+
+Connect a local server
+----------------------
+
+Start your server and load a model using its own setup instructions. Supply the
+model ID it serves; the kit does not install or launch third-party servers.
 
 .. code-block:: python
 
-   # Simple chat completion
-   response = client.chat.completions.create(
-       model="llama2",
-       messages=[
-           {"role": "system", "content": "You are a helpful assistant."},
-           {"role": "user", "content": "What is machine learning?"}
-       ]
+   from local_llm_kit import LLM
+
+   llm = LLM(model_path="your-served-model-id", backend="sglang")
+   # Override any preset with backend_kwargs={"base_url": "http://host:port/v1"}.
+   response = llm.chat([{"role": "user", "content": "Hello"}])
+   print(response["choices"][0]["message"]["content"])
+
+Presets include ``sglang``, ``vllm``, ``lmstudio``, ``localai``, ``llama-server``,
+``jan``, ``gpt4all``, ``mlx-lm`` and ``koboldcpp``. Ollama has its own native adapter:
+
+.. code-block:: python
+
+   llm = LLM(model_path="your-ollama-model", backend="ollama")
+
+See :doc:`backends` for URLs, upstream setup links, AirLLM and compatibility limits.
+
+Stream text
+-----------
+
+.. code-block:: python
+
+   for chunk in llm.chat([{"role": "user", "content": "Write a short greeting"}], stream=True):
+       print(chunk["choices"][0]["delta"].get("content") or "", end="")
+
+Register tools
+--------------
+
+.. code-block:: python
+
+   from local_llm_kit import tool
+
+   @tool
+   def add(a: int, b: int) -> int:
+       """Add two numbers."""
+       return a + b
+
+   response = llm.chat(
+       [{"role": "user", "content": "What is 2 plus 3?"}],
+       tools=[add],
+       execute_tools=False,
    )
-   
-   print(response.choices[0].message.content)
+   print(response["choices"][0]["message"])
 
-3. Streaming Responses
-~~~~~~~~~~~~~~~~~~~~
+``execute_tools=False`` returns requested calls for the application to handle.
+Set it to ``True`` to run trusted registered tools in the library's bounded loop.
+Per-call callables stay scoped to that request; ``llm.add_tool(add)`` registers a
+persistent tool. A timeout bounds response waiting and does not kill a Python
+function that is already running.
 
-.. code-block:: python
-
-   # Stream the response
-   for chunk in client.chat.completions.create(
-       model="llama2",
-       messages=[{"role": "user", "content": "Write a short story"}],
-       stream=True
-   ):
-       print(chunk.choices[0].delta.content, end="")
-
-4. Function Calling
-~~~~~~~~~~~~~~~~~
+Structured output
+-----------------
 
 .. code-block:: python
 
-   functions = [
-       {
-           "name": "get_weather",
-           "description": "Get the weather in a location",
-           "parameters": {
-               "type": "object",
-               "properties": {
-                   "location": {"type": "string"},
-                   "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+   response = llm.chat(
+       [{"role": "user", "content": "Return JSON with a city name."}],
+       response_format={
+           "type": "json_schema",
+           "json_schema": {
+               "name": "city",
+               "schema": {
+                   "type": "object",
+                   "properties": {"name": {"type": "string"}},
+                   "required": ["name"],
+                   "additionalProperties": False,
                },
-               "required": ["location"]
-           }
-       }
-   ]
-
-   response = client.chat.completions.create(
-       model="llama2",
-       messages=[{"role": "user", "content": "What's the weather like in London?"}],
-       functions=functions,
-       function_call="auto"
+           },
+       },
    )
+   print(response["choices"][0]["message"]["content"])
 
-5. JSON Mode
-~~~~~~~~~~~
+Native Ollama and OpenAI-compatible adapters forward schemas to the server.
+Schema enforcement needs support from the selected server and model. Prompt-only
+backends provide JSON prompting and syntax recovery, not guaranteed schema validation.
 
-.. code-block:: python
+Command line
+------------
 
-   response = client.chat.completions.create(
-       model="llama2",
-       messages=[{"role": "user", "content": "List three colors with their hex codes"}],
-       response_format={"type": "json_object"}
-   )
+.. code-block:: bash
 
-Advanced Usage
--------------
+   local-llm-kit chat --backend echo --model echo -q "Hello"
+   local-llm-kit chat --backend sglang --model your-served-model-id -q "Hello"
+   local-llm-kit pull owner/repo --filename model.gguf --revision main --force
+   local-llm-kit serve --backend echo --port 8000
 
-Model Configuration
-~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   client = LLMClient(
-       model="llama2",
-       model_path="/path/to/model",
-       context_length=2048,
-       temperature=0.7,
-       top_p=0.9
-   )
-
-Memory Management
-~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # Enable memory management
-   client.enable_memory(max_tokens=1000)
-   
-   # Add conversation context
-   client.add_to_memory([
-       {"role": "user", "content": "My name is Alice"},
-       {"role": "assistant", "content": "Hello Alice!"}
-   ])
-
-Error Handling
-~~~~~~~~~~~~
-
-.. code-block:: python
-
-   try:
-       response = client.chat.completions.create(
-           model="nonexistent_model",
-           messages=[{"role": "user", "content": "Hello"}]
-       )
-   except Exception as e:
-       print(f"An error occurred: {e}")
-
-Next Steps
----------
-
-- Check out the :doc:`api_reference` for detailed API documentation
-- See more :doc:`examples` for advanced usage patterns
-- Learn about supported :doc:`models` and their configurations
-- Consider :doc:`contributing` to the project 
+For offline model loading, download dependencies and weights first, use local
+checkpoint paths, and enable the Hugging Face offline environment settings
+``HF_HUB_OFFLINE=1`` and ``TRANSFORMERS_OFFLINE=1``.

@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Check out repository
@@ -39,6 +39,12 @@ jobs:
 
       - name: Run test suite
         run: pytest
+
+      - name: Exercise optional HTTP server
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install -e .[server] httpx numpy
+          pytest tests/test_server.py
 
       - name: Import smoke test (light core, no heavy deps)
         run: >

@@ -1,259 +1,65 @@
-Tutorials
-=========
+Small end-to-end flows
+======================
 
-This section contains detailed tutorials to help you make the most of ``local_llm_kit``.
-
-Basic Chatbot Tutorial
---------------------
-
-In this tutorial, we'll create a simple chatbot that can maintain context and respond to user queries.
+Offline chat and streaming
+--------------------------
 
 .. code-block:: python
 
-   from local_llm_kit import LLMClient
-   
-   # Initialize the client with memory management
-   client = LLMClient(model="llama2")
-   client.enable_memory(max_tokens=2000)
-   
-   def chatbot():
-       # Set initial system message
-       system_msg = {
-           "role": "system",
-           "content": "You are a helpful assistant who provides concise, accurate responses."
-       }
-       client.add_to_memory([system_msg])
-       
-       print("Chatbot: Hello! How can I help you today? (Type 'quit' to exit)")
-       
-       while True:
-           user_input = input("You: ").strip()
-           if user_input.lower() == 'quit':
-               break
-           
-           # Add user message to memory
-           user_msg = {"role": "user", "content": user_input}
-           client.add_to_memory([user_msg])
-           
-           # Get response
-           response = client.chat.completions.create(
-               model="llama2",
-               messages=client.get_memory(),
-               temperature=0.7
-           )
-           
-           # Print and store assistant's response
-           assistant_msg = response.choices[0].message
-           print(f"Chatbot: {assistant_msg.content}")
-           client.add_to_memory([{
-               "role": "assistant",
-               "content": assistant_msg.content
-           }])
+   from local_llm_kit import LLM
 
-   if __name__ == "__main__":
-       chatbot()
+   llm = LLM("echo", backend="echo")
+   messages = [{"role": "user", "content": "Hello"}]
+   response = llm.chat(messages)
+   print(response["choices"][0]["message"]["content"])
+   for chunk in llm.chat(messages, stream=True):
+       print(chunk["choices"][0]["delta"].get("content") or "", end="")
 
-Weather Assistant Tutorial
------------------------
+Echo validates application plumbing. Replace it with a prepared runtime from
+:doc:`backends` to generate meaningful answers.
 
-Let's create a weather assistant using function calling capabilities.
+Inspect model-selected tools
+----------------------------
 
 .. code-block:: python
 
-   import json
-   from local_llm_kit import LLMClient
-   
-   def get_weather(location: str, unit: str = "celsius") -> str:
-       # This is a mock function - replace with actual weather API call
-       weather_data = {
-           "London": {"temp": 20, "condition": "cloudy"},
-           "New York": {"temp": 25, "condition": "sunny"},
-           "Tokyo": {"temp": 28, "condition": "rainy"}
-       }
-       
-       if location not in weather_data:
-           return f"Weather data not available for {location}"
-           
-       data = weather_data[location]
-       temp = data["temp"]
-       if unit == "fahrenheit":
-           temp = (temp * 9/5) + 32
-           
-       return f"The temperature in {location} is {temp}°{'F' if unit == 'fahrenheit' else 'C'} and it's {data['condition']}"
+   from local_llm_kit import LLM, tool
 
-   # Define the function schema
-   weather_function = {
-       "name": "get_weather",
-       "description": "Get the current weather in a location",
-       "parameters": {
-           "type": "object",
-           "properties": {
-               "location": {
-                   "type": "string",
-                   "description": "The city to get weather for"
-               },
-               "unit": {
-                   "type": "string",
-                   "enum": ["celsius", "fahrenheit"],
-                   "description": "Temperature unit"
-               }
-           },
-           "required": ["location"]
-       }
-   }
+   @tool(description="Look up a local product price")
+   def price(product: str) -> dict:
+       return {"product": product, "price": 10}
 
-   def weather_assistant():
-       client = LLMClient(model="llama2")
-       
-       while True:
-           query = input("Ask about weather (or 'quit' to exit): ").strip()
-           if query.lower() == 'quit':
-               break
-               
-           response = client.chat.completions.create(
-               model="llama2",
-               messages=[{"role": "user", "content": query}],
-               functions=[weather_function],
-               function_call="auto"
-           )
-           
-           message = response.choices[0].message
-           
-           if message.function_call:
-               # Parse the function call
-               func_args = json.loads(message.function_call.arguments)
-               
-               # Call the function
-               weather_info = get_weather(
-                   location=func_args["location"],
-                   unit=func_args.get("unit", "celsius")
-               )
-               
-               # Get final response
-               final_response = client.chat.completions.create(
-                   model="llama2",
-                   messages=[
-                       {"role": "user", "content": query},
-                       {
-                           "role": "function",
-                           "name": "get_weather",
-                           "content": weather_info
-                       }
-                   ]
-               )
-               print(f"Assistant: {final_response.choices[0].message.content}")
-           else:
-               print(f"Assistant: {message.content}")
+   llm = LLM("echo", backend="echo")
+   response = llm.chat(
+       [{"role": "user", "content": "What does tea cost?"}],
+       tools=[price],
+       execute_tools=False,
+   )
+   calls = response["choices"][0]["message"].get("tool_calls", [])
+   print(calls)
 
-JSON Output Tutorial
------------------
+The echo backend may return no call. A tool-capable model chooses calls when
+available; validate arguments and application permissions before executing
+powerful tools. Set ``execute_tools=True`` only for intended local execution.
 
-Learn how to use JSON mode for structured outputs.
+Retrieve a small local corpus
+-----------------------------
 
 .. code-block:: python
 
-   from local_llm_kit import LLMClient
-   import json
-   
-   def structured_data_extractor():
-       client = LLMClient(model="llama2")
-       
-       # Example: Extract person information
-       text = """
-       John Smith is a 35-year-old software engineer from San Francisco.
-       He has been working at Tech Corp for 5 years and specializes in Python programming.
-       """
-       
-       response = client.chat.completions.create(
-           model="llama2",
-           messages=[{
-               "role": "user",
-               "content": f"Extract structured information about the person from this text: {text}"
-           }],
-           response_format={"type": "json_object"}
-       )
-       
-       # Parse and pretty print the JSON response
-       person_info = json.loads(response.choices[0].message.content)
-       print(json.dumps(person_info, indent=2))
+   from local_llm_kit import LLM
+   from local_llm_kit.rag import SimpleVectorStore, build_rag_prompt
 
-Streaming Response Tutorial
-------------------------
+   store = SimpleVectorStore()
+   store.add(["The Eiffel Tower is in Paris.", "Tea is sold in the local shop."])
+   hits = store.search("Where is the Eiffel Tower?", k=1)
+   messages = build_rag_prompt("Where is the Eiffel Tower?", hits)
+   response = LLM("echo", backend="echo").chat(messages)
+   assert hits[0]["text"] == "The Eiffel Tower is in Paris."
 
-Implement a real-time response system with streaming.
+Without ``embed_fn``, the store uses lexical retrieval. Connect a real embedding
+backend for semantic retrieval; hash vectors are only for tests. Save with
+``store.save(path)`` and restore with ``SimpleVectorStore.load(path)``.
 
-.. code-block:: python
-
-   from local_llm_kit import LLMClient
-   import sys
-   
-   def streaming_story_generator():
-       client = LLMClient(model="llama2")
-       
-       prompt = input("Enter a story prompt: ").strip()
-       
-       print("\nGenerating story...\n")
-       
-       for chunk in client.chat.completions.create(
-           model="llama2",
-           messages=[{
-               "role": "user",
-               "content": f"Write a short story about: {prompt}"
-           }],
-           stream=True
-       ):
-           content = chunk.choices[0].delta.content
-           if content:
-               sys.stdout.write(content)
-               sys.stdout.flush()
-       
-       print("\n\nStory generation complete!")
-
-Running the Tutorials
-------------------
-
-To run these tutorials:
-
-1. Install the package:
-
-   .. code-block:: bash
-
-      pip install local-llm-kit
-
-2. Copy the tutorial code into a Python file (e.g., ``tutorial.py``)
-
-3. Run the file:
-
-   .. code-block:: bash
-
-      python tutorial.py
-
-Tips and Best Practices
---------------------
-
-1. Memory Management
-   - Clear memory when starting new conversations
-   - Monitor token usage to avoid hitting limits
-   - Use appropriate context window sizes
-
-2. Function Calling
-   - Define clear, specific function descriptions
-   - Handle edge cases in function implementations
-   - Validate function arguments
-
-3. Streaming
-   - Use appropriate buffering for output
-   - Handle connection interruptions
-   - Consider implementing progress indicators
-
-4. JSON Mode
-   - Define expected schema in prompts
-   - Handle parsing errors gracefully
-   - Validate JSON structure
-
-Next Steps
----------
-
-- Explore the :doc:`api_reference` for more advanced features
-- Check out the :doc:`examples` for more use cases
-- Join our community and share your implementations 
+See :doc:`examples` for runnable scripts and :doc:`quickstart` for schemas and
+the OpenAI-compatible HTTP server.

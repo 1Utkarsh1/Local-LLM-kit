@@ -21,6 +21,10 @@ class FunctionCall:
             name: Name of the function
             arguments: Arguments to pass to the function
         """
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("FunctionCall 'name' must be a non-empty string.")
+        if not isinstance(arguments, dict):
+            raise TypeError("FunctionCall 'arguments' must be a dict.")
         self.name = name
         self.arguments = arguments
 
@@ -34,7 +38,7 @@ class FunctionCall:
         return {"name": self.name, "arguments": json.dumps(self.arguments)}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, str]) -> "FunctionCall":
+    def from_dict(cls, data: Dict[str, Any]) -> "FunctionCall":
         """
         Create a FunctionCall from an OpenAI-style function call dict.
 
@@ -43,8 +47,31 @@ class FunctionCall:
 
         Returns:
             FunctionCall instance
+
+        Raises:
+            TypeError: if *data* is not a dict.
+            ValueError: if ``name`` is missing, null, or not a non-empty
+                string, or ``arguments`` is null or not a dict/JSON string.
         """
-        return cls(name=data["name"], arguments=json.loads(data["arguments"]))
+        if not isinstance(data, dict):
+            raise TypeError("FunctionCall record must be a dict, got %r" % type(data).__name__)
+        name = data.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                "FunctionCall record 'name' must be a non-empty string, got %r" % (name,)
+            )
+        if "arguments" not in data:
+            raise ValueError("FunctionCall record is missing 'arguments'")
+        arguments = data["arguments"]
+        if arguments is None:
+            raise ValueError("FunctionCall record 'arguments' must not be null")
+        if isinstance(arguments, str):
+            arguments = json.loads(arguments) if arguments.strip() else {}
+        if not isinstance(arguments, dict):
+            raise ValueError(
+                "FunctionCall record 'arguments' must be a dict or JSON object string."
+            )
+        return cls(name=name, arguments=arguments)
 
 
 class FunctionRegistry:
@@ -117,6 +144,8 @@ class FunctionRegistry:
         if not self.has_function(name):
             raise ValueError(f"Function '{name}' is not registered")
 
+        if not isinstance(arguments, dict):
+            raise TypeError("Function arguments must be a dict.")
         implementation = self.implementations[name]
         return implementation(**arguments)
 
@@ -143,19 +172,10 @@ def parse_function_calls(text: str) -> List[FunctionCall]:
     try:
         data = json.loads(text)
         if isinstance(data, dict) and "name" in data and "arguments" in data:
-            if isinstance(data["arguments"], str):
-                args = json.loads(data["arguments"])
-            else:
-                args = data["arguments"]
-            return [FunctionCall(data["name"], args)]
+            return [FunctionCall.from_dict(data)]
         elif isinstance(data, dict) and "function_call" in data:
-            func_call = data["function_call"]
-            if isinstance(func_call["arguments"], str):
-                args = json.loads(func_call["arguments"])
-            else:
-                args = func_call["arguments"]
-            return [FunctionCall(func_call["name"], args)]
-    except (json.JSONDecodeError, KeyError, TypeError):
+            return [FunctionCall.from_dict(data["function_call"])]
+    except (ValueError, KeyError, TypeError):
         pass
 
     # Strategy 2: Look for function call patterns
@@ -176,17 +196,13 @@ def parse_function_calls(text: str) -> List[FunctionCall]:
                     # Full JSON object in one group
                     data = json.loads(matches.group(1))
                     if isinstance(data, dict) and "name" in data and "arguments" in data:
-                        if isinstance(data["arguments"], str):
-                            args = json.loads(data["arguments"])
-                        else:
-                            args = data["arguments"]
-                        return [FunctionCall(data["name"], args)]
+                        return [FunctionCall.from_dict(data)]
                 elif len(matches.groups()) == 2:
                     # Name and arguments in separate groups
                     name = matches.group(1)
                     args = json.loads(matches.group(2))
                     return [FunctionCall(name, args)]
-            except (json.JSONDecodeError, IndexError, TypeError):
+            except (ValueError, IndexError, TypeError):
                 continue
 
     # Strategy 3: Regex-based extraction for less structured outputs
@@ -200,7 +216,7 @@ def parse_function_calls(text: str) -> List[FunctionCall]:
             if args_match:
                 args = json.loads(args_match.group(0))
                 return [FunctionCall(name, args)]
-    except (json.JSONDecodeError, IndexError, TypeError):
+    except (ValueError, IndexError, TypeError):
         pass
 
     # If all strategies fail, raise an error
