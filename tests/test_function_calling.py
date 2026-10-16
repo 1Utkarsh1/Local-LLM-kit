@@ -118,5 +118,34 @@ class TestFunctionCalling(unittest.TestCase):
         self.assertEqual(func_calls[0].arguments["params"]["limit"], 5)
 
 
+class TestFunctionCallNullFieldHandling(unittest.TestCase):
+    def test_from_dict_null_arguments(self):
+        fc = FunctionCall.from_dict({"name": "test", "arguments": None})
+        self.assertEqual(fc.name, "test")
+        self.assertEqual(fc.arguments, {})
+
+    def test_from_dict_missing_arguments(self):
+        fc = FunctionCall.from_dict({"name": "test"})
+        self.assertEqual(fc.name, "test")
+        self.assertEqual(fc.arguments, {})
+
+    def test_from_dict_missing_name_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            FunctionCall.from_dict({"arguments": "{}"})
+
+    def test_to_dict_none_arguments_serializes_empty_object(self):
+        fc = FunctionCall(name="x", arguments=None)
+        self.assertEqual(json.loads(fc.to_dict()["arguments"]), {})
+
+    def test_parse_null_arguments(self):
+        calls = parse_function_calls('{"name": "test", "arguments": null}')
+        self.assertEqual(calls[0].name, "test")
+        self.assertEqual(calls[0].arguments, {})
+
+    def test_roundtrip_null_arguments(self):
+        fc = FunctionCall.from_dict({"name": "test", "arguments": None})
+        fc2 = FunctionCall.from_dict(fc.to_dict())
+        self.assertEqual(fc2.arguments, {})
+
 if __name__ == "__main__":
     unittest.main()

@@ -27,7 +27,7 @@ import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from .function_calling import FunctionCall, FunctionRegistry, parse_function_calls
+from .function_calling import FunctionCall, FunctionRegistry, parse_function_calls, _coerce_arguments
 
 logger = logging.getLogger(__name__)
 
@@ -156,16 +156,20 @@ class ToolCall:
         return {
             "id": self.id,
             "type": "function",
-            "function": {"name": self.name, "arguments": json.dumps(self.arguments)},
+            "function": {"name": self.name, "arguments": json.dumps(self.arguments or {})},
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolCall":
+        if not isinstance(data, dict):
+            raise ValueError("ToolCall.from_dict expects a dict, got %r" % type(data).__name__)
         fn = data.get("function", data)
-        args = fn.get("arguments", {})
-        if isinstance(args, str):
-            args = json.loads(args) if args.strip() else {}
-        return cls(name=fn["name"], arguments=args, call_id=data.get("id"))
+        if not isinstance(fn, dict):
+            raise ValueError("ToolCall.from_dict requires a 'function' dict, got: %r" % (data,))
+        name = fn.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("ToolCall.from_dict requires a function 'name', got: %r" % (data,))
+        return cls(name=name, arguments=_coerce_arguments(fn.get("arguments", {})), call_id=data.get("id"))
 
     def to_function_call(self) -> FunctionCall:
         return FunctionCall(name=self.name, arguments=self.arguments)
@@ -292,9 +296,7 @@ def parse_tool_calls(text: str) -> List[ToolCall]:
                     if "function" in item:
                         calls.append(ToolCall.from_dict(item))
                     elif "name" in item:
-                        args = item.get("arguments", {})
-                        if isinstance(args, str):
-                            args = json.loads(args) if args.strip() else {}
+                        args = _coerce_arguments(item.get("arguments", {}))
                         calls.append(
                             ToolCall(name=item["name"], arguments=args, call_id=item.get("id"))
                         )

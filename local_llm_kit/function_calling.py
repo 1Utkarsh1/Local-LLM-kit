@@ -10,6 +10,26 @@ from typing import Any, Callable, Dict, List
 logger = logging.getLogger(__name__)
 
 
+def _coerce_arguments(raw: Any) -> Dict[str, Any]:
+    """Normalize a raw arguments value into a dict.
+
+    Handles JSON strings, dicts, None, empty strings, and falls back
+    to an empty dict for anything else. Shared by FunctionCall /
+    ToolCall deserialization and the model-output parsers so that null
+    or missing arguments never propagate as ``None``.
+    """
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return {}
+        return json.loads(raw)
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
 class FunctionCall:
     """Represents a function call parsed from model output."""
 
@@ -31,7 +51,7 @@ class FunctionCall:
         Returns:
             Dict with name and arguments
         """
-        return {"name": self.name, "arguments": json.dumps(self.arguments)}
+        return {"name": self.name, "arguments": json.dumps(self.arguments or {})}
 
     @classmethod
     def from_dict(cls, data: Dict[str, str]) -> "FunctionCall":
@@ -43,8 +63,16 @@ class FunctionCall:
 
         Returns:
             FunctionCall instance
+
+        Raises:
+            ValueError: If ``name`` is missing or empty.
         """
-        return cls(name=data["name"], arguments=json.loads(data["arguments"]))
+        if not isinstance(data, dict):
+            raise ValueError("FunctionCall.from_dict expects a dict, got %r" % type(data).__name__)
+        name = data.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("FunctionCall.from_dict requires a non-empty 'name'")
+        return cls(name=name, arguments=_coerce_arguments(data.get("arguments")))
 
 
 class FunctionRegistry:
@@ -143,18 +171,16 @@ def parse_function_calls(text: str) -> List[FunctionCall]:
     try:
         data = json.loads(text)
         if isinstance(data, dict) and "name" in data and "arguments" in data:
-            if isinstance(data["arguments"], str):
-                args = json.loads(data["arguments"])
-            else:
-                args = data["arguments"]
-            return [FunctionCall(data["name"], args)]
+            return [FunctionCall(data["name"], _coerce_arguments(data.get("arguments")))]
         elif isinstance(data, dict) and "function_call" in data:
             func_call = data["function_call"]
-            if isinstance(func_call["arguments"], str):
-                args = json.loads(func_call["arguments"])
-            else:
-                args = func_call["arguments"]
-            return [FunctionCall(func_call["name"], args)]
+            if isinstance(func_call, dict) and "name" in func_call:
+                return [
+                    FunctionCall(
+                        func_call["name"],
+                        _coerce_arguments(func_call.get("arguments")),
+                    )
+                ]
     except (json.JSONDecodeError, KeyError, TypeError):
         pass
 
@@ -163,9 +189,9 @@ def parse_function_calls(text: str) -> List[FunctionCall]:
         # Pattern: function_call({ "name": "...", "arguments": {...} })
         r"function_call\(\s*(\{.*\})\s*\)",
         # Pattern: { "name": "...", "arguments": {...} }
-        r'(\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{.*\}\s*\})',
+        r'(\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*(?:\{.*\}|\s*null\s*)\s*\})',
         # Pattern: name: "...", arguments: {...}
-        r'name\s*:\s*"([^"]+)"\s*,\s*arguments\s*:\s*(\{.*\})',
+        r'name\s*:\s*"([^"]+)"\s*,\s*arguments\s*:\s*(null|\{.*\})',
     ]
 
     for pattern in function_call_patterns:
@@ -176,15 +202,12 @@ def parse_function_calls(text: str) -> List[FunctionCall]:
                     # Full JSON object in one group
                     data = json.loads(matches.group(1))
                     if isinstance(data, dict) and "name" in data and "arguments" in data:
-                        if isinstance(data["arguments"], str):
-                            args = json.loads(data["arguments"])
-                        else:
-                            args = data["arguments"]
+                        args = _coerce_arguments(data.get("arguments"))
                         return [FunctionCall(data["name"], args)]
                 elif len(matches.groups()) == 2:
                     # Name and arguments in separate groups
                     name = matches.group(1)
-                    args = json.loads(matches.group(2))
+                    args = _coerce_arguments(json.loads(matches.group(2)))
                     return [FunctionCall(name, args)]
             except (json.JSONDecodeError, IndexError, TypeError):
                 continue

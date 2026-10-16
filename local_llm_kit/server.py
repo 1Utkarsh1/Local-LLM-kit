@@ -208,8 +208,8 @@ def _pseudo_embedding(text: str, dim: int = 32) -> List[float]:
     return vec
 
 
-def _try_get_embeddings(llm: Any, texts: List[str]) -> Optional[List[List[float]]]:
-    """Use native embedding support if the llm provides it, else None."""
+def _try_get_embeddings(llm: Any, texts: List[str]) -> Optional[Any]:
+    """Use native embedding support if the llm provides it."""
     for method_name in ("embed", "embeddings", "get_embeddings"):
         method = getattr(llm, method_name, None)
         if callable(method):
@@ -225,7 +225,7 @@ def _try_get_embeddings(llm: Any, texts: List[str]) -> Optional[List[List[float]
             try:
                 if isinstance(result, dict) and "data" in result:
                     # OpenAI-shaped dict already
-                    return None  # signal caller to use it directly if needed
+                    return result
                 return [list(map(float, v)) for v in result]
             except Exception:
                 continue
@@ -573,9 +573,14 @@ def create_app(
         vectors = None
         if llm_obj is not None:
             try:
-                vectors = _try_get_embeddings(llm_obj, texts)
+                result = _try_get_embeddings(llm_obj, texts)
             except Exception:
-                vectors = None
+                result = None
+            if isinstance(result, dict) and "data" in result:
+                # OpenAI-shaped response from the LLM — use directly.
+                result.setdefault("model", requested_model)
+                return JSONResponse(content=result)
+            vectors = result
         if vectors is None:
             vectors = [_pseudo_embedding(t) for t in texts]
 

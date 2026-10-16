@@ -442,5 +442,31 @@ class TestShouldCallTools(unittest.TestCase):
         self.assertTrue(should_call_tools(None, "auto"))
 
 
+class TestToolCallNullFieldHandling(unittest.TestCase):
+    def test_from_dict_null_arguments(self):
+        tc = ToolCall.from_dict({"function": {"name": "w", "arguments": None}})
+        self.assertEqual(tc.name, "w")
+        self.assertEqual(tc.arguments, {})
+
+    def test_from_dict_missing_name_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            ToolCall.from_dict({"function": {"arguments": {}}})
+
+    def test_to_dict_none_arguments(self):
+        tc = ToolCall(name="w", arguments=None)
+        self.assertEqual(json.loads(tc.to_dict()["function"]["arguments"]), {})
+
+    def test_parse_tool_calls_null_arguments(self):
+        calls = parse_tool_calls(
+            'Thinking...  {"name": "get_weather", "arguments": null} to get the result.'
+        )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].name, "get_weather")
+        self.assertEqual(calls[0].arguments, {})
+
+    def test_parse_tool_calls_missing_name_raises(self):
+        with self.assertRaises((ValueError, KeyError)):
+            parse_tool_calls('Thinking...  {"arguments": {}} to get the result.')
+
 if __name__ == "__main__":
     unittest.main()
