@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unverified HTTP endpoints could pass the locality check. Unknown routing now fails closed; loopback alone is insufficient.
 - Reasoning metadata could be dropped from native chat responses and streams.
 - Conversation logs lost original tool IDs, usage and finish reasons, used separate in-memory stores per thread, and could commit partial interactions.
+- Windows concurrent model-file publication could fail on transient file locks. Atomic replacement now retries bounded Windows locking errors and preserves the prior model on persistent failure.
 - Template loading depended on YAML for plain text, and directory loading hid parse failures.
 - Hardware advice fabricated missing measurements and combined separate GPUs into an unrealistic memory budget.
 

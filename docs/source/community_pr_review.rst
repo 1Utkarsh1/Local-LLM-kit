@@ -67,5 +67,8 @@ HTTP JSON/SSE). CI tests Python 3.9--3.14 and includes platform checks.
 
 Native Apple runtime inference requires an eligible Mac and SDK setup;
 AirLLM/GPU behavior and every external engine/model combination are not
-certified by protocol tests. No supported-server popularity ranking,
+certified by protocol tests. The added Windows job exposed a concurrent model-file
+publication race; bounded Windows lock-error retries preserve atomic replacement
+and the prior cache on persistent failure. Platform-specific path and connection
+error assumptions in tests were corrected. No supported-server popularity ranking,
 performance superiority or guaranteed memory fit is established.

@@ -433,7 +433,8 @@ class TestDiscover(unittest.TestCase):
     def test_unreachable_endpoints_are_reported_not_raised(self):
         report = discover(include_known=False, extra_urls=[dead_url()], timeout=0.5)
         self.assertEqual(len(report.offline), 1)
-        self.assertIn("refused", (report.offline[0].error or "").lower())
+        self.assertTrue(report.offline[0].error)
+        self.assertIsNone(report.offline[0].status)
 
     def test_find_local_server_returns_none_when_nothing_answers(self):
         self.assertIsNone(

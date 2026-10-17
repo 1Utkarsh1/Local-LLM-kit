@@ -138,7 +138,7 @@ class TestPullCommand(unittest.TestCase):
         )
         self.assertEqual(code, 0, msg=out[-500:])
         self.assertNotIn("unrecognised signature", out)
-        self.assertIn("/cache/m.gguf", out)
+        self.assertIn(os.path.abspath("/cache/m.gguf"), out)
         repo_id, filename, cache_dir, revision = dl.call_args[0][:4]
         self.assertEqual(repo_id, "owner/name")
         self.assertEqual(filename, "file.gguf")

@@ -440,3 +440,52 @@ def test_invalid_tool_timeout_fails_before_inference_or_execution(timeout):
     with pytest.raises(ValueError, match="tool_timeout"):
         llm.chat([{"role": "user", "content": "hello"}], tool_timeout=timeout)
     assert backend.requests == []
+
+
+@pytest.mark.parametrize("code", [5, 32, 33])
+def test_download_publication_retries_transient_windows_file_locks(tmp_path, code):
+    from local_llm_kit import models
+    from tests.test_models import FakeResponse
+
+    destination = tmp_path / "model.gguf"
+    destination.write_bytes(b"OLD")
+    error = PermissionError("Windows file temporarily locked")
+    error.winerror = code
+    replace = models.os.replace
+    attempts = []
+
+    def locked_once(source, target):
+        attempts.append(source)
+        if len(attempts) == 1:
+            assert destination.read_bytes() == b"OLD"
+            raise error
+        replace(source, target)
+
+    with (
+        mock.patch("urllib.request.urlopen", return_value=FakeResponse(b"COMPLETE")),
+        mock.patch.object(models.os, "replace", side_effect=locked_once),
+        mock.patch.object(models.time, "sleep"),
+    ):
+        models._download_url("https://huggingface.co/fixture", str(destination))
+    assert destination.read_bytes() == b"COMPLETE" and len(attempts) == 2
+    assert list(tmp_path.glob("*.part")) == []
+
+
+def test_download_permanent_publication_failure_preserves_existing_model(tmp_path):
+    from local_llm_kit import models
+    from tests.test_models import FakeResponse
+
+    destination = tmp_path / "model.gguf"
+    destination.write_bytes(b"OLD")
+    error = PermissionError("permanently inaccessible")
+    error.winerror = 5
+    with (
+        mock.patch("urllib.request.urlopen", return_value=FakeResponse(b"NEW")),
+        mock.patch.object(models.os, "replace", side_effect=error) as replace,
+        mock.patch.object(models.time, "sleep"),
+    ):
+        with pytest.raises(RuntimeError, match="inaccessible"):
+            models._download_url("https://huggingface.co/fixture", str(destination))
+    assert replace.call_count == 4
+    assert destination.read_bytes() == b"OLD"
+    assert list(tmp_path.glob("*.part")) == []
