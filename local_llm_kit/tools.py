@@ -324,6 +324,23 @@ def parse_tool_calls(text: str) -> List[ToolCall]:
     raise ValueError("No tool call could be parsed from the output")
 
 
+def parse_tool_calls_safe(text: str) -> List[ToolCall]:
+    """Parse tool calls from model output, never raising.
+
+    Like :func:`parse_tool_calls` but returns an empty list instead of
+    raising ``ValueError`` when no tool call can be parsed.  Useful for
+    streaming chunks or free-form model output where a missing tool call
+    is a valid state rather than an error.
+
+    Inputs longer than ``max_chars`` are truncated before parsing (ReDoS
+    mitigation, same as :func:`parse_tool_calls`).
+    """
+    try:
+        return parse_tool_calls(text)
+    except (ValueError, TypeError, KeyError):
+        return []
+
+
 def should_call_tools(
     tool_choice: Union[str, Dict[str, Any], None],
     function_call: Union[str, Dict[str, str]],
@@ -343,6 +360,7 @@ __all__ = [
     "function_to_json_schema",
     "normalize_tools",
     "parse_tool_calls",
+    "parse_tool_calls_safe",
     "should_call_tools",
     # Re-exported legacy names so `from .tools import ...` covers both APIs
     "FunctionCall",

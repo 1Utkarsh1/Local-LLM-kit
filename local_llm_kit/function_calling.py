@@ -66,7 +66,17 @@ class FunctionCall:
         if arguments is None:
             raise ValueError("FunctionCall record 'arguments' must not be null")
         if isinstance(arguments, str):
-            arguments = json.loads(arguments) if arguments.strip() else {}
+            stripped = arguments.strip()
+            if not stripped:
+                arguments = {}
+            else:
+                try:
+                    arguments = json.loads(stripped)
+                except json.JSONDecodeError:
+                    # The arguments string may be a partial/incremental chunk
+                    # (common in streaming).  Try a best-effort repair by
+                    # closing truncated strings and objects.
+                    arguments = _repair_json_arguments(stripped)
         if not isinstance(arguments, dict):
             raise ValueError(
                 "FunctionCall record 'arguments' must be a dict or JSON object string."
@@ -221,6 +231,58 @@ def parse_function_calls(text: str) -> List[FunctionCall]:
 
     # If all strategies fail, raise an error
     raise ValueError("No function call could be parsed from the output")
+
+
+def _repair_json_arguments(text: str) -> Dict[str, Any]:
+    """Best-effort repair of truncated / malformed JSON argument strings.
+
+    Models that stream token-by-token can emit partial JSON such as
+    ``{"location": "Paris`` or ``{"a": 1, "b":``.  This helper tries to
+    salvage a usable dict so downstream callers don't crash on a half-
+    written argument blob.  Returns ``{}`` on total failure.
+    """
+    # Attempt 1: try json5-style or direct completion by closing brackets.
+    candidates = [
+        text,
+        text + '"}',  # close a string value
+        text + "}",  # close object
+        text + "]}",  # close array in object value
+        text + '"]',
+        text + '"}]',
+    ]
+    for cand in candidates:
+        try:
+            result = json.loads(cand)
+            if isinstance(result, dict):
+                return result
+            if isinstance(result, list):
+                return {"_items": result}
+            if isinstance(result, str):
+                return {"value": result}
+        except (json.JSONDecodeError, TypeError):
+            continue
+    # Attempt 2: brace-match and extract the largest valid sub-object.
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char in "{[":
+            try:
+                value, _end = decoder.raw_decode(text, index)
+                if isinstance(value, dict):
+                    return value
+                if isinstance(value, list):
+                    return {"_items": value}
+            except (json.JSONDecodeError, ValueError):
+                continue
+    # Attempt 3: last resort -- empty dict so the call can proceed.
+    return {}
+
+
+def _safe_json_loads(text: str) -> Any:
+    """Parse JSON, returning None on failure instead of raising."""
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def add_function(name: str, schema: Dict[str, Any], implementation: Callable) -> None:

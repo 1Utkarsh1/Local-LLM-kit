@@ -289,6 +289,7 @@ class LLM:
         backend_kwargs: Optional[Dict[str, Any]] = None,
         backend_instance: Optional[BaseBackend] = None,
         use_cache: bool = True,
+        conversation_log: Optional[Any] = None,
     ):
         if not isinstance(model_path, str) or not model_path.strip():
             raise ValueError("model_path must be a non-empty string.")
@@ -335,6 +336,11 @@ class LLM:
         # ToolRegistry subclasses FunctionRegistry, so both APIs share one store.
         self.tool_registry = ToolRegistry()
         self.function_registry = self.tool_registry  # backwards-compat alias
+
+        # Optional SQLite conversation logger (lazy import; see
+        # local_llm_kit.conversation_log.ConversationLog).  When set, each
+        # chat() response is logged via ``log_interaction``.
+        self.conversation_log = conversation_log
 
     # -- backend setup ----------------------------------------------------
     def _init_backend(self, backend_name: Optional[str]) -> BaseBackend:
@@ -757,7 +763,26 @@ class LLM:
         }
         if stream:
             return self._chat_streaming(history, active_tools, gen_params, **loop_kwargs)
-        return self._chat_once(history, active_tools, gen_params, **loop_kwargs)
+        response = self._chat_once(history, active_tools, gen_params, **loop_kwargs)
+        if self.conversation_log is not None and not stream:
+            try:
+                tools_used = []
+                choices = response.get("choices", []) if isinstance(response, dict) else []
+                if choices and isinstance(choices, list):
+                    msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+                    if isinstance(msg, dict):
+                        tcs = msg.get("tool_calls") or []
+                        tools_used = list(tcs) if isinstance(tcs, list) else []
+                self.conversation_log.log_interaction(
+                    model=self.model_path,
+                    messages=history,
+                    response=response,
+                    tools_used=tools_used or None,
+                    metadata={"backend": getattr(self, "_backend_name", None)},
+                )
+            except Exception:
+                logger.debug("ConversationLog interaction failed", exc_info=True)
+        return response
 
     def _tool_specs_by_name(
         self, active_tools: List[Dict[str, Any]]

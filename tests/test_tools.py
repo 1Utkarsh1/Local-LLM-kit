@@ -22,6 +22,7 @@ from local_llm_kit.tools import (
     function_to_json_schema,
     normalize_tools,
     parse_tool_calls,
+    parse_tool_calls_safe,
     should_call_tools,
     tool,
 )
@@ -440,6 +441,52 @@ class TestShouldCallTools(unittest.TestCase):
         self.assertTrue(should_call_tools({"name": "w"}, "auto"))
         self.assertFalse(should_call_tools(None, "none"))
         self.assertTrue(should_call_tools(None, "auto"))
+
+
+class TestParseToolCallsSafe(unittest.TestCase):
+    """Phase 2: parse_tool_calls_safe never raises, returns [] on no match."""
+
+    def test_parses_valid_tool_calls(self):
+        text = json.dumps({"tool_calls": [{"name": "f", "arguments": '{"x": 1}'}]})
+        calls = parse_tool_calls_safe(text)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].name, "f")
+        self.assertEqual(calls[0].arguments, {"x": 1})
+
+    def test_empty_string_returns_empty(self):
+        self.assertEqual(parse_tool_calls_safe(""), [])
+
+    def test_plain_text_returns_empty(self):
+        self.assertEqual(parse_tool_calls_safe("hello world"), [])
+
+    def test_partial_tagged_payload_returns_empty(self):
+        # An unclosed  tag cannot be parsed -> [] instead of ValueError.
+        self.assertEqual(parse_tool_calls_safe('<tools>{"name": "f"} '), [])
+
+    def test_truncated_json_repaired(self):
+        # arguments value is a truncated JSON string -> repaired by FunctionCall.
+        text = json.dumps({"tool_calls": [{"name": "w", "arguments": '{"loc": "Par'}]})
+        calls = parse_tool_calls_safe(text)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].name, "w")
+        self.assertEqual(calls[0].arguments, {"loc": "Par"})
+
+
+class TestFunctionCallRepair(unittest.TestCase):
+    """Phase 2: FunctionCall.from_dict repairs truncated JSON arguments."""
+
+    def test_truncated_string_value_repaired(self):
+        fc = FunctionCall.from_dict({"name": "w", "arguments": '{"location": "Paris'})
+        self.assertEqual(fc.arguments, {"location": "Paris"})
+
+    def test_empty_string_arguments(self):
+        fc = FunctionCall.from_dict({"name": "w", "arguments": ""})
+        self.assertEqual(fc.arguments, {})
+
+    def test_non_dict_after_repair_raises(self):
+        # "null" parses to None which is not a dict -> ValueError
+        with self.assertRaises(ValueError):
+            FunctionCall.from_dict({"name": "w", "arguments": "null"})
 
 
 if __name__ == "__main__":

@@ -48,6 +48,8 @@ __all__ = [
     "handle_pull_command",
     "handle_list_command",
     "handle_embed_command",
+    "handle_logs_command",
+    "handle_template_command",
 ]
 
 
@@ -335,6 +337,23 @@ def _build_backend_kwargs(args: argparse.Namespace) -> Dict[str, Any]:
     return kwargs
 
 
+def _resolve_conversation_log(spec: Optional[str]) -> Any:
+    """Build an optional :class:`ConversationLog` from a CLI spec.
+
+    *spec* is ``None`` (off), ``"default"`` (standard XDG path), or a
+    filesystem path.  Returns ``None`` when logging is not requested.
+    """
+    if spec is None:
+        return None
+    try:
+        from .conversation_log import DEFAULT_LOG_PATH, ConversationLog
+    except ImportError:
+        _fail("conversation logging requires sqlite3 (Python standard library).")
+        return None  # pragma: no cover
+    path = DEFAULT_LOG_PATH if spec == "default" else spec
+    return ConversationLog(path)
+
+
 def _create_llm(args: argparse.Namespace, backend_kwargs: Dict[str, Any]) -> Any:
     """Lazily import and instantiate LLM with graceful error messages."""
     try:
@@ -348,6 +367,8 @@ def _create_llm(args: argparse.Namespace, backend_kwargs: Dict[str, Any]) -> Any
     if not model:
         _fail("a model is required (pass --model/-m).")
     backend = _normalize_backend(getattr(args, "backend", None))
+    # Optional SQLite conversation logger (Phase 2 feature).
+    conversation_log = _resolve_conversation_log(getattr(args, "conversation_log", None))
     try:
         return LLM(
             model_path=model,
@@ -355,6 +376,7 @@ def _create_llm(args: argparse.Namespace, backend_kwargs: Dict[str, Any]) -> Any
             temperature=getattr(args, "temperature", 0.7),
             max_new_tokens=getattr(args, "max_tokens", 512) or 512,
             backend_kwargs=backend_kwargs,
+            conversation_log=conversation_log,
         )
     except ImportError as exc:
         missing = str(exc)
@@ -844,6 +866,90 @@ def build_parser() -> argparse.ArgumentParser:
         "--input-file",
         default=None,
         help="Read input texts from a file (one per non-empty line), " "or '-' for stdin.",
+    )
+
+    # -- logs ---------------------------------------------------------------
+    # Shared parent parser so --db is available on every logs sub-command.
+    _logs_parent = argparse.ArgumentParser(add_help=False)
+    _logs_parent.add_argument(
+        "--db",
+        default=None,
+        help="Path to the SQLite log database (default: standard XDG path, "
+        "or LOCAL_LLM_KIT_LOG_DB env var).",
+    )
+    logs_p = sub.add_parser(
+        "logs",
+        help="Browse and export SQLite conversation logs.",
+        description="Browse and export conversation logs stored in SQLite.",
+    )
+    logs_sub = logs_p.add_subparsers(dest="logs_command", metavar="LOGS_COMMAND")
+    logs_list_p = logs_sub.add_parser(
+        "list", parents=[_logs_parent], help="List recent conversations."
+    )
+    logs_list_p.add_argument(
+        "--limit", type=int, default=50, help="Max conversations to show (default: 50)."
+    )
+    logs_list_p.add_argument(
+        "--json", dest="json_out", action="store_true", default=False, help="Emit JSON."
+    )
+    logs_show_p = logs_sub.add_parser(
+        "show", parents=[_logs_parent], help="Show a conversation's full history."
+    )
+    logs_show_p.add_argument("id", help="Conversation ID.")
+    logs_show_p.add_argument(
+        "--json", dest="json_out", action="store_true", default=False, help="Emit JSON."
+    )
+    logs_export_p = logs_sub.add_parser(
+        "export", parents=[_logs_parent], help="Export a conversation to JSON or text."
+    )
+    logs_export_p.add_argument("id", help="Conversation ID.")
+    logs_export_p.add_argument(
+        "format",
+        choices=["json", "text", "openai"],
+        default="json",
+        help="Export format (default: json).",
+    )
+    logs_export_p.add_argument(
+        "--output", "-o", default=None, help="Write to file instead of stdout."
+    )
+
+    # -- template -----------------------------------------------------------
+    template_p = sub.add_parser(
+        "template",
+        help="Manage and render prompt templates.",
+        description="List, show, and render prompt templates from the default registry or a YAML/JSON file.",
+    )
+    template_sub = template_p.add_subparsers(dest="template_command", metavar="TEMPLATE_COMMAND")
+    template_sub.add_parser("list", help="List registered templates.")
+    template_show_p = template_sub.add_parser("show", help="Show a template's raw string.")
+    template_show_p.add_argument("name", help="Template name.")
+    template_render_p = template_sub.add_parser("render", help="Render a template with variables.")
+    template_render_p.add_argument("name", help="Template name.")
+    template_render_p.add_argument(
+        "--var",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Variable substitution (e.g. --var role=user). May be repeated.",
+    )
+    template_render_p.add_argument(
+        "--registry-file",
+        default=None,
+        help="Load templates from a YAML/JSON file before rendering.",
+    )
+    template_render_p.add_argument(
+        "--registry-dir",
+        default=None,
+        help="Load templates from a directory of YAML/JSON files.",
+    )
+
+    # -- logs flag for chat -------------------------------------------------
+    chat_p.add_argument(
+        "--conversation-log",
+        dest="conversation_log",
+        default=None,
+        help="Path to a SQLite conversation-log DB (enables logging of chat interactions). "
+        "Pass 'default' to use the standard path.",
     )
 
     return parser
@@ -1496,8 +1602,252 @@ def handle_embed_command(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Logs command handlers
+# ---------------------------------------------------------------------------
+
+
+def _get_log_path(args: Any) -> str:
+    """Resolve the SQLite log path from CLI args."""
+    path = getattr(args, "conversation_log", None)
+    # Check for global --db flag (not yet added) or env var
+    env_path = os.environ.get("LOCAL_LLM_KIT_LOG_DB")
+    if path is None:
+        if args.command == "logs":
+            # Use --db if provided on the logs subcommand, else env, else default
+            path = getattr(args, "db", None)
+        if path is None:
+            path = env_path
+    if path == "default" or path is None:
+        from .conversation_log import DEFAULT_LOG_PATH
+
+        return DEFAULT_LOG_PATH
+    return path
+
+
+def handle_logs_list(args: Any) -> int:
+    """Handle ``logs list``."""
+    try:
+        from .conversation_log import ConversationLog
+    except ImportError:
+        _fail("conversation logging requires sqlite3 (Python standard library).")
+    path = _get_log_path(args)
+    log = ConversationLog(path)
+    limit = int(getattr(args, "limit", 50))
+    convs = log.get_conversations(limit=limit)
+    log.close()
+    if getattr(args, "json_out", False):
+        print(json.dumps(convs, indent=2))
+        return 0
+    if not convs:
+        print("No conversations logged.")
+        return 0
+    print("Conversations (newest first):")
+    for c in convs:
+        created = c.get("created_at", "")
+        model = c.get("model") or "(no model)"
+        meta = ""
+        m = c.get("metadata")
+        if isinstance(m, dict) and m:
+            meta = " %s" % json.dumps(m, default=str)
+        print(
+            "  {id}  {created}  {model}{meta}".format(
+                id=c.get("id"),
+                created=created,
+                model=model,
+                meta=meta,
+            )
+        )
+    return 0
+
+
+def handle_logs_show(args: Any) -> int:
+    """Handle ``logs show <id>``."""
+    try:
+        from .conversation_log import ConversationLog
+    except ImportError:
+        _fail("conversation logging requires sqlite3 (Python standard library).")
+    path = _get_log_path(args)
+    log = ConversationLog(path)
+    try:
+        conv = log.get_conversation(args.id)
+        history = log.get_conversation_history(args.id)
+    except KeyError:
+        _fail("Conversation not found: {0}".format(args.id))
+    finally:
+        log.close()
+    if getattr(args, "json_out", False):
+        print(json.dumps({"conversation": conv, "history": history}, indent=2))
+        return 0
+    # Human-readable text export
+    lines = ["=== Conversation {0} ===".format(args.id)]
+    lines.append("Model: {0}".format(conv.get("model") or "(unknown)"))
+    sys = conv.get("system_prompt")
+    if sys:
+        lines.append("System: {0}".format(sys))
+    lines.append("")
+    for msg in history:
+        role = msg.get("role", "?")
+        content = msg.get("content")
+        if role == "assistant" and not content:
+            content = "(no text content)"
+        if content:
+            lines.append("{0}: {1}".format(role.capitalize(), content))
+        for tc in msg.get("tool_calls", []):
+            args_val = tc.get("arguments", {})
+            if isinstance(args_val, str):
+                try:
+                    args_val = json.loads(args_val)
+                except (ValueError, TypeError):
+                    pass
+            lines.append(
+                "  Assistant called: {name}({args})".format(
+                    name=tc.get("name"),
+                    args=json.dumps(args_val) if isinstance(args_val, dict) else args_val,
+                )
+            )
+            res = tc.get("result")
+            if res:
+                lines.append("    Result: {0}".format(res))
+    lines.append("")
+    lines.append("=== End ===")
+    print("\n".join(lines))
+    return 0
+
+
+def handle_logs_export(args: Any) -> int:
+    """Handle ``logs export <id> <format>``."""
+    try:
+        from .conversation_log import ConversationLog
+    except ImportError:
+        _fail("conversation logging requires sqlite3 (Python standard library).")
+    path = _get_log_path(args)
+    log = ConversationLog(path)
+    try:
+        text = log.export_conversation(args.id, args.format)
+    finally:
+        log.close()
+    output = getattr(args, "output", None)
+    if output:
+        with open(output, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        print("Exported conversation {0} to {1}".format(args.id, output))
+    else:
+        print(text)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Template command handlers
+# ---------------------------------------------------------------------------
+
+
+def _parse_var(var_str: str, name: str = "--var") -> Any:
+    """Parse a ``key=value`` string for ``--var`` CLI flags."""
+    if "=" not in var_str:
+        _fail("{0} must be in the form key=value; got: {1!r}".format(name, var_str))
+    key, _, value = var_str.partition("=")
+    return key, value
+
+
+def _load_template_registry(args: Any) -> Any:
+    """Use the default registry, optionally extending from a file/dir."""
+    from .prompt_templates import DEFAULT_REGISTRY
+
+    reg = DEFAULT_REGISTRY
+    rf = getattr(args, "registry_file", None)
+    if rf:
+        reg.register_from_file(rf)
+    rd = getattr(args, "registry_dir", None)
+    if rd:
+        try:
+            reg.load_directory(rd)
+        except Exception as exc:
+            _fail("could not load template directory {0!r}: {1}".format(rd, exc))
+    return reg
+
+
+def handle_template_list(args: Any) -> int:
+    """Handle ``template list``."""
+    reg = _load_template_registry(args)
+    templates = reg.list_templates()
+    if not templates:
+        print("No templates registered.")
+        return 0
+    print("Registered templates:")
+    for name in sorted(templates):
+        tmpl = templates[name]
+        desc = tmpl.description or ""
+        line = "  {0}".format(name)
+        if desc:
+            line += " -- {0}".format(desc)
+        print(line)
+    return 0
+
+
+def handle_template_show(args: Any) -> int:
+    """Handle ``template show <name>``."""
+    reg = _load_template_registry(args)
+    try:
+        tmpl = reg.get(args.name)
+    except KeyError:
+        _fail("template not found: {0}".format(args.name))
+    print(tmpl.template_str)
+    return 0
+
+
+def handle_template_render(args: Any) -> int:
+    """Handle ``template render <name> --var key=value ...``."""
+    reg = _load_template_registry(args)
+    try:
+        tmpl = reg.get(args.name)
+    except KeyError:
+        _fail("template not found: {0}".format(args.name))
+    variables: Dict[str, str] = {}
+    for var_str in getattr(args, "var", []) or []:
+        key, value = _parse_var(var_str)
+        variables[key] = value
+    try:
+        result = tmpl.render(**variables)
+    except KeyError as exc:
+        _fail("missing required variable: {0}".format(exc))
+    print(result)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
+
+
+def handle_logs_command(args: argparse.Namespace) -> int:
+    """Route ``logs <subcommand>`` to the right handler."""
+    sub = getattr(args, "logs_command", None)
+    if sub == "list":
+        return handle_logs_list(args)
+    elif sub == "show":
+        return handle_logs_show(args)
+    elif sub == "export":
+        return handle_logs_export(args)
+    else:
+        # No sub-command given: show logs help and stop.
+        parser = build_parser()
+        parser.parse_args(["logs", "--help"])  # prints help, exits 0
+        return 1  # pragma: no cover - unreachable; parse_args exits
+
+
+def handle_template_command(args: argparse.Namespace) -> int:
+    """Route ``template <subcommand>`` to the right handler."""
+    sub = getattr(args, "template_command", None)
+    if sub == "list":
+        return handle_template_list(args)
+    elif sub == "show":
+        return handle_template_show(args)
+    elif sub == "render":
+        return handle_template_render(args)
+    else:
+        parser = build_parser()
+        parser.parse_args(["template", "--help"])  # prints help, exits 0
+        return 1  # pragma: no cover - unreachable; parse_args exits
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -1527,6 +1877,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             handle_list_command(args)
         elif command == "embed":
             handle_embed_command(args)
+        elif command == "logs":
+            return handle_logs_command(args)
+        elif command == "template":
+            return handle_template_command(args)
         else:
             parser.print_help()
             return 1

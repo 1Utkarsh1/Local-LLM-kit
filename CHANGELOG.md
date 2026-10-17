@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+#### Phase 2: SQLite conversation logging
+- `local_llm_kit.conversation_log.ConversationLog` — a stdlib-only (SQLite) persistent store for conversations, messages, and tool-call records. Thread-safe (thread-local connections), supports `log_interaction()`, `get_conversation_history()`, `search()`, `export_conversation()` (JSON/text/OpenAI formats), and a `get_conversation_log()` singleton helper.
+- CLI `logs list` / `logs show` / `logs export` subcommands.
+- `LLM(conversation_log=...)` and `local-llm-kit chat --conversation-log <path>` flag to automatically log every chat interaction.
+
+#### Phase 2: Prompt templates
+- `local_llm_kit.prompt_templates.PromptTemplate` — lightweight `{{var}}` / `{{var|default}}` substitution that is JSON-safe (only double-brace expressions are replaced).
+- `TemplateRegistry` with `load_directory()` (JSON/YAML) and module-level `register_template` / `get_template` / `render_template` helpers backed by `DEFAULT_REGISTRY`.
+- CLI `template list` / `template show` / `template render --var key=value` subcommands.
+
+#### Phase 2: Tool-call reliability
+- `parse_tool_calls_safe()` — a non-raising variant of `parse_tool_calls` that returns `[]` instead of `ValueError` for malformed or empty output.
+- `FunctionCall.from_dict` now best-effort repairs truncated/malformed JSON argument strings (common in streaming) via `_repair_json_arguments`, falling back to `{}` instead of crashing.
+
 - Native `apple-foundation` backend using Apple's on-device Foundation Models (`apple-fm-sdk`). Supports `chat()`/`complete()`, native function calling (OpenAI tools converted to `apple_fm_sdk.Tool` and executed on-device), and JSON `response_format` via Apple's `json_schema` guided generation. Requires macOS 26.0+ with Apple Intelligence enabled; streaming is unsupported.
 - Auto-detection of the Apple backend on macOS 26+ when available (low priority behind the existing server/gguf/ollama/`transformers` resolution).
 - CLI `--backend apple-foundation` / `--backend apple` and a gated `implementations`/`execute_tools` pass-through for tool-needing native backends.

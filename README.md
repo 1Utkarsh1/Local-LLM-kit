@@ -338,6 +338,56 @@ All `chat`/`complete`/`embed` commands accept `--backend echo|transformers|llama
 
 Server presets and `airllm` are also accepted by the CLI. `pull` reuses repository/revision-specific and URL-specific caches; `--force` refreshes a download. Failed transfers preserve existing complete files. URL cache paths now include a URL hash, so older flat URL caches may be downloaded once again.
 
+### Conversation logging (SQLite)
+
+Every chat interaction can be persisted to a SQLite database (stdlib only):
+
+```python
+from local_llm_kit import LLM, ConversationLog
+
+log = ConversationLog("/path/to/chat.db")
+llm = LLM(model_path="echo", backend="echo", conversation_log=log)
+llm.chat(messages=[{"role": "user", "content": "Hello"}])
+
+# Later — review or export:
+print(log.export_conversation("<conv-id>", format="text"))
+```
+
+Via the CLI:
+
+```bash
+local-llm-kit chat -m echo --backend echo --conversation-log ./chat.db -q "Hello"
+local-llm-kit logs list --db ./chat.db
+local-llm-kit logs show <conv-id> --db ./chat.db
+local-llm-kit logs export <conv-id> text --db ./chat.db -o ./log.txt
+```
+
+Use `--conversation-log default` (or `LOCAL_LLM_KIT_LOG_DB` env var) to use the standard platform-specific data directory.
+
+### Prompt templates
+
+Lightweight `{{var}}` / `{{var|default}}` templates with JSON-safe substitution (single braces are left untouched):
+
+```python
+from local_llm_kit import PromptTemplate, TemplateRegistry, register_template, render_template
+
+register_template("greeting", "Hello {{name|stranger}}!")
+print(render_template("greeting", name="Alice"))   # Hello Alice!
+print(render_template("greeting"))                  # Hello stranger!
+
+# Bulk-load from a directory of JSON/YAML files:
+reg = TemplateRegistry()
+reg.load_directory("./templates/")
+```
+
+Via the CLI:
+
+```bash
+local-llm-kit template list
+local-llm-kit template show greeting
+local-llm-kit template render greeting --var name=Bob
+```
+
 ## Examples
 
 | File | Shows | Offline? |
@@ -347,6 +397,7 @@ Server presets and `airllm` are also accepted by the CLI. `pull` reuses reposito
 | `examples/tools_structured.py` | `@tool` + `response_format` | yes |
 | `examples/rag_minimal.py` | chunk → store → retrieve → chat | yes |
 | `examples/vision_chat.py` | `image_url` message, graceful fallback | yes |
+| `examples/conversation_logging.py` | SQLite logging + prompt templates | `--backend echo` |
 
 ## Migration: 0.1.x → 0.2.0
 

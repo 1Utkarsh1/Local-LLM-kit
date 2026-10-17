@@ -43,9 +43,11 @@ class TestCallValidation(unittest.TestCase):
             for name in (None, "", "   ", 1):
                 with self.subTest(cls=cls, name=name), self.assertRaises(ValueError):
                     cls.from_dict({"name": name, "arguments": "{}"})
-            for arguments in (None, [], 1, "null", "[]", "1", "{broken"):
+            for arguments in (None, [], 1, "null", "[]", "1"):
                 with self.subTest(cls=cls, arguments=arguments), self.assertRaises(ValueError):
                     cls.from_dict({"name": "f", "arguments": arguments})
+            # "{broken" is malformed JSON but the repair helper salvages it
+            # (returns {}), so it no longer raises -- see test_repair_truncated.
 
     def test_valid_argument_forms_roundtrip(self):
         for cls in (FunctionCall, ToolCall):
@@ -70,6 +72,19 @@ class TestCallValidation(unittest.TestCase):
             ):
                 with self.subTest(text=text), self.assertRaises(ValueError):
                     parse_tool_calls(text)
+
+    def test_repair_truncated_arguments(self):
+        """Phase 2: truncated/malformed JSON argument strings are repaired."""
+        from local_llm_kit.function_calling import _repair_json_arguments
+
+        # Truncated string value -> repaired to a complete object.
+        repaired = _repair_json_arguments('{"location": "Paris')
+        self.assertEqual(repaired, {"location": "Paris"})
+        # Truncated object with missing value -> cannot repair, falls back to {}.
+        repaired2 = _repair_json_arguments('{"a": 1, "b":')
+        self.assertEqual(repaired2, {})
+        # Completely broken -> falls back to empty dict (no crash).
+        self.assertEqual(_repair_json_arguments("{broken"), {})
 
 
 class TestModelCacheIdentity(unittest.TestCase):
