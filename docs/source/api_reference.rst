@@ -38,6 +38,41 @@ Set ``stream=True`` on chat or completion to receive an iterator. Chat chunks
 carry ``choices[0].delta``; text-completion chunks carry ``choices[0].text``.
 AirLLM streaming is buffered into one completed backend chunk.
 
+``LLM(..., require_local=True)`` refuses a model the backend reports as routed
+off this machine, and raises if the backend could report routing but the lookup
+failed. ``llm.detect_backend_capabilities()`` returns the backend's own report
+(context length, capabilities, routing) where it supports one; see
+:doc:`discovery`.
+
+Server discovery
+----------------
+
+.. code-block:: python
+
+   from local_llm_kit import discover, find_local_server, probe_endpoint
+
+   report = discover()                      # DiscoveryReport
+   report.live                              # live ServerReport objects
+   report.on_device()                       # live servers with a local model
+   report.first_live(require_local=True)    # ServerReport or None
+   report.to_dict()                         # JSON-ready
+
+   server = find_local_server()             # first on-device server, or None
+   single = probe_endpoint("localhost:1234")
+
+``discover`` takes ``extra_urls``, ``include_known``, ``timeout``, ``enrich`` and
+``max_workers``. ``probe_endpoint`` takes a base URL in any of the forms
+:func:`local_llm_kit.discovery.normalize_base_url` accepts. ``ServerReport``
+exposes ``provider``, ``live``, ``latency_ms``, ``error``, ``models``,
+``context_window``, ``vision``, ``notes``, ``local_models``, ``remote_models``,
+``has_local_models`` and ``all_local``; ``ModelRecord`` exposes ``id``,
+``capabilities``, ``context_length``, ``remote``, ``remote_host`` and the
+``supports_tools``/``supports_vision``/``supports_embeddings``/
+``supports_thinking`` predicates.
+
+Probes are unauthenticated ``GET`` requests to model-listing and metadata
+endpoints only: no downloads, no inference, no credentials.
+
 High-level helpers
 ------------------
 

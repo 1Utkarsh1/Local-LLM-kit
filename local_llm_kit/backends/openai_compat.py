@@ -10,15 +10,24 @@ Endpoints used:
   - ``POST /v1/embeddings``
   - ``GET  /v1/models``
 
+Provider profiles: ``provider`` selects protocol quirks. ``"apfel"`` targets
+``apfel --serve`` (https://github.com/Arthur-Ficial/apfel), whose server
+answers 400 to sampling fields it does not implement (``top_k``/penalties)
+and 501 to ``POST /v1/completions`` and ``POST /v1/embeddings``. That
+profile therefore omits those fields, maps prompt completions to chat,
+and reports no embedding support.
+
 Stdlib-only (``urllib`` + ``json``). ``api_key`` is optional — local
 servers usually don't need one.
 """
 
 import json
+import math
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional, Union
 
+from ..retry import DEFAULT_RETRY, RetryPolicy, coerce_policy, retry_after_seconds
 from .base import BaseBackend
 
 _DONE = "[DONE]"
@@ -41,6 +50,7 @@ class OpenAICompatBackend(BaseBackend):
         context_window: int = 4096,
         headers: Optional[Dict[str, str]] = None,
         provider: str = "openai-compat",
+        max_retries: Union[int, RetryPolicy, None] = None,
         **kwargs: Any,
     ) -> None:
         """Args:
@@ -51,16 +61,30 @@ class OpenAICompatBackend(BaseBackend):
         timeout: HTTP timeout in seconds.
         context_window: Reported context window (override per server).
         headers: Extra HTTP headers.
+        max_retries: Retries for transient failures — a refused connection or a
+            ``429``/``5xx`` answer. Defaults to two retries with exponential
+            backoff and ``Retry-After`` support, matching the official OpenAI
+            Python client. Pass ``0`` for single-attempt behaviour, an int for a
+            custom count, or a :class:`~local_llm_kit.retry.RetryPolicy`.
         """
         self.model = model
         self.provider = provider
-        self.supports_embeddings = provider not in ("gpt4all", "mlx-lm")
+        self.supports_embeddings = provider not in ("gpt4all", "mlx-lm", "apfel")
+        self._chat_only = provider == "apfel"
         self.model_path = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-        self.timeout = timeout
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("timeout must be a finite positive number.")
+        self.timeout = float(timeout)
         self.context_window = context_window
         self.extra_headers = dict(headers or {})
+        self.retry = coerce_policy(DEFAULT_RETRY if max_retries is None else max_retries)
         self.default_params = dict(kwargs)
 
     # -- prompt API (/v1/completions) ----------------------------------
@@ -78,6 +102,14 @@ class OpenAICompatBackend(BaseBackend):
         top_logprobs: Optional[int] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        if self._chat_only:
+            return self.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_new_tokens=max_new_tokens,
+                stream=stream,
+                **kwargs,
+            )
         if stream:
             text = "".join(
                 c["text"]
@@ -127,6 +159,14 @@ class OpenAICompatBackend(BaseBackend):
         top_logprobs: Optional[int] = None,
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
+        if self._chat_only:
+            yield from self.chat_stream(
+                [{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_new_tokens=max_new_tokens,
+                **kwargs,
+            )
+            return
         payload = self._completion_payload(
             prompt,
             temperature,
@@ -196,6 +236,9 @@ class OpenAICompatBackend(BaseBackend):
             }
             if tool_calls:
                 result["tool_calls"] = tool_calls
+            reasoning = "".join(chunk.get("reasoning_content", "") for chunk in chunks)
+            if reasoning:
+                result["reasoning_content"] = reasoning
             return result
         payload = self._chat_payload(
             messages,
@@ -221,6 +264,7 @@ class OpenAICompatBackend(BaseBackend):
         return {
             "text": self._content_text(message.get("content")),
             "tool_calls": message.get("tool_calls"),
+            "reasoning_content": message.get("reasoning_content") or message.get("reasoning"),
             "finish_reason": choice.get("finish_reason", "stop"),
             "usage": resp.get("usage"),
             "model": resp.get("model", self.model),
@@ -264,6 +308,10 @@ class OpenAICompatBackend(BaseBackend):
                 chunk: Dict[str, Any] = {
                     "text": self._content_text(delta.get("content")),
                 }
+                if delta.get("reasoning_content") or delta.get("reasoning"):
+                    chunk["reasoning_content"] = (
+                        delta.get("reasoning_content") or delta["reasoning"]
+                    )
                 if delta.get("tool_calls"):
                     chunk["tool_calls_delta"] = delta["tool_calls"]
                     for part in delta["tool_calls"]:
@@ -286,7 +334,12 @@ class OpenAICompatBackend(BaseBackend):
                     chunk["finish_reason"] = choice["finish_reason"]
                     if calls:
                         chunk["tool_calls"] = [calls[index] for index in sorted(calls)]
-                if chunk["text"] or chunk.get("finish_reason") or "tool_calls_delta" in chunk:
+                if (
+                    chunk["text"]
+                    or chunk.get("finish_reason")
+                    or "tool_calls_delta" in chunk
+                    or chunk.get("reasoning_content")
+                ):
                     yield chunk
 
     # -- embeddings (/v1/embeddings) -----------------------------------
@@ -379,13 +432,15 @@ class OpenAICompatBackend(BaseBackend):
     ) -> Dict[str, Any]:
         # top_k / repetition_penalty are not OpenAI fields; most local
         # servers accept them as extra body params, so pass through.
-        kwargs.setdefault("top_k", top_k)
-        penalty_key = (
-            "repetition_penalty"
-            if self.provider in ("vllm", "sglang", "mlx-lm")
-            else "repeat_penalty"
-        )
-        kwargs.setdefault(penalty_key, repetition_penalty)
+        # Exception: the apfel profile rejects them with HTTP 400, so omit.
+        if self.provider != "apfel":
+            kwargs.setdefault("top_k", top_k)
+            penalty_key = (
+                "repetition_penalty"
+                if self.provider in ("vllm", "sglang", "mlx-lm")
+                else "repeat_penalty"
+            )
+            kwargs.setdefault(penalty_key, repetition_penalty)
         payload = self._base_sampling(temperature, max_new_tokens, top_p, stream=stream, **kwargs)
         payload["prompt"] = prompt
         return payload
@@ -406,13 +461,16 @@ class OpenAICompatBackend(BaseBackend):
         seed: Optional[int],
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        kwargs.setdefault("top_k", top_k)
-        penalty_key = (
-            "repetition_penalty"
-            if self.provider in ("vllm", "sglang", "mlx-lm")
-            else "repeat_penalty"
-        )
-        kwargs.setdefault(penalty_key, repetition_penalty)
+        # See _completion_payload: the apfel profile rejects top_k/penalty
+        # fields with HTTP 400, so omit them there.
+        if self.provider != "apfel":
+            kwargs.setdefault("top_k", top_k)
+            penalty_key = (
+                "repetition_penalty"
+                if self.provider in ("vllm", "sglang", "mlx-lm")
+                else "repeat_penalty"
+            )
+            kwargs.setdefault(penalty_key, repetition_penalty)
         payload = self._base_sampling(temperature, max_new_tokens, top_p, stream=stream, **kwargs)
         payload["messages"] = [
             {
@@ -460,81 +518,98 @@ class OpenAICompatBackend(BaseBackend):
         headers.update(self.extra_headers)
         return headers
 
+    def _open_with_retry(self, request_factory: Any, method: str, path: str) -> Any:
+        """Run a request, retrying transient failures per :attr:`retry`.
+
+        Retries a refused connection (the server has not started yet) and the
+        transient HTTP statuses (``429``, ``5xx`` — llama.cpp answers ``503``
+        while it loads a model). Client errors such as ``400`` fail immediately.
+        The error messages match the single-attempt behaviour.
+        """
+        policy = self.retry
+        attempt = 0
+        while True:
+            try:
+                return urllib.request.urlopen(request_factory(), timeout=self.timeout)
+            except urllib.error.HTTPError as e:
+                if policy.should_retry_status(e.code) and attempt < policy.max_retries:
+                    delay = retry_after_seconds(e.headers)
+                    e.close()
+                    policy.sleep(attempt + 1, delay)
+                    attempt += 1
+                    continue
+                try:
+                    body = e.read().decode("utf-8", errors="replace")
+                finally:
+                    e.close()
+                raise RuntimeError(
+                    "OpenAI-compatible request %s %s%s failed with HTTP %s: %s"
+                    % (method, self.base_url, path, e.code, body)
+                ) from e
+            except urllib.error.URLError as e:
+                if attempt < policy.max_retries:
+                    policy.sleep(attempt + 1)
+                    attempt += 1
+                    continue
+                raise ConnectionError(
+                    "Server not reachable at %s (%s). Is your OpenAI-compatible "
+                    "server (vLLM / LM Studio / llama-server) running with "
+                    "--host/--port matching base_url?" % (self.base_url, e.reason)
+                ) from e
+
     def _post_json(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            self.base_url + path,
-            data=data,
-            headers=self._headers(),
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                "OpenAI-compatible request POST %s%s failed with HTTP %s: %s"
-                % (self.base_url, path, e.code, body)
-            ) from e
-        except urllib.error.URLError as e:
-            raise ConnectionError(
-                "Server not reachable at %s (%s). Is your OpenAI-compatible "
-                "server (vLLM / LM Studio / llama-server) running with "
-                "--host/--port matching base_url?" % (self.base_url, e.reason)
-            ) from e
+
+        def _request() -> Any:
+            return urllib.request.Request(
+                self.base_url + path,
+                data=data,
+                headers=self._headers(),
+                method="POST",
+            )
+
+        with self._open_with_retry(_request, "POST", path) as resp:
+            return json.loads(resp.read().decode("utf-8"))
 
     def _post_sse(self, path: str, payload: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """POST with ``stream=True``; parses SSE ``data:`` frames."""
+        """POST with ``stream=True``; parses SSE ``data:`` frames.
+
+        Only the connection phase is retried: once the first frame has been
+        yielded, retrying would replay tokens the caller already received.
+        """
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            self.base_url + path,
-            data=data,
-            headers=self._headers(stream=True),
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                for raw_line in resp:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line or line.startswith(":"):
-                        continue  # blank / keep-alive comment
-                    if not line.startswith("data:"):
-                        continue
-                    data_str = line[len("data:") :].strip()
-                    if data_str == _DONE:
-                        break
-                    try:
-                        event = json.loads(data_str)
-                    except ValueError:
-                        continue  # partial frame; skip
-                    if isinstance(event, dict):
-                        yield event
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                "OpenAI-compatible request POST %s%s failed with HTTP %s: %s"
-                % (self.base_url, path, e.code, body)
-            ) from e
-        except urllib.error.URLError as e:
-            raise ConnectionError(
-                "Server not reachable at %s (%s). Is your OpenAI-compatible "
-                "server running?" % (self.base_url, e.reason)
-            ) from e
+
+        def _request() -> Any:
+            return urllib.request.Request(
+                self.base_url + path,
+                data=data,
+                headers=self._headers(stream=True),
+                method="POST",
+            )
+
+        with self._open_with_retry(_request, "POST", path) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line or line.startswith(":"):
+                    continue  # blank / keep-alive comment
+                if not line.startswith("data:"):
+                    continue
+                data_str = line[len("data:") :].strip()
+                if data_str == _DONE:
+                    break
+                try:
+                    event = json.loads(data_str)
+                except ValueError:
+                    continue  # partial frame; skip
+                if isinstance(event, dict):
+                    yield event
 
     def _get_json(self, path: str) -> Dict[str, Any]:
-        req = urllib.request.Request(self.base_url + path, headers=self._headers(), method="GET")
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-                return result if isinstance(result, dict) else {"data": result}
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                "OpenAI-compatible request GET %s%s failed with HTTP %s: %s"
-                % (self.base_url, path, e.code, body)
-            ) from e
-        except urllib.error.URLError as e:
-            raise ConnectionError(
-                "Server not reachable at %s (%s)." % (self.base_url, e.reason)
-            ) from e
+        def _request() -> Any:
+            return urllib.request.Request(
+                self.base_url + path, headers=self._headers(), method="GET"
+            )
+
+        with self._open_with_retry(_request, "GET", path) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result if isinstance(result, dict) else {"data": result}

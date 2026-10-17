@@ -51,9 +51,13 @@ __all__ = [
     "DEFAULT_SEPARATORS",
     "DEFAULT_SYSTEM_PROMPT",
     "chunk_text",
+    "mmr",
     "SimpleVectorStore",
     "retrieve",
     "build_rag_prompt",
+    "bm25_scores",
+    "reciprocal_rank_fusion",
+    "RAGPipeline",
 ]
 
 logger = logging.getLogger(__name__)
@@ -107,6 +111,55 @@ def _cosine_matrix(query: List[float], matrix: List[List[float]]) -> List[float]
         except Exception:
             logger.debug("numpy RAG cosine path failed, using fallback")
     return [_cosine(query, row) for row in matrix]
+
+
+def mmr(
+    query_vec: Sequence[float],
+    doc_vecs: Sequence[Sequence[float]],
+    k: int = 4,
+    lambda_mult: float = 0.5,
+) -> List[int]:
+    """Maximal Marginal Relevance selection: relevant *and* diverse hits.
+
+    Greedily picks ``k`` document indexes balancing query similarity
+    against similarity to already-picked documents::
+
+        score(i) = lambda * sim(query, i) - (1 - lambda) * max sim(i, picked)
+
+    Args:
+        query_vec: Query vector.
+        doc_vecs: Candidate document vectors.
+        k: Number of indexes to select (capped at the candidate count).
+        lambda_mult: Relevance/diversity trade-off in ``[0, 1]``.
+            ``1.0`` is pure relevance ranking; ``0.0`` is pure diversity.
+
+    Returns:
+        Selected document indexes in selection order. Deterministic: ties
+        break towards the lower index.
+    """
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ValueError("k must be a positive integer, got %r" % (k,))
+    if not isinstance(lambda_mult, (int, float)) or not 0.0 <= lambda_mult <= 1.0:
+        raise ValueError("lambda_mult must be in [0, 1], got %r" % (lambda_mult,))
+    query = _as_vector(list(query_vec), name="query_vec")
+    docs = [_as_vector(list(row), name="doc_vecs[%d]" % i) for i, row in enumerate(doc_vecs)]
+    if not docs:
+        return []
+    relevance = [_cosine(query, row) for row in docs]
+    selected: List[int] = []
+    remaining = set(range(len(docs)))
+    for _ in range(min(k, len(docs))):
+        best: Optional[int] = None
+        best_score = 0.0
+        for i in sorted(remaining):
+            diversity = max((_cosine(docs[i], docs[j]) for j in selected), default=0.0)
+            score = lambda_mult * relevance[i] - (1.0 - lambda_mult) * diversity
+            if best is None or score > best_score:
+                best, best_score = i, score
+        assert best is not None
+        selected.append(best)
+        remaining.discard(best)
+    return selected
 
 
 def _as_vector(value: Any, name: str = "vector") -> List[float]:
@@ -487,7 +540,6 @@ class SimpleVectorStore:
 
         if ids is None:
             new_ids = [self._next_id() for _ in items]
-            self.ids.extend([])  # no-op, keeps intent explicit
         else:
             new_ids = list(ids)
             if len(new_ids) != len(items):
@@ -510,67 +562,153 @@ class SimpleVectorStore:
         """True when every stored entry carries a non-empty vector."""
         return bool(self.vectors) and all(len(v) > 0 for v in self.vectors)
 
-    def _ranked_hits(self, scores: Sequence[float], k: int) -> List[Dict[str, Any]]:
-        order = sorted(range(len(scores)), key=lambda i: (scores[i], -i), reverse=True)
-        hits = []
-        for i in order[: min(k, len(order))]:
-            hits.append(
-                {
-                    "index": i,
-                    "id": self.ids[i],
-                    "text": self.texts[i],
-                    "metadata": dict(self.metadatas[i]),
-                    "score": float(scores[i]),
-                }
-            )
-        return hits
+    def _hit(self, i: int, score: float) -> Dict[str, Any]:
+        return {
+            "index": i,
+            "id": self.ids[i],
+            "text": self.texts[i],
+            "metadata": dict(self.metadatas[i]),
+            "score": float(score),
+        }
 
-    def search(
-        self,
-        query: Union[str, Sequence[float]],
-        k: int = 4,
-    ) -> List[Dict[str, Any]]:
-        """Search the store for the ``k`` most similar entries.
+    def search(self, query, k=4, lambda_mult=None, *, mode="auto", filter=None):
+        """Search dense or lexical vectors; opt into BM25, hybrid fusion or MMR.
 
-        Args:
-            query: A query string (embedded with the store's ``embed_fn``,
-                or ranked with TF-IDF when the store has no vectors) or a
-                raw query vector (dense mode only).
-            k: Number of hits to return (capped at the store size).
-
-        Returns:
-            Hits ordered by decreasing score (ties broken by insertion
-            order, so results are deterministic). Each hit is a dict with
-            ``index``, ``id``, ``text``, ``metadata`` and ``score`` keys.
-            ``[]`` when the store is empty.
+        The default preserves the previous dense/TF-IDF ranking. ``mode`` is
+        ``auto``, ``dense``, ``lexical`` (BM25), or ``hybrid`` (weighted RRF).
+        ``filter`` is an exact metadata mapping or a predicate. MMR needs vectors.
         """
-        if k < 1:
-            raise ValueError("k must be >= 1, got %r" % (k,))
-        if not self.texts:
+        if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+            raise ValueError("k must be a positive integer.")
+        if mode not in ("auto", "dense", "lexical", "hybrid"):
+            raise ValueError("mode must be auto, dense, lexical, or hybrid.")
+        if lambda_mult is not None and (
+            isinstance(lambda_mult, bool)
+            or not isinstance(lambda_mult, (int, float))
+            or not 0 <= lambda_mult <= 1
+        ):
+            raise ValueError("lambda_mult must be in [0, 1].")
+        candidates = self._filter_candidates(filter)
+        if not candidates:
             return []
-        if isinstance(query, str):
-            if self.embed_fn is None and not self._has_dense_vectors():
-                # Lexical mode: TF-IDF over raw texts, no embeddings needed.
-                return self._ranked_hits(_lexical_scores(query, self.texts), k)
-            if self.embed_fn is None:
+        if mode == "hybrid":
+            return self.search_hybrid(query, k=k, lambda_mult=lambda_mult, filter=filter)
+        lexical = mode == "lexical" or (mode == "auto" and not self._has_dense_vectors())
+        if lexical:
+            if not isinstance(query, str):
                 raise ValueError(
-                    "String queries need an embed_fn: pass a query vector "
-                    "or construct the store with embed_fn=...."
+                    "Lexical search requires a text query; vector queries need stored embeddings."
                 )
+            if lambda_mult is not None:
+                raise ValueError("lambda_mult needs dense vectors (lexical store).")
+            docs = [self.texts[i] for i in candidates]
+            scores = bm25_scores(query, docs) if mode == "lexical" else _lexical_scores(query, docs)
+            order = sorted(range(len(candidates)), key=lambda j: (-scores[j], candidates[j]))
+            return [self._hit(candidates[j], scores[j]) for j in order[:k]]
+        if not self._has_dense_vectors():
+            raise ValueError("Vector queries need stored embeddings.")
+        if isinstance(query, str):
+            if self.embed_fn is None:
+                raise ValueError("String queries need an embed_fn; pass a query vector instead.")
             query_vec = _embed_one(self.embed_fn, query)
         else:
             query_vec = _as_vector(query, name="query")
-        if not self._has_dense_vectors():
-            raise ValueError(
-                "Vector queries need stored embeddings: add entries with "
-                "embeddings=... or construct the store with embed_fn=...."
-            )
         if self.dim is not None and len(query_vec) != self.dim:
-            raise ValueError(
-                "Query dimension %d does not match store dimension %d" % (len(query_vec), self.dim)
-            )
+            raise ValueError("Query dimension does not match store dimension.")
         scores = _cosine_matrix(query_vec, self.vectors)
-        return self._ranked_hits(scores, k)
+        order = sorted(candidates, key=lambda i: (-scores[i], i))
+        if lambda_mult is not None:
+            pool = order[: max(k * 5, 25)]
+            selected = mmr(query_vec, [self.vectors[i] for i in pool], k, lambda_mult)
+            order = [pool[j] for j in selected]
+        return [self._hit(i, scores[i]) for i in order[:k]]
+
+    def search_hybrid(self, query, k=4, alpha=0.5, lambda_mult=None, *, filter=None):
+        """Fuse dense and BM25 ranks with weighted RRF; optionally diversify with MMR.
+
+        ``alpha`` controls dense influence in [0, 1]. Rank fusion avoids mixing
+        incomparable cosine/BM25 score scales. Text queries need an embed_fn.
+        """
+        if not isinstance(query, str):
+            raise ValueError("Hybrid search needs a text query.")
+        if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+            raise ValueError("k must be a positive integer.")
+        for name, value in (("alpha", alpha), ("lambda_mult", lambda_mult)):
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not 0 <= value <= 1
+            ):
+                raise ValueError("%s must be in [0, 1]." % name)
+        if alpha is None:
+            raise ValueError("alpha must be in [0, 1].")
+        candidates = self._filter_candidates(filter)
+        if not candidates:
+            return []
+        if self.embed_fn is None or not self._has_dense_vectors():
+            raise ValueError("Hybrid search needs dense vectors and an embed_fn.")
+        query_vec = _embed_one(self.embed_fn, query)
+        if self.dim is not None and len(query_vec) != self.dim:
+            raise ValueError("Query dimension does not match store dimension.")
+        dense = _cosine_matrix(query_vec, self.vectors)
+        lexical = bm25_scores(query, [self.texts[i] for i in candidates])
+        dense_order = sorted(candidates, key=lambda i: (-dense[i], i))
+        lexical_order = sorted(range(len(candidates)), key=lambda j: (-lexical[j], candidates[j]))
+        fused = {i: 0.0 for i in candidates}
+        for weight, order in (
+            (alpha, dense_order),
+            (1 - alpha, [candidates[j] for j in lexical_order]),
+        ):
+            for rank, i in enumerate(order, 1):
+                fused[i] += weight / (60 + rank)
+        order = sorted(candidates, key=lambda i: (-fused[i], i))
+        if lambda_mult is not None:
+            pool = order[: max(k * 5, 25)]
+            selected = mmr(query_vec, [self.vectors[i] for i in pool], k, lambda_mult)
+            order = [pool[j] for j in selected]
+        return [self._hit(i, fused[i]) for i in order[:k]]
+
+    def delete(self, ids: Sequence[str]) -> int:
+        """Remove entries matching the given ids.
+
+        Args:
+            ids: Sequence of entry ids to delete.
+
+        Returns:
+            Number of entries removed.
+        """
+        if isinstance(ids, str) or any(not isinstance(item, str) for item in ids):
+            raise TypeError("ids must be a sequence of strings.")
+        to_delete = set(ids)
+        keep = [i for i, doc_id in enumerate(self.ids) if doc_id not in to_delete]
+        if len(keep) == len(self.ids):
+            return 0
+        removed = len(self.ids) - len(keep)
+        self.texts = [self.texts[i] for i in keep]
+        self.metadatas = [self.metadatas[i] for i in keep]
+        self.ids = [self.ids[i] for i in keep]
+        self.vectors = [self.vectors[i] for i in keep]
+        return removed
+
+    def _filter_candidates(
+        self,
+        filter_spec: Optional[Union[Dict[str, Any], Callable[[Dict[str, Any]], bool]]],
+    ) -> List[int]:
+        if filter_spec is None:
+            return list(range(len(self.texts)))
+        if not isinstance(filter_spec, dict) and not callable(filter_spec):
+            raise TypeError("filter must be a dict or callable predicate.")
+        candidates = []
+        for i, meta in enumerate(self.metadatas):
+            if isinstance(filter_spec, dict):
+                match = all(meta.get(k) == v for k, v in filter_spec.items())
+            elif callable(filter_spec):
+                match = bool(filter_spec(meta))
+            else:
+                raise TypeError("filter must be a dict or a callable predicate")
+            if match:
+                candidates.append(i)
+        return candidates
 
     # -- persistence ----------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
@@ -672,6 +810,7 @@ def retrieve(
     store: SimpleVectorStore,
     embed_fn: Optional[EmbedFn] = None,
     k: int = 4,
+    lambda_mult: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """Retrieve the ``k`` most relevant docs for ``query``.
 
@@ -681,6 +820,8 @@ def retrieve(
         embed_fn: Embedding function for string queries. Defaults to the
             store's own ``embed_fn``.
         k: Number of hits to return.
+        lambda_mult: Optional MMR trade-off in ``[0, 1]``; ``None``
+            (default) is pure relevance ranking.
 
     Returns:
         Ranked hits (see :meth:`SimpleVectorStore.search`).
@@ -689,9 +830,9 @@ def retrieve(
     if isinstance(query, str):
         if fn is None:
             # Lexical mode: TF-IDF over raw texts, no embeddings needed.
-            return store.search(query, k=k)
-        return store.search(_embed_one(fn, query), k=k)
-    return store.search(query, k=k)
+            return store.search(query, k=k, lambda_mult=lambda_mult)
+        return store.search(_embed_one(fn, query), k=k, lambda_mult=lambda_mult)
+    return store.search(query, k=k, lambda_mult=lambda_mult)
 
 
 # ---------------------------------------------------------------------------
@@ -775,3 +916,192 @@ def build_rag_prompt(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+
+
+def bm25_scores(
+    query: str,
+    docs: Sequence[str],
+    k1: float = 1.5,
+    b: float = 0.75,
+) -> List[float]:
+    """Calculate Okapi BM25 scores for a query across documents.
+
+    Pure standard library, deterministic, zero external dependencies.
+
+    Args:
+        query: Query string.
+        docs: List of document strings.
+        k1: Term frequency saturation parameter. Default: 1.5.
+        b: Document length normalization parameter. Default: 0.75.
+
+    Returns:
+        List of float BM25 scores matching docs length.
+    """
+    for name, value in (("k1", k1), ("b", b)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            raise ValueError("%s must be a finite non-negative number." % name)
+    if b > 1:
+        raise ValueError("b must be in [0, 1].")
+    qtokens = _lexical_tokens(query)
+    if not qtokens or not docs:
+        return [0.0] * len(docs)
+    doc_tokens = [_lexical_tokens(d) for d in docs]
+    n = len(docs)
+    doc_lens = [len(toks) for toks in doc_tokens]
+    avgdl = sum(doc_lens) / float(n) if n > 0 else 1.0
+
+    df: Dict[str, int] = {}
+    for toks in doc_tokens:
+        for tok in set(toks):
+            df[tok] = df.get(tok, 0) + 1
+
+    scores = [0.0] * n
+    for q in qtokens:
+        if q not in df:
+            continue
+        nq = df[q]
+        idf = math.log((n - nq + 0.5) / (nq + 0.5) + 1.0)
+        for i, toks in enumerate(doc_tokens):
+            if not toks:
+                continue
+            tf = toks.count(q)
+            if tf <= 0:
+                continue
+            denom = tf + k1 * (1.0 - b + b * (doc_lens[i] / avgdl))
+            scores[i] += idf * ((tf * (k1 + 1.0)) / denom)
+    return scores
+
+
+def reciprocal_rank_fusion(
+    ranked_lists: Sequence[Sequence[int]],
+    rrf_k: int = 60,
+) -> Dict[int, float]:
+    """Combine multiple ranked lists of document indices using Reciprocal Rank Fusion (RRF).
+
+    Args:
+        ranked_lists: Sequence of ranked item lists (each item is an index or id).
+        rrf_k: Smoothing constant. Default: 60.
+
+    Returns:
+        Dict mapping index/id to fused RRF score.
+    """
+    if isinstance(rrf_k, bool) or not isinstance(rrf_k, int) or rrf_k < 0:
+        raise ValueError("rrf_k must be a non-negative integer.")
+    rrf_scores: Dict[int, float] = {}
+    for rlist in ranked_lists:
+        for rank, item in enumerate(dict.fromkeys(rlist)):
+            score = 1.0 / (rrf_k + rank + 1)
+            rrf_scores[item] = rrf_scores.get(item, 0.0) + score
+    return rrf_scores
+
+
+class RAGPipeline:
+    """High-level Retrieval-Augmented Generation pipeline.
+
+    Connects document chunking, indexing (vector/hybrid/BM25), retrieval,
+    and LLM grounded generation with source citations.
+
+    Args:
+        llm: A :class:`local_llm_kit.LLM` instance.
+        store: Optional :class:`SimpleVectorStore`. If omitted, a new store is created.
+        embed_fn: Optional embedding function.
+        system_prompt: System prompt instructing citation and grounding.
+    """
+
+    def __init__(
+        self,
+        llm: Any,
+        store: Optional[SimpleVectorStore] = None,
+        embed_fn: Optional[EmbedFn] = None,
+        system_prompt: Optional[str] = None,
+    ):
+        self.llm = llm
+        self.store = store if store is not None else SimpleVectorStore(embed_fn=embed_fn)
+        self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+
+    def add_documents(
+        self,
+        texts: Union[str, Sequence[str]],
+        metadatas: Optional[Sequence[Optional[Dict[str, Any]]]] = None,
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
+    ) -> List[str]:
+        """Chunk and index documents into the vector store.
+
+        Args:
+            texts: Single text document or list of documents.
+            metadatas: Optional metadata dicts (one per document).
+            chunk_size: Character size per chunk.
+            chunk_overlap: Overlap between consecutive chunks.
+
+        Returns:
+            List of generated chunk IDs added to the store.
+        """
+        if metadatas is not None and len(metadatas) != (
+            1 if isinstance(texts, str) else len(texts)
+        ):
+            raise ValueError("metadatas must contain one entry per input document.")
+        raw_docs = [texts] if isinstance(texts, str) else list(texts)
+        if not raw_docs:
+            return []
+
+        all_chunks: List[str] = []
+        all_metas: List[Dict[str, Any]] = []
+
+        for idx, doc in enumerate(raw_docs):
+            doc_meta = (
+                dict(metadatas[idx])
+                if metadatas and idx < len(metadatas) and metadatas[idx]
+                else {}
+            )
+            chunks = chunk_text(doc, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+            for c_idx, chunk in enumerate(chunks):
+                all_chunks.append(chunk)
+                meta = dict(doc_meta)
+                meta["doc_index"] = idx
+                meta["chunk_index"] = c_idx
+                all_metas.append(meta)
+
+        return self.store.add(all_chunks, metadatas=all_metas)
+
+    def query(
+        self,
+        question: str,
+        k: int = 4,
+        mode: str = "auto",
+        filter: Optional[Union[Dict[str, Any], Callable[[Dict[str, Any]], bool]]] = None,
+        **chat_kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Retrieve relevant context and generate a grounded, cited answer.
+
+        Args:
+            question: User question string.
+            k: Number of chunks to retrieve.
+            mode: Search mode: ``"auto"`` (default), ``"dense"``, or ``"lexical"``.
+            filter: Optional metadata filter dict or callable.
+            **chat_kwargs: Additional kwargs passed to ``llm.chat()``.
+
+        Returns:
+            Dict containing ``answer``, ``sources`` (retrieved hits), and ``raw_response``.
+        """
+        hits = self.store.search(question, k=k, mode=mode, filter=filter)
+        messages = build_rag_prompt(
+            query=question,
+            docs=hits,
+            system_prompt=self.system_prompt,
+        )
+        chat_kwargs.setdefault("execute_tools", False)
+        resp = self.llm.chat(messages=messages, **chat_kwargs)
+        choices = resp.get("choices", [])
+        answer = choices[0].get("message", {}).get("content", "") if choices else ""
+
+        return {
+            "answer": answer,
+            "sources": hits,
+            "raw_response": resp,
+        }

@@ -1,28 +1,38 @@
 # Local LLM Kit
 
-> A lightweight Python interface for offline language models and local LLM servers. Import: `local_llm_kit`; distribution: `local-llm-kit`; license: MIT.
+> Lightweight Python client for local models and local inference servers. Distribution: local-llm-kit. Import: local_llm_kit. MIT. Core Python 3.9+, stdlib plus typing-extensions.
 
-## Where it fits
+## Status
 
-Applications that want one OpenAI-shaped chat/completion interface across local runtimes, native tool calls and structured outputs where supported, an offline deterministic test backend, or small embedding/RAG helpers. The core client uses stdlib HTTP and typing-extensions; inference packages are optional extras.
+PyPI 0.2.0 is the stable release. Discovery, Apple FM, MCP, agents, validated structured output, hybrid retrieval, logging, hardware advice and Responses are unreleased additions on feat/consolidated-community-upgrades. Do not describe them as shipped in 0.2.0.
 
-## Actual API
+## API and fit
 
-`from local_llm_kit import LLM, chat, complete, embed, tool`
+Use when an application needs an OpenAI-shaped Python chat/completion API across local runtimes, request-scoped tools, an offline echo fixture, or small retrieval helpers. Example: `LLM('echo', backend='echo').chat([{'role':'user','content':'Hi'}])`; answer text is `response['choices'][0]['message']['content']`.
 
-`LLM(model_path="echo", backend="echo").chat([{"role":"user","content":"Hello"}])` returns a dictionary; text is at `response["choices"][0]["message"]["content"]`.
+In-process adapters: transformers, llamacpp, experimental airllm, native apple-fm. HTTP: native ollama and OpenAI-compatible presets vllm, sglang, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm, koboldcpp, transformers-serve, apfel. Generic servers use openai-compat with base_url. A preset connects to an already-running engine; it does not host or install it. Features depend on the chosen model/runtime. These are compatibility options, not a usage ranking.
 
-Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm. Server presets: sglang, vllm, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm and koboldcpp. These cover 12 distinct local runtimes; this is not a usage ranking. A preset connects to an already-running server with a served model ID; it does not install or host that engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate embedding backend.
+## Unreleased additions
 
-## Boundaries
+- `discover`, `probe_endpoint`, `find_local_server` and CLI `doctor`: read native capability metadata when available. Unknown locality stays unknown. `LLM(..., require_local=True)` refuses unverified/remote execution and checks again before chat/completion. It trusts metadata and is not a network sandbox.
+- HTTP adapters use `max_retries` (integer or RetryPolicy), default 2. Streaming retries only connection setup, never emitted output.
+- Apple FM uses Apple's SDK on an eligible Mac, Python 3.10+, macOS 26+, Xcode 26+ and enabled Apple Intelligence. Fresh sessions, schema forwarding, stop-aware streams, inline image attachment adapter and exact token count. Actual vision requires SDK/OS image support. apfel maps completions to chat and has no embeddings.
+- `MCPServer`, `LLM.add_mcp_server`, CLI `mcp tools|call`: synchronous stdio/HTTP tools subset, namespacing and deadlines. `Agent` owns a bounded tool loop using the same executor as LLM.chat. Invalid truncated arguments are never repaired into executable tool calls.
+- `LLM.chat_structured`: JSON Schema type/constraint checks via optional [structured] or Pydantic. `repair_json`/`extract_json` are opt-in output helpers.
+- `SimpleVectorStore`, `RAGPipeline`: BM25, dense/lexical rank fusion, optional MMR, filters, delete and JSON persistence. A small in-memory store, not a distributed vector database. Citation prompts do not validate grounding.
+- `ConversationLog`: opt-in SQLite logging, atomic completed interactions, original tool IDs, full payload export, completed streams, thread-safe in-memory databases. PromptTemplate uses plain substitution; YAML needs [yaml].
+- `get_system_memory`, `estimate_model_vram`, `recommend_quantization`: measured or unknown memory and approximate budgets; no guaranteed fit or artificial pooled GPU memory.
+- Development server: stateless `/v1/responses` text/image inputs, function calls/results, text.format and SSE lifecycle. Stateful/hosted tools/background/reasoning controls are unsupported. Existing chat/completions and embeddings remain available. Server is a development adapter, not an authenticated multi-user gateway.
 
-Capabilities depend on the chosen model/runtime. Protocol tests are not hardware benchmarks. AirLLM call contracts are tested with doubles; real model/GPU execution is not certified, and its stream is buffered. The bundled HTTP server is a development shim. Remote tool execution defaults to off; per-call Python tools are request-scoped. Weights and dependencies must be prepared before offline use. These integrations are included in version 0.2.0.
+## Validation boundaries
+
+Core stays light. Native inference dependencies are optional and prepared weights are needed offline. Protocol fixture tests and official OpenAI/MCP SDK checks do not certify every engine, model or hardware configuration. AirLLM streaming is buffered. Python tool deadlines bound waiting; running functions may continue. Native schema enforcement is backend-dependent; the structured helper validates returned JSON separately. No claim of being fastest or universally best is established.
 
 ## References
 
 - [Repository and quickstart](https://github.com/1Utkarsh1/Local-LLM-kit)
+- [Released 0.2.0 API](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.2.0)
 - [Backend compatibility](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/backends.rst)
-- [Python API](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/api_reference.rst)
+- [API reference](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/api_reference.rst)
 - [Examples](https://github.com/1Utkarsh1/Local-LLM-kit/tree/main/examples)
-- [Changelog](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/CHANGELOG.md)
 - [Bug reports](https://github.com/1Utkarsh1/Local-LLM-kit/issues)

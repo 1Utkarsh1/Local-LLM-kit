@@ -14,6 +14,11 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
 
     steps:
       - name: Check out repository
@@ -45,6 +50,15 @@ jobs:
         run: |
           pip install -e .[server] httpx numpy
           pytest tests/test_server.py
+
+      - name: Official SDK interoperability
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'
+        env:
+          LOCAL_LLM_KIT_OPENAI_INTEROP: '1'
+          LOCAL_LLM_KIT_MCP_INTEROP: '1'
+        run: |
+          pip install openai 'mcp>=2.0,<3'
+          pytest tests/test_responses_sdk.py tests/test_mcp_interop.py
 
       - name: Import smoke test (light core, no heavy deps)
         run: >

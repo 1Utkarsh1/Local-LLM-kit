@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Native Apple Foundation Models adapter and apfel profile, including native schemas, fresh sessions, inline image attachments, exact token counting, cooperative timeouts and streaming stop handling.
+- Server discovery, native capability metadata, `doctor` CLI and a locality guard that rejects unknown or remote routes.
+- Shared transient HTTP retry policy with finite delays and cleanup, plus the Transformers server preset.
+- MCP tools client over stdio and Streamable HTTP, namespaced registration, deadlines and official SDK interoperability tests.
+- Bounded agent loop with request-scoped tools, strict argument parsing and shared tool execution; structured chat with optional full JSON Schema validation and Pydantic validation.
+- BM25, dense/lexical reciprocal rank fusion, MMR diversity, metadata filters, deletion and a small RAG pipeline.
+- Opt-in atomic SQLite conversation logging and lossless tool/message export, plain-text/JSON/YAML templates, and logging CLI commands.
+- Measured hardware memory inspection and approximate model/KV memory planning; no guaranteed fit claims.
+- Stateless Responses API subset with text/image inputs, function calls/results, schema-format forwarding and SDK-compatible text/tool streaming events.
+
+### Fixed
+- Competing tool loops could bypass the new agent's controls; the agent now disables nested execution.
+- SSE MCP responses waited for EOF after a result, and notifications restarted deadlines. Results now return promptly within an absolute deadline.
+- Structured-output validation accepted invalid field types, and repair changed quoted literals. Schemas now enforce constraints and repair preserves strings.
+- Unverified HTTP endpoints could pass the locality check. Unknown routing now fails closed; loopback alone is insufficient.
+- Reasoning metadata could be dropped from native chat responses and streams.
+- Conversation logs lost original tool IDs, usage and finish reasons, used separate in-memory stores per thread, and could commit partial interactions.
+- Windows concurrent model-file publication could fail on transient file locks. Atomic replacement now retries bounded Windows locking errors and preserves the prior model on persistent failure.
+- Template loading depended on YAML for plain text, and directory loading hid parse failures.
+- Hardware advice fabricated missing measurements and combined separate GPUs into an unrealistic memory budget.
+
+### Validation scope
+- Core requirements remain Python 3.9+ with no new mandatory dependencies; Apple SDK and official SDK interoperability have separate version requirements.
+- These are unreleased changes. Protocol/SDK tests do not establish performance superiority or certify every runtime/hardware combination.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added

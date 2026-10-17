@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
@@ -342,7 +343,15 @@ def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> st
                 raise RuntimeError(
                     "Truncated download of %s: got %d of %d bytes" % (url, done, total_n)
                 )
-        os.replace(part, dest)
+        for attempt in range(4):
+            try:
+                os.replace(part, dest)
+                break
+            except PermissionError as exc:
+                # Windows can briefly lock a destination during competing renames.
+                if getattr(exc, "winerror", None) not in (5, 32, 33) or attempt == 3:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     except BaseException as exc:
         # Drop the partial file so a retry/cache scan never sees it as valid.
         if part is not None:

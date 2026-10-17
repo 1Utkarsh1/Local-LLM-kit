@@ -8,10 +8,9 @@ not install, launch or reconfigure it.
 Runtime coverage and feature limits
 -----------------------------------
 
-These 12 runtimes cover desktop apps, local files, Apple Silicon, GPU servers
-and offloaded inference. This is a compatibility selection, not a top-ten
-ranking: no comparable active-user measurement has been established.
-llama.cpp's library and server integrations count as one runtime.
+The integrations cover desktop apps, local files, Apple Silicon, GPU servers
+and offloaded inference. This is a compatibility selection; no comparable
+active-user ranking or cross-engine performance claim is established.
 
 .. list-table:: Capability matrix for this client
    :header-rows: 1
@@ -21,6 +20,14 @@ llama.cpp's library and server integrations count as one runtime.
      - Integration
      - Tools and structured output
      - Embeddings
+   * - Apple FM (native)
+     - In-process SDK (``apple-fm``)
+     - Prompted tools/JSON loop; native ``json_schema`` enforcement
+     - No adapter embedding method
+   * - Apfel bridge
+     - OpenAI-compatible HTTP
+     - Forwarded; native tools + ``json_schema`` server-side
+     - No endpoint in this preset
    * - Ollama
      - Native HTTP
      - Native tools/schema forwarding; model-dependent
@@ -70,12 +77,52 @@ llama.cpp's library and server integrations count as one runtime.
      - Forwarded; model/template-dependent
      - Requires a loaded embedding model
 
-All server presets have client routing, payload and HTTP/SSE fixture tests.
+All server presets have client routing and payload and HTTP/SSE fixture tests.
 This is protocol validation, not a real-engine or hardware certification.
 Unsupported native tool/schema options may be rejected by the upstream server;
-the client does not silently claim those features were enforced. Native vision
-is forwarded only through the HTTP adapters. In-process adapters currently
-format text; use an HTTP vision model for image inputs.
+the client does not silently claim those features were enforced. Vision parts pass through the HTTP adapters and the native Apple attachment
+adapter where its SDK/OS supports images; other in-process adapters format text.
+
+
+Apple Foundation Models (native backend + apfel bridge)
+-------------------------------------------------------
+
+Apple Silicon Macs ship an on-device model via the Foundation Models
+framework. Local LLM Kit reaches it two ways:
+
+* **Native** (``backend="apple-fm"``): Apple's official
+  `python-apple-fm-sdk <https://github.com/apple/python-apple-fm-sdk>`_
+  (``pip install "local-llm-kit[apple-fm]"``). Requires macOS 26+, Xcode 26+
+  with the SDK agreement accepted, Python 3.10+, and Apple Intelligence
+  turned on (`support article <https://support.apple.com/en-us/121115>`_).
+  Sessions are created per request (backend instances are shared through
+  the client cache), tool calls use the uniform client-side loop, and
+  ``response_format={"type": "json_schema", ...}`` is enforced natively by
+  the SDK. ``temperature`` (``0`` selects greedy sampling), ``seed``,
+  ``max_tokens`` and ``stop`` are honoured; ``top_p``/``top_k``/penalties
+  and logprobs have no SDK equivalent and are ignored. data-URL
+  ``image_url`` parts are materialised to temporary files and passed as
+  ``ImageAttachment`` objects (remote URLs are rejected, never downloaded);
+  image understanding itself needs the macOS 27 SDK. ``count_tokens_exact``
+  offers exact budgeting via the SDK's async ``token_count``. There is no
+  on-device embedding endpoint. Everything runs on device; nothing falls
+  back to Private Cloud Compute or any remote endpoint.
+* **Bridge** (``backend="apfel"``): no Xcode needed. Run
+  `apfel --serve <https://github.com/Arthur-Ficial/apfel>`_ (macOS 26+,
+  Apple Silicon, Apple Intelligence on), which serves OpenAI-compatible
+  ``POST /v1/chat/completions`` on ``http://localhost:11434/v1``. The
+  preset strips the sampling fields apfel rejects (``top_k``/penalties),
+  maps prompt completion to chat (the upstream completions endpoint is absent),
+  and reports no embedding support.
+
+``python examples/apple_foundation.py`` demonstrates both paths and prints
+setup steps when the model or server is unavailable. Contracts are covered
+by offline tests with an SDK double
+(``tests/test_apple_fm.py``); the opt-in live test
+(``LOCAL_LLM_KIT_APPLE_FM_LIVE=1``) needs an eligible Mac and is skipped in
+CI. See also `simonw/llm-apple-foundation
+<https://github.com/simonw/llm-apple-foundation>`_ for the same SDK used
+through the ``llm`` CLI, which informed the sampling/schema mapping here.
 
 Server presets
 --------------
@@ -101,7 +148,8 @@ Server presets
      - http://localhost:8080/v1
    * - llama-server
      - llama-server
-     - http://localhost:8080/v1 (start with --port 8080)
+     - http://localhost:9931/v1 (the default since October 2026; the Docker
+       image and older builds use 8080)
    * - Jan
      - jan
      - http://127.0.0.1:1337/v1 (enable server and configure its API key)
@@ -114,6 +162,14 @@ Server presets
    * - KoboldCpp
      - koboldcpp
      - http://localhost:5001/v1
+   * - Apfel bridge
+     - apfel
+     - http://localhost:11434/v1 (run ``apfel --serve``; shares Ollama's port)
+
+   * - Transformers serve
+     - transformers-serve
+     - http://localhost:8000/v1 (run ``transformers serve``;
+       shares vLLM's default port)
 
 Use the ID of a model already loaded by the server. A preset chooses the
 connection URL and protocol parameter mapping. Override the URL with
@@ -121,6 +177,14 @@ connection URL and protocol parameter mapping. Override the URL with
 needed. The generic ``openai-compat`` backend supports other servers exposing the
 same endpoints. Server and model capabilities determine tool calling, schemas,
 vision and embedding availability.
+
+Rather than guessing which port is in use, probe them all with
+``local-llm-kit doctor`` — see :doc:`discovery`. It reports what is listening,
+reads each server's own capability metadata (Ollama ``/api/show``, llama.cpp
+``/props``, LM Studio ``/api/v1/models``, apfel ``/v1/models``), and flags models
+that a server routes off the machine. The preset catalog is de-duplicated by
+normalised URL and the provider is identified from the server's response, so
+several providers sharing a default port is not ambiguous.
 
 .. code-block:: python
 
@@ -141,6 +205,10 @@ Upstream setup references:
 * `MLX-LM project <https://github.com/ml-explore/mlx-lm>`_ and its
   `server endpoints/options <https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/server.py>`_
 * `KoboldCpp API and setup <https://github.com/LostRuins/koboldcpp#apis-and-integrations>`_
+* `apfel OpenAI API compatibility <https://github.com/Arthur-Ficial/apfel#openai-api-compatibility>`_
+
+* `transformers serve <https://huggingface.co/docs/transformers/main/en/serving>`_
+  (``pip install transformers[serving]``; default ``http://localhost:8000``)
 
 For example, launch MLX-LM with prepared weights using
 ``mlx_lm.server --model /path/to/local/mlx-model --host 127.0.0.1 --port 8080``,
@@ -204,6 +272,19 @@ Use ``backend="transformers"`` with the ``transformers`` extra for Hugging Face
 models, or ``backend="llamacpp"`` with the ``llamacpp`` extra for local GGUF files.
 Tool calls and JSON output use the kit's prompt formatting unless the backend
 implements a native capability. Prompted JSON is not a schema-enforcement guarantee.
+
+The ``transformers-serve`` preset connects to a running ``transformers serve``
+instance instead of loading weights in-process: same adapter, same model ID
+rules as the other presets, default ``http://localhost:8000/v1``.
+
+Transient-failure retries
+-------------------------
+
+The HTTP adapters share ``RetryPolicy``. Set ``backend_kwargs={'max_retries': 0}``
+to fail fast, pass an integer for the retry count, or a RetryPolicy for finite
+delay controls. Selected transient statuses and connection setup failures are
+retried. Streaming retries only connection setup, never already emitted output.
+See :doc:`discovery` for details.
 
 Offline operation and validation scope
 --------------------------------------

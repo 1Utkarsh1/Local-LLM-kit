@@ -1,7 +1,7 @@
 """
 Core LLM class with an OpenAI-compatible API over local backends.
 
-Backends: "auto" | "transformers" | "llamacpp" | "ollama" | "openai-compat" | "echo".
+Backends: "auto" | "transformers" | "airllm" | "apple-fm" | "llamacpp" | "ollama" | "openai-compat" | "echo".
 Only the stdlib is imported at module load; heavy backends (transformers,
 llama.cpp, ...) are imported lazily inside ``_init_backend``.
 
@@ -28,7 +28,6 @@ Security notes (see SECURITY review):
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import json
 import logging
 import threading
@@ -44,6 +43,7 @@ from .prompt_formatting import get_prompt_formatter, has_images
 from .tools import (
     ToolCall,
     ToolRegistry,
+    _validate_tool_timeout,
     normalize_tools,
     parse_tool_calls,
     should_call_tools,
@@ -57,6 +57,7 @@ _SUPPORTED_BACKENDS = (
     "auto",
     "transformers",
     "airllm",
+    "apple-fm",
     "llamacpp",
     "ollama",
     "openai-compat",
@@ -251,28 +252,23 @@ def _tool_names(tools_norm: List[Dict[str, Any]]) -> List[str]:
     return names
 
 
-def _required_params(tool_spec: Dict[str, Any]) -> List[str]:
-    try:
-        fn = tool_spec.get("function", tool_spec) if isinstance(tool_spec, dict) else {}
-        params = fn.get("parameters", {}) if isinstance(fn, dict) else {}
-        required = params.get("required", []) if isinstance(params, dict) else []
-        return [r for r in required if isinstance(r, str)]
-    except AttributeError:
-        return []
-
-
 class LLM:
     """
     OpenAI-like interface for local language models.
 
     :param model_path: path, HF id, Ollama tag, URL, or "echo".
-    :param backend: "auto" (default), "transformers", "llamacpp", "ollama",
-        "openai-compat", or "echo".
+    :param backend: "auto" (default), "transformers", "airllm", "apple-fm",
+        "llamacpp", "ollama", "openai-compat", or "echo".
     :param backend_instance: pre-built backend object (tests / DI). Skips the
         cache and auto-detection entirely.
     :param use_cache: reuse module-level cached backends for identical
         ``(model_path, backend, backend_kwargs)``. Set False in tests that
         need isolation.
+    :param require_local: require a known in-process engine or verified local
+        model metadata. Unknown or remote routes fail closed at construction
+        and before chat/completion; see :meth:`assert_local`. This trusts
+        server metadata rather than enforcing a network sandbox.
+    :param conversation_log: optional ConversationLog for completed chat snapshots.
     """
 
     def __init__(
@@ -288,12 +284,16 @@ class LLM:
         backend_kwargs: Optional[Dict[str, Any]] = None,
         backend_instance: Optional[BaseBackend] = None,
         use_cache: bool = True,
+        require_local: bool = False,
+        conversation_log: Optional[Any] = None,
     ):
         if not isinstance(model_path, str) or not model_path.strip():
             raise ValueError("model_path must be a non-empty string.")
         if backend is not None and not isinstance(backend, str):
             raise TypeError("backend must be a string or None.")
         self.model_path = model_path
+        self.require_local = require_local
+        self.conversation_log = conversation_log
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.top_p = top_p
@@ -320,6 +320,11 @@ class LLM:
                     with _CACHE_LOCK:
                         _BACKEND_CACHE.setdefault(key, self.backend)
 
+        # Check locality metadata before reading the context window, so a
+        # detection triggered here also supplies the model's real window size.
+        if require_local:
+            self.assert_local()
+
         if context_window:
             self.context_window = context_window
         else:
@@ -334,6 +339,9 @@ class LLM:
         # ToolRegistry subclasses FunctionRegistry, so both APIs share one store.
         self.tool_registry = ToolRegistry()
         self.function_registry = self.tool_registry  # backwards-compat alias
+        #: Open MCP server connections registered via :meth:`add_mcp_server`.
+        self._mcp_servers: Dict[str, Any] = {}
+        self._mcp_tool_names: Dict[str, List[str]] = {}
 
     # -- backend setup ----------------------------------------------------
     def _init_backend(self, backend_name: Optional[str]) -> BaseBackend:
@@ -385,6 +393,18 @@ class LLM:
             from .backends.airllm import AirLLMBackend
 
             return AirLLMBackend(self.model_path, **self.backend_kwargs)
+        if name == "apple-fm":
+            try:
+                from .backends.apple_fm import AppleFMBackend
+
+                return AppleFMBackend(self.model_path, **self.backend_kwargs)
+            except ImportError as exc:
+                raise RuntimeError(
+                    "apple-fm backend needs Apple's Foundation Models SDK "
+                    "(pip install 'local-llm-kit[apple-fm]'). Requires macOS 26+, "
+                    "Xcode 26+ (SDK agreement accepted), Python 3.10+, and Apple "
+                    "Intelligence turned on."
+                ) from exc
         if name == "ollama":
             try:
                 from .backends.ollama import OllamaBackend  # type: ignore
@@ -410,6 +430,64 @@ class LLM:
             ) from exc
         raise AssertionError("unreachable")  # pragma: no cover
 
+    # -- local execution metadata ----------------------------------------------
+    def detect_backend_capabilities(self) -> Dict[str, Any]:
+        """Ask the backend what the model can really do, when it can say.
+
+        Backends that expose ``detect_capabilities()`` (currently Ollama) report
+        the model's true context length, capability list and whether the model
+        is routed off this machine. Backends without that concept are a no-op.
+        Never raises: an unreachable server leaves the backend's current values.
+        """
+        detect = getattr(self.backend, "detect_capabilities", None)
+        if not callable(detect):
+            return {"supported": False, "reason": "backend does not report capabilities"}
+        try:
+            result = detect()
+        except Exception as exc:  # noqa: BLE001 - detection is best-effort
+            return {"supported": True, "error": str(exc)}
+        if isinstance(result, dict):
+            return dict(result, supported=True)
+        return {"supported": True}
+
+    def assert_local(self) -> bool:
+        """Require an in-process backend or verified local-server metadata.
+
+        Unknown routing fails closed. Metadata is a report from the configured
+        server, not a security boundary against a dishonest server operator.
+        """
+        from .discovery import is_loopback_url, probe_endpoint
+
+        name = getattr(self.backend, "backend_name", "")
+        if name in ("echo", "transformers", "llamacpp", "airllm", "apple-fm"):
+            return True
+        if name == "ollama":
+            if not is_loopback_url(self.backend.host):
+                raise RuntimeError("require_local refuses a non-loopback Ollama endpoint.")
+            detection = self.detect_backend_capabilities()
+            if detection.get("remote"):
+                raise RuntimeError(
+                    "Model %r is routed off-device to %s."
+                    % (self.model_path, detection.get("remote_host") or "a remote host")
+                )
+            if detection.get("error") or not detection.get("routing_verified"):
+                raise RuntimeError(
+                    "Could not confirm that %r runs on this machine: routing metadata unavailable."
+                    % self.model_path
+                )
+            if not detection.get("remote"):
+                return True
+        elif name == "openai-compat":
+            if not is_loopback_url(self.backend.base_url):
+                raise RuntimeError("require_local refuses a non-loopback endpoint.")
+            report = probe_endpoint(self.backend.base_url, timeout=min(self.backend.timeout, 5.0))
+            if any(m.id == self.model_path for m in report.local_models):
+                return True
+        raise RuntimeError(
+            "Could not confirm that %r runs on this machine; the model is remote or its execution locality is unknown."
+            % self.model_path
+        )
+
     # -- registration -----------------------------------------------------
     def add_function(self, name: str, schema: Dict[str, Any], implementation: Callable) -> None:
         """Register a legacy function (also usable as a modern tool)."""
@@ -422,6 +500,146 @@ class LLM:
     def list_tools(self) -> List[Dict[str, Any]]:
         """Return registered tools in OpenAI ``tools`` format."""
         return self.tool_registry.get_tool_list()
+
+    # -- MCP (Model Context Protocol) -------------------------------------
+    @property
+    def mcp_servers(self) -> Dict[str, Any]:
+        """Mapping of name -> open :class:`local_llm_kit.mcp.MCPServer`."""
+        return dict(self._mcp_servers)
+
+    def add_mcp_server(
+        self,
+        server: Any = None,
+        name: Optional[str] = None,
+        command: Optional[str] = None,
+        args: Optional[List[str]] = None,
+        url: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        cwd: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: float = 30.0,
+        prefix: Union[bool, str, None] = True,
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+    ) -> List[str]:
+        """Connect an MCP server and register its tools on this client.
+
+        Either pass an already-built/open :class:`~local_llm_kit.mcp.MCPServer`
+        as *server*, or the connection details (``command`` for stdio, ``url``
+        for Streamable HTTP). Discovered tools become regular tools usable by
+        :meth:`chat` (including the auto-execution tool loop).
+
+        :param name: server name (required when building from ``command``/``url``);
+            also used as the default tool namespace.
+        :param prefix: ``True`` (default) namespaces tools as ``<server>__<tool>``
+            to avoid collisions across servers; pass a string to choose the
+            namespace, or ``False``/``None`` to keep the raw MCP names.
+        :param include: when set, only these MCP tool names are registered.
+        :param exclude: MCP tool names to skip.
+        :returns: the registered (possibly namespaced) tool names.
+        """
+        from .mcp import MCPServer, sanitize_tool_name
+
+        if isinstance(server, str):
+            if name is not None and name != server:
+                raise ValueError("Conflicting MCP server names.")
+            name, server = server, None
+        if server is None:
+            if not name:
+                raise ValueError("add_mcp_server needs a server instance or a name.")
+            server = MCPServer(
+                name,
+                command=command,
+                args=args,
+                url=url,
+                env=env,
+                cwd=cwd,
+                headers=headers,
+                timeout=timeout,
+            )
+        elif name is None:
+            name = getattr(server, "name", None)
+        server_name = name or getattr(server, "name", "mcp")
+        if server_name in self._mcp_servers:
+            raise ValueError("An MCP server with this name is already registered: %s" % server_name)
+        opened_here = getattr(server, "closed", False) or not getattr(server, "_opened", False)
+        try:
+            if getattr(server, "closed", False) or not getattr(server, "_opened", False):
+                server.open()
+            namespace = server_name if prefix is True else (prefix or None)
+            pending = []
+            names = set(self.tool_registry.functions)
+            for tool in server.list_tools():
+                if include is not None and tool.name not in include:
+                    continue
+                if exclude is not None and tool.name in exclude:
+                    continue
+                qualified = sanitize_tool_name(
+                    "%s__%s" % (namespace, tool.name) if namespace else tool.name
+                )
+                if qualified in names:
+                    raise ValueError("MCP tool name collides with an existing tool: %s" % qualified)
+                names.add(qualified)
+                pending.append((qualified, tool))
+        except Exception:
+            if opened_here:
+                server.close()
+            raise
+        registered = []
+        for qualified, tool in pending:
+            self.tool_registry.add_function(
+                name=qualified,
+                schema=dict(tool.to_openai(qualified)["function"]),
+                implementation=self._mcp_tool_impl(server, tool.name),
+            )
+            registered.append(qualified)
+        self._mcp_tool_names[server_name] = registered
+        self._mcp_servers[server_name] = server
+        logger.info(
+            "Registered %d MCP tool(s) from server %r: %s",
+            len(registered),
+            server_name,
+            ", ".join(registered) or "(none)",
+        )
+        return registered
+
+    @staticmethod
+    def _mcp_tool_impl(server: Any, tool_name: str) -> Callable[..., str]:
+        """Build the tool implementation that forwards to the MCP server."""
+
+        def _call(**kwargs: Any) -> str:
+            return server.call_tool(tool_name, kwargs)
+
+        _call.__name__ = tool_name
+        return _call
+
+    def close(self) -> None:
+        """Close MCP server connections and release backend resources."""
+        for server in list(self._mcp_servers.values()):
+            try:
+                server.close()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                logger.debug(
+                    "Error closing MCP server %r", getattr(server, "name", "?"), exc_info=True
+                )
+        self._mcp_servers.clear()
+        for names in self._mcp_tool_names.values():
+            for name in names:
+                self.tool_registry.functions.pop(name, None)
+                self.tool_registry.implementations.pop(name, None)
+        self._mcp_tool_names.clear()
+        close_backend = getattr(self.backend, "close", None)
+        if callable(close_backend):
+            try:
+                close_backend()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                logger.debug("Error closing backend", exc_info=True)
+
+    def __enter__(self) -> "LLM":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
 
     # -- internal plumbing ------------------------------------------------
     def _now(self) -> int:
@@ -533,57 +751,8 @@ class LLM:
         timeout: Optional[float] = 10.0,
         registry: Optional[ToolRegistry] = None,
     ) -> str:
-        """Execute one tool call with scope check, arg validation and timeout.
-
-        Failures are returned as tool-output strings (generic, truncated —
-        never tracebacks) so they can't leak secrets into chat history.
-        """
-        if allowed_names is not None and call.name not in allowed_names:
-            return "Error: tool '%s' is not available for this request" % call.name
         registry = self.tool_registry if registry is None else registry
-        if not registry.has_function(call.name):
-            return "Error: tool '%s' is not registered" % call.name
-        if not isinstance(call.arguments, dict):
-            return "Error: tool '%s' received invalid arguments (must be an object)" % call.name
-        if spec is not None:
-            missing = [r for r in _required_params(spec) if r not in call.arguments]
-            if missing:
-                return "Error: tool '%s' missing required argument(s): %s" % (
-                    call.name,
-                    ", ".join(missing),
-                )
-        try:
-            impl = registry.implementations[call.name]
-        except (AttributeError, KeyError):
-            return "Error: tool '%s' has no implementation" % call.name
-        try:
-            if timeout is None:
-                result = impl(**call.arguments)
-            else:
-                # NOTE: deliberately not a `with` block -- ThreadPoolExecutor's
-                # __exit__ joins the worker, which would make a timed-out tool
-                # block until it finishes and defeat the timeout entirely.
-                pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                try:
-                    future = pool.submit(impl, **call.arguments)
-                    result = future.result(timeout=timeout)
-                finally:
-                    pool.shutdown(wait=False)
-        except concurrent.futures.TimeoutError:
-            return "Error: tool '%s' timed out after %s seconds" % (call.name, timeout)
-        except Exception as exc:  # noqa: BLE001 (tool errors become tool output)
-            logger.warning("Tool '%s' failed: %s", call.name, exc)
-            return "Error: tool '%s' failed (%s: %s)" % (
-                call.name,
-                type(exc).__name__,
-                str(exc)[:200],
-            )
-        if isinstance(result, str):
-            return result
-        try:
-            return json.dumps(result, default=str)
-        except (TypeError, ValueError):  # e.g. circular references
-            return str(result)
+        return registry.execute_call(call, allowed_names, spec, timeout)
 
     def _ensure_json_output(self, text: str) -> str:
         try:
@@ -669,6 +838,8 @@ class LLM:
             (None = no timeout).
         :param max_iterations: maximum tool-execution rounds.
         """
+        if self.require_local:
+            self.assert_local()
         if not isinstance(messages, list):
             raise TypeError("messages must be a list of message dicts.")
         for i, message in enumerate(messages):
@@ -683,6 +854,7 @@ class LLM:
             raise TypeError("functions must be a list or None.")
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
             raise TypeError("max_iterations must be an integer.")
+        _validate_tool_timeout(tool_timeout)
         # Per-call tools must not mutate a shared/cached client's registry.
         request_registry = ToolRegistry()
         request_registry.functions = dict(self.tool_registry.functions)
@@ -807,8 +979,10 @@ class LLM:
                 "content": text or None,
                 "tool_calls": [c.to_dict() for c in calls],
             }
-            if isinstance(result, dict) and result.get("thinking"):
-                assistant_msg["thinking"] = result["thinking"]
+            if isinstance(result, dict):
+                for key in ("thinking", "reasoning_content"):
+                    if result.get(key):
+                        assistant_msg[key] = result[key]
             if len(calls) == 1:
                 assistant_msg["function_call"] = {
                     "name": calls[0].name,
@@ -851,6 +1025,10 @@ class LLM:
             message = {"role": "assistant", "content": text}
             self.memory.add_messages([message])
 
+        if isinstance(result, dict):
+            for key in ("thinking", "reasoning_content"):
+                if result.get(key):
+                    message[key] = result[key]
         response: Dict[str, Any] = {
             "id": _new_id("chatcmpl"),
             "object": "chat.completion",
@@ -861,7 +1039,22 @@ class LLM:
         if gen_params.get("logprobs"):
             response["choices"][0]["logprobs"] = {}
         response["usage"] = self._usage(prompt, "".join(completion_parts) if pending else text)
+        self._log_chat(working, response)
         return response
+
+    def _log_chat(self, history: List[Dict[str, Any]], response: Dict[str, Any]) -> None:
+        if self.conversation_log is not None:
+            response["conversation_id"] = self.conversation_log.log_interaction(
+                model=self.model_path, messages=history, response=response
+            )
+
+    def chat_structured(
+        self, messages: List[Dict[str, Any]], schema: Any = None, **kwargs: Any
+    ) -> Any:
+        """Generate and validate JSON; dictionary schemas need the structured extra."""
+        from .structured import chat_structured
+
+        return chat_structured(self, messages, schema=schema, **kwargs)
 
     def _chat_streaming(
         self,
@@ -893,6 +1086,7 @@ class LLM:
             accumulated = ""
             native_calls = []
             thinking = ""
+            reasoning = ""
             finish = "stop"
             first = True
             if getattr(self.backend, "supports_native_chat", False):
@@ -906,6 +1100,7 @@ class LLM:
             for chunk in chunk_iter:
                 if isinstance(chunk, dict):
                     thinking += chunk.get("thinking") or ""
+                    reasoning += chunk.get("reasoning_content") or ""
                     if chunk.get("tool_calls"):
                         native_calls.extend(chunk["tool_calls"])
                     if chunk.get("finish_reason"):
@@ -913,6 +1108,10 @@ class LLM:
                 piece = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
                 accumulated += piece
                 delta: Dict[str, Any] = {"content": piece}
+                if isinstance(chunk, dict):
+                    for key in ("thinking", "reasoning_content"):
+                        if chunk.get(key):
+                            delta[key] = chunk[key]
                 if first:
                     delta["role"] = "assistant"
                     first = False
@@ -939,6 +1138,27 @@ class LLM:
                 if forced_name:
                     calls = [c for c in calls if c.name == forced_name]
             if not calls or not execute_tools or turn >= max_iterations:
+                final_message: Dict[str, Any] = {
+                    "role": "assistant",
+                    "content": accumulated or None,
+                }
+                if calls:
+                    final_message["tool_calls"] = [call.to_dict() for call in calls]
+                if thinking:
+                    final_message["thinking"] = thinking
+                if reasoning:
+                    final_message["reasoning_content"] = reasoning
+                self.memory.add_messages([final_message])
+                final_response = {
+                    "choices": [
+                        {
+                            "message": final_message,
+                            "finish_reason": "tool_calls" if calls else finish,
+                        }
+                    ],
+                    "usage": self._usage(prompt, accumulated),
+                }
+                self._log_chat(working, final_response)
                 if calls:  # surface the calls (unexecuted in server-safe mode)
                     delta2: Dict[str, Any] = {
                         "content": None,
@@ -956,6 +1176,7 @@ class LLM:
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": self.model_path,
+                        "usage": final_response["usage"],
                         "choices": [
                             {
                                 "index": 0,
@@ -974,6 +1195,7 @@ class LLM:
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": self.model_path,
+                    "usage": final_response["usage"],
                     "choices": [{"index": 0, "delta": {}, "finish_reason": finish}],
                 }
                 return
@@ -985,6 +1207,8 @@ class LLM:
             }
             if thinking:
                 assistant_msg["thinking"] = thinking
+            if reasoning:
+                assistant_msg["reasoning_content"] = reasoning
             working.append(assistant_msg)
             self.memory.add_messages([assistant_msg])
             for call in calls:
@@ -1022,6 +1246,8 @@ class LLM:
         repetition_penalty: Optional[float] = None,
         **kwargs: Any,
     ) -> Union[Dict[str, Any], Iterator[Dict[str, Any]]]:
+        if self.require_local:
+            self.assert_local()
         if not isinstance(prompt, str):
             raise TypeError("prompt must be a string.")
         rf = _normalize_response_format(response_format, format)
@@ -1173,3 +1399,20 @@ class LLM:
 
     def __repr__(self) -> str:
         return "LLM(model_path=%r, backend=%s)" % (self.model_path, type(self.backend).__name__)
+
+    # -- introspection ----------------------------------------------------
+    def list_models(self) -> List[Dict[str, Any]]:
+        """List models reported by the backend.
+
+        Server backends (Ollama, OpenAI-compatible) report their models;
+        single-model local backends return ``[]`` from the backend, in
+        which case this falls back to a single entry for ``model_path``.
+        Never raises: backend listing failures degrade to the fallback.
+        """
+        try:
+            models = self.backend.list_models()
+        except Exception:
+            models = []
+        if not models:
+            return [{"id": self.model_path, "object": "model", "owned_by": "local"}]
+        return list(models)

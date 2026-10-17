@@ -28,6 +28,7 @@ import argparse
 import inspect
 import json
 import os
+import shlex
 import sys
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
@@ -48,6 +49,8 @@ __all__ = [
     "handle_pull_command",
     "handle_list_command",
     "handle_embed_command",
+    "handle_doctor_command",
+    "handle_mcp_command",
 ]
 
 
@@ -348,6 +351,13 @@ def _create_llm(args: argparse.Namespace, backend_kwargs: Dict[str, Any]) -> Any
     if not model:
         _fail("a model is required (pass --model/-m).")
     backend = _normalize_backend(getattr(args, "backend", None))
+    log = None
+    if getattr(args, "conversation_log", None):
+        from .conversation_log import DEFAULT_LOG_PATH, ConversationLog
+
+        log = ConversationLog(
+            DEFAULT_LOG_PATH if args.conversation_log == "default" else args.conversation_log
+        )
     try:
         return LLM(
             model_path=model,
@@ -355,6 +365,7 @@ def _create_llm(args: argparse.Namespace, backend_kwargs: Dict[str, Any]) -> Any
             temperature=getattr(args, "temperature", 0.7),
             max_new_tokens=getattr(args, "max_tokens", 512) or 512,
             backend_kwargs=backend_kwargs,
+            **({"conversation_log": log} if log is not None else {}),
         )
     except ImportError as exc:
         missing = str(exc)
@@ -451,27 +462,7 @@ def _chat_once(
     # but third-party-compatible signatures may not).
     kwargs = {k: v for k, v in kwargs.items() if v is not None or k == "messages"}
 
-    try:
-        return llm.chat(**kwargs)
-    except TypeError:
-        # Last-resort legacy fallback for unfamiliar signatures.
-        fallback: Dict[str, Any] = {
-            "messages": messages,
-            "stream": stream,
-        }
-        if functions is not None:
-            fallback["functions"] = functions
-        elif tools is not None:
-            fallback["functions"] = [t["function"] for t in tools]
-        if tool_choice is not None:
-            fallback["function_call"] = _tool_choice_to_function_call(tool_choice)
-        if legacy_format is not None:
-            fallback["format"] = legacy_format
-        if temperature is not None:
-            fallback["temperature"] = temperature
-        if max_tokens is not None:
-            fallback["max_tokens"] = max_tokens
-        return llm.chat(**fallback)
+    return llm.chat(**kwargs)
 
 
 def _complete_once(
@@ -566,8 +557,8 @@ def _add_common_llm_args(parser: argparse.ArgumentParser, *, require_model: bool
         "-b",
         choices=BACKEND_CHOICES,
         default=None,
-        help="Local backend or server preset (including airllm, sglang, vllm, "
-        "lmstudio, localai, llama-server). Default: auto-detect.",
+        help="Local backend or server preset (including apple-fm, apfel, airllm, "
+        "sglang, vllm, lmstudio, localai, llama-server). Default: auto-detect.",
     )
     parser.add_argument(
         "--temperature",
@@ -611,6 +602,132 @@ def _add_common_backend_tuning(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_mcp_connection_args(parser: argparse.ArgumentParser) -> None:
+    """Shared connection flags for ``mcp`` subcommands."""
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--command",
+        dest="mcp_command",
+        default=None,
+        metavar="CMD",
+        help="Start a local server over stdio, e.g. "
+        "'npx -y @modelcontextprotocol/server-filesystem /tmp'.",
+    )
+    group.add_argument(
+        "--url",
+        dest="mcp_url",
+        default=None,
+        metavar="URL",
+        help="Connect to a Streamable HTTP endpoint, e.g. 'http://localhost:3001/mcp'.",
+    )
+    parser.add_argument(
+        "--name",
+        default=None,
+        help="Server name (defaults to a name derived from the command/URL).",
+    )
+    parser.add_argument(
+        "--header",
+        dest="mcp_headers",
+        action="append",
+        default=None,
+        metavar="K:V",
+        help="Extra HTTP header for --url servers (repeatable).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="Per-request timeout in seconds (default: 30).",
+    )
+
+
+def _split_mcp_command(command: str) -> Tuple[str, List[str]]:
+    """Split a full command string into (executable, args) via shlex."""
+    try:
+        parts = shlex.split(command, posix=(os.name != "nt"))
+    except ValueError as exc:
+        _fail("could not parse MCP command {0!r}: {1}".format(command, exc))
+    if not parts:
+        _fail("MCP command is empty.")
+    return parts[0], parts[1:]
+
+
+def _derive_mcp_name(command: Optional[str], url: Optional[str], index: int) -> str:
+    """A readable, unique-ish server name from a command or URL."""
+    if url:
+        host = url.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+        return "{0}-{1}".format(host or "http", index)
+    if command:
+        first = command.split()[0] if command.split() else "mcp"
+        stem = os.path.splitext(os.path.basename(first))[0] or "mcp"
+        return "{0}-{1}".format(stem, index)
+    return "mcp-{0}".format(index)
+
+
+def _parse_headers(pairs: Optional[List[str]]) -> Optional[Dict[str, str]]:
+    """Parse ``--header K:V`` values into a dict."""
+    if not pairs:
+        return None
+    headers: Dict[str, str] = {}
+    for pair in pairs:
+        if ":" not in pair:
+            _fail("invalid --header {0!r}; expected 'Name: value'.".format(pair))
+        key, _, value = pair.partition(":")
+        key = key.strip()
+        if not key:
+            _fail("invalid --header {0!r}; empty name.".format(pair))
+        headers[key] = value.strip()
+    return headers
+
+
+def _build_mcp_servers_from_args(args: argparse.Namespace) -> List[Any]:
+    """Build (but do not open) MCPServer objects from chat/generic args."""
+    from .mcp import MCPServer
+
+    servers: List[Any] = []
+    for i, raw in enumerate(getattr(args, "mcp_command", None) or [], start=1):
+        command, extra = _split_mcp_command(raw)
+        servers.append(
+            MCPServer(
+                getattr(args, "name", None) or _derive_mcp_name(raw, None, i),
+                command=command,
+                args=extra,
+                timeout=getattr(args, "timeout", 30.0) or 30.0,
+            )
+        )
+    for i, raw_url in enumerate(getattr(args, "mcp_url", None) or [], start=1):
+        servers.append(
+            MCPServer(
+                getattr(args, "name", None) or _derive_mcp_name(None, raw_url, i),
+                url=raw_url,
+                headers=_parse_headers(getattr(args, "mcp_headers", None)),
+                timeout=getattr(args, "timeout", 30.0) or 30.0,
+            )
+        )
+    return servers
+
+
+def _register_mcp_on_llm(llm: Any, args: argparse.Namespace) -> List[str]:
+    """Connect MCP servers from CLI args and register their tools on *llm*."""
+    servers = _build_mcp_servers_from_args(args)
+    registered: List[str] = []
+    for server in servers:
+        try:
+            names = llm.add_mcp_server(server)
+        except Exception as exc:  # noqa: BLE001 - report, don't crash the REPL
+            _eprint(
+                "Warning: MCP server {0!r} unavailable ({1}); skipping.".format(server.name, exc)
+            )
+            continue
+        _eprint(
+            "MCP: {0} -> {1} tool(s)".format(server.name, len(names))
+            if names
+            else "MCP: {0} advertised no tools".format(server.name)
+        )
+        registered.extend(names)
+    return registered
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the top-level argument parser (split out for testability)."""
     parser = argparse.ArgumentParser(
@@ -641,6 +758,14 @@ def build_parser() -> argparse.ArgumentParser:
     chat_p = sub.add_parser("chat", help="Interactive chat with a model.")
     _add_common_llm_args(chat_p, require_model=True)
     _add_common_backend_tuning(chat_p)
+    chat_p.add_argument(
+        "--conversation-log",
+        nargs="?",
+        const="default",
+        default=None,
+        metavar="DB",
+        help="Opt in to SQLite chat logging; optionally choose a database path.",
+    )
     chat_p.add_argument("--system", "-s", default=None, help="System message.")
     chat_p.add_argument(
         "--message",
@@ -686,6 +811,25 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to a JSON file with OpenAI-style tool definitions. "
         "May be given multiple times.",
+    )
+    chat_p.add_argument(
+        "--mcp-command",
+        dest="mcp_command",
+        action="append",
+        default=None,
+        metavar="CMD",
+        help="Connect a local MCP server over stdio and register its tools. "
+        "Give the full command, e.g. 'npx -y @modelcontextprotocol/server-filesystem /tmp'. "
+        "May be given multiple times.",
+    )
+    chat_p.add_argument(
+        "--mcp-url",
+        dest="mcp_url",
+        action="append",
+        default=None,
+        metavar="URL",
+        help="Connect a remote MCP server over Streamable HTTP and register "
+        "its tools. May be given multiple times.",
     )
     chat_p.add_argument(
         "--function-call",
@@ -846,12 +990,116 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read input texts from a file (one per non-empty line), " "or '-' for stdin.",
     )
 
+    # -- doctor ----------------------------------------------------------
+    doctor_p = sub.add_parser(
+        "doctor",
+        aliases=["discover", "probe"],
+        help="Find running local LLM servers and report what they can do.",
+        description=(
+            "Probe the well-known local LLM endpoints (Ollama, LM Studio, "
+            "llama.cpp, vLLM, LocalAI, Jan, GPT4All, MLX-LM, KoboldCpp, ...), "
+            "read each server's own capability metadata, and report which "
+            "models are genuinely on-device."
+        ),
+    )
+    doctor_p.add_argument(
+        "--url",
+        dest="urls",
+        action="append",
+        default=None,
+        metavar="BASE_URL",
+        help="Extra endpoint to probe, e.g. --url localhost:9000. Repeatable.",
+    )
+    doctor_p.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Per-request timeout in seconds (default: 0.75).",
+    )
+    doctor_p.add_argument(
+        "--json",
+        dest="json",
+        action="store_true",
+        default=False,
+        help="Emit the full report as JSON (machine-readable, includes failures).",
+    )
+    doctor_p.add_argument(
+        "--require-local",
+        dest="require_local",
+        action="store_true",
+        default=False,
+        help="Exit non-zero unless a server with only on-device models is found.",
+    )
+    doctor_p.add_argument(
+        "--keep-loading",
+        dest="keep_loading",
+        action="store_true",
+        default=False,
+        help="Wait and report servers that are still loading a model "
+        "(a 5xx answer instead of a refused connection).",
+    )
+    doctor_p.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        default=False,
+        help="Print nothing; use the exit code (0 = found).",
+    )
+
+    # -- mcp -------------------------------------------------------------
+    mcp_p = sub.add_parser(
+        "mcp",
+        help="Inspect and call tools from Model Context Protocol (MCP) servers.",
+    )
+    mcp_sub = mcp_p.add_subparsers(dest="mcp_action", metavar="ACTION")
+
+    mcp_tools_p = mcp_sub.add_parser(
+        "tools", help="List the tools a server advertises (OpenAI tool specs)."
+    )
+    _add_mcp_connection_args(mcp_tools_p)
+    mcp_tools_p.add_argument(
+        "--json",
+        dest="json",
+        action="store_true",
+        default=False,
+        help="Emit OpenAI-style tool specs as JSON instead of a table.",
+    )
+
+    mcp_call_p = mcp_sub.add_parser("call", help="Call a single tool on a server.")
+    _add_mcp_connection_args(mcp_call_p)
+    mcp_call_p.add_argument("--tool", required=True, help="Tool name to call (as advertised).")
+    mcp_call_p.add_argument(
+        "--args",
+        default=None,
+        help="Tool arguments: inline JSON object or a path to a JSON file.",
+    )
+
+    logs = sub.add_parser("logs", help="List, inspect or export saved conversations.")
+    logs_sub = logs.add_subparsers(dest="logs_action", required=True)
+    for action in ("list", "show", "export"):
+        command = logs_sub.add_parser(action)
+        command.add_argument("--db", default=None, help="SQLite database path.")
+        if action == "list":
+            command.add_argument("--limit", type=int, default=20)
+        else:
+            command.add_argument("id", help="Conversation ID.")
+            command.add_argument(
+                "--format",
+                choices=["json", "text", "openai"],
+                default="text" if action == "show" else "json",
+            )
+    hardware = sub.add_parser(
+        "hardware", help="Inspect available memory and estimate a model budget."
+    )
+    hardware.add_argument(
+        "--params-b", type=float, default=None, help="Parameter count in billions."
+    )
+    hardware.add_argument("--context-length", type=int, default=4096)
+    hardware.add_argument(
+        "--memory-gb", type=float, default=None, help="Override measured available memory in GiB."
+    )
+
     return parser
-
-
-# ---------------------------------------------------------------------------
-# Command handlers
-# ---------------------------------------------------------------------------
 
 
 def handle_chat_command(
@@ -873,41 +1121,33 @@ def handle_chat_command(
 
     llm = _create_llm(args, backend_kwargs)
 
-    messages: List[Dict[str, Any]] = []
-    if getattr(args, "system", None):
-        messages.append({"role": "system", "content": args.system})
+    try:
+        # Register tools from any MCP servers requested on the command line.
+        mcp_names: List[str] = []
+        if getattr(args, "mcp_command", None) or getattr(args, "mcp_url", None):
+            mcp_names = _register_mcp_on_llm(llm, args)
+            if mcp_names:
+                spec_by_name = {s["function"]["name"]: s for s in llm.list_tools()}
+                tools = list(tools or []) + [
+                    spec_by_name[name] for name in mcp_names if name in spec_by_name
+                ]
+                if tool_choice is None:
+                    tool_choice = "auto"
+                # Live MCP tools are meant to run; enable the executor unless the
+                # user explicitly passed tools that cannot be executed (schemas only).
+                execute_tools = True
 
-    stream = bool(getattr(args, "stream", False))
-    temperature = getattr(args, "temperature", 0.7)
-    max_tokens = getattr(args, "max_tokens", 512)
-    logprobs = bool(getattr(args, "logprobs", False))
+        messages: List[Dict[str, Any]] = []
+        if getattr(args, "system", None):
+            messages.append({"role": "system", "content": args.system})
 
-    def _run_once() -> Dict[str, Any]:
-        result = _chat_once(
-            llm,
-            messages,
-            functions=functions,
-            tools=tools,
-            tool_choice=tool_choice,
-            legacy_format=legacy_format,
-            modern_format=modern_format,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=False,
-            execute_tools=execute_tools,
-            logprobs=logprobs,
-        )
-        if not isinstance(result, dict) or not result.get("choices"):
-            _fail("backend returned an unexpected response: {0!r}".format(result))
-        return result
+        stream = bool(getattr(args, "stream", False))
+        temperature = getattr(args, "temperature", 0.7)
+        max_tokens = getattr(args, "max_tokens", 512)
+        logprobs = bool(getattr(args, "logprobs", False))
 
-    # -- one-shot mode ----------------------------------------------------
-    if getattr(args, "message", None):
-        messages.append({"role": "user", "content": args.message})
-        if stream:
-            print("Assistant: ", end="", flush=True)
-            acc = ""
-            chunks = _chat_once(
+        def _run_once() -> Dict[str, Any]:
+            result = _chat_once(
                 llm,
                 messages,
                 functions=functions,
@@ -917,61 +1157,20 @@ def handle_chat_command(
                 modern_format=modern_format,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                stream=True,
+                stream=False,
                 execute_tools=execute_tools,
                 logprobs=logprobs,
             )
-            try:
-                for chunk in chunks:
-                    piece = _extract_delta_text(chunk)
-                    if piece:
-                        print(piece, end="", flush=True)
-                        acc += piece
-            except ImportError as exc:
-                _fail("streaming needs no extra deps, but the backend failed: {0}".format(exc))
-            print()
-            messages.append({"role": "assistant", "content": acc})
-            return
-        response = _run_once()
-        assistant = response["choices"][0]["message"]
-        messages.append(assistant)
-        if not _print_tool_calls_from_message(assistant):
-            print(assistant.get("content"))
-        if execute_tools and ("tool_calls" in assistant or "function_call" in assistant):
-            _eprint(
-                "Note: --execute-tools was given, but tools loaded from JSON "
-                "files provide schemas only, so there is nothing local to run. "
-                "Register Python implementations via llm.add_tool() to enable "
-                "in-process execution."
-            )
-        return
+            if not isinstance(result, dict) or not result.get("choices"):
+                _fail("backend returned an unexpected response: {0!r}".format(result))
+            return result
 
-    # -- interactive REPL ---------------------------------------------------
-    print(
-        "Chat with {0} (type 'exit' or 'quit' to end, 'clear' to reset history)".format(args.model)
-    )
-    try:
-        while True:
-            try:
-                user_input = input("\nYou: ")
-            except EOFError:
-                print()
-                break
-            if user_input.strip().lower() in ("exit", "quit"):
-                break
-            if user_input.strip().lower() == "clear":
-                messages = []
-                if getattr(args, "system", None):
-                    messages.append({"role": "system", "content": args.system})
-                print("Chat history cleared.")
-                continue
-            if not user_input.strip():
-                continue
-            messages.append({"role": "user", "content": user_input})
-
+        # -- one-shot mode ----------------------------------------------------
+        if getattr(args, "message", None):
+            messages.append({"role": "user", "content": args.message})
             if stream:
-                print("\nAssistant: ", end="", flush=True)
-                acc_text = ""
+                print("Assistant: ", end="", flush=True)
+                acc = ""
                 chunks = _chat_once(
                     llm,
                     messages,
@@ -991,16 +1190,55 @@ def handle_chat_command(
                         piece = _extract_delta_text(chunk)
                         if piece:
                             print(piece, end="", flush=True)
-                            acc_text += piece
-                except Exception as exc:  # noqa: BLE001
-                    print("\nError during streaming: {0}".format(exc))
-                    messages.pop()
-                    continue
+                            acc += piece
+                except ImportError as exc:
+                    _fail("streaming needs no extra deps, but the backend failed: {0}".format(exc))
                 print()
-                messages.append({"role": "assistant", "content": acc_text})
-            else:
+                messages.append({"role": "assistant", "content": acc})
+                return
+            response = _run_once()
+            assistant = response["choices"][0]["message"]
+            messages.append(assistant)
+            if not _print_tool_calls_from_message(assistant):
+                print(assistant.get("content"))
+            if execute_tools and ("tool_calls" in assistant or "function_call" in assistant):
+                _eprint(
+                    "Note: --execute-tools was given, but tools loaded from JSON "
+                    "files provide schemas only, so there is nothing local to run. "
+                    "Register Python implementations via llm.add_tool() to enable "
+                    "in-process execution."
+                )
+            return
+
+        # -- interactive REPL ---------------------------------------------------
+        print(
+            "Chat with {0} (type 'exit' or 'quit' to end, 'clear' to reset history)".format(
+                args.model
+            )
+        )
+        try:
+            while True:
                 try:
-                    response = _chat_once(
+                    user_input = input("\nYou: ")
+                except EOFError:
+                    print()
+                    break
+                if user_input.strip().lower() in ("exit", "quit"):
+                    break
+                if user_input.strip().lower() == "clear":
+                    messages = []
+                    if getattr(args, "system", None):
+                        messages.append({"role": "system", "content": args.system})
+                    print("Chat history cleared.")
+                    continue
+                if not user_input.strip():
+                    continue
+                messages.append({"role": "user", "content": user_input})
+
+                if stream:
+                    print("\nAssistant: ", end="", flush=True)
+                    acc_text = ""
+                    chunks = _chat_once(
                         llm,
                         messages,
                         functions=functions,
@@ -1010,21 +1248,56 @@ def handle_chat_command(
                         modern_format=modern_format,
                         temperature=temperature,
                         max_tokens=max_tokens,
-                        stream=False,
+                        stream=True,
                         execute_tools=execute_tools,
                         logprobs=logprobs,
                     )
-                except Exception as exc:  # noqa: BLE001
-                    print("\nError: {0}".format(exc))
-                    messages.pop()
-                    continue
-                if "choices" in response and response["choices"]:
-                    assistant_msg = response["choices"][0]["message"]
-                    messages.append(assistant_msg)
-                    if not _print_tool_calls_from_message(assistant_msg):
-                        print("\nAssistant: {0}".format(assistant_msg.get("content")))
-    except KeyboardInterrupt:
-        print("\nExiting chat...")
+                    try:
+                        for chunk in chunks:
+                            piece = _extract_delta_text(chunk)
+                            if piece:
+                                print(piece, end="", flush=True)
+                                acc_text += piece
+                    except Exception as exc:  # noqa: BLE001
+                        print("\nError during streaming: {0}".format(exc))
+                        messages.pop()
+                        continue
+                    print()
+                    messages.append({"role": "assistant", "content": acc_text})
+                else:
+                    try:
+                        response = _chat_once(
+                            llm,
+                            messages,
+                            functions=functions,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            legacy_format=legacy_format,
+                            modern_format=modern_format,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            stream=False,
+                            execute_tools=execute_tools,
+                            logprobs=logprobs,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        print("\nError: {0}".format(exc))
+                        messages.pop()
+                        continue
+                    if "choices" in response and response["choices"]:
+                        assistant_msg = response["choices"][0]["message"]
+                        messages.append(assistant_msg)
+                        if not _print_tool_calls_from_message(assistant_msg):
+                            print("\nAssistant: {0}".format(assistant_msg.get("content")))
+        except KeyboardInterrupt:
+            print("\nExiting chat...")
+    finally:
+        close = getattr(llm, "close", None)
+        if callable(close):
+            close()
+        log = getattr(llm, "conversation_log", None)
+        if log is not None:
+            log.close()
 
 
 def handle_completion_command(
@@ -1496,8 +1769,239 @@ def handle_embed_command(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+def _describe_model(model: Any) -> str:
+    """One-line capability summary for a discovered model."""
+    bits = []
+    if model.context_length:
+        bits.append("ctx %d" % model.context_length)
+    if model.capabilities:
+        bits.append(", ".join(model.capabilities))
+    return "  ".join(bits) if bits else "capabilities unknown"
+
+
+def _render_doctor(report: Any, require_local: bool) -> None:
+    """Print a human-readable discovery report."""
+    print(
+        "Probed %d local endpoints in %sms; %d responded."
+        % (report.probed, report.elapsed_ms, len(report.live))
+    )
+
+    if report.live:
+        print("\nLive servers:")
+        width = max(len(s.base_url) for s in report.servers)
+        for server in report.live:
+            count = len(server.models)
+            status = "%d model%s" % (count, "" if count == 1 else "s")
+            if server.loading:
+                status = "loading a model"
+            print(
+                "  ok  %-*s  %-10s %7sms  %s"
+                % (
+                    width,
+                    server.base_url,
+                    server.provider,
+                    server.latency_ms,
+                    status,
+                )
+            )
+    else:
+        print("\nNo local LLM server responded.")
+
+    for server in report.live:
+        print("\n%s  (%s)" % (server.provider, server.base_url))
+        if server.context_window:
+            print("  server context window: %d tokens" % server.context_window)
+        if server.vision is not None:
+            print("  server vision support: %s" % ("yes" if server.vision else "no"))
+        for model in server.models:
+            marker = (
+                "  OFF-DEVICE -> %s" % (model.remote_host or "remote")
+                if model.remote
+                else ("" if model.local_verified else "  locality unknown")
+            )
+            print("    %-38s %s%s" % (model.id[:38], _describe_model(model), marker))
+        for note in server.notes:
+            print("  note: %s" % note)
+
+    offline = [s for s in report.offline if s.status is not None]
+    if offline:
+        print("\nReachable but not ready:")
+        for server in offline:
+            print("  %-*s  %s" % (28, server.base_url, server.error))
+    if not report.live and not offline:
+        tried = ", ".join(
+            sorted({s.base_url.split("//")[-1].split("/")[0] for s in report.offline})
+        )
+        print("\nNothing was listening on: %s" % tried)
+
+    on_device = report.on_device()
+    if require_local and not on_device:
+        print(
+            "\nNo server offering an on-device model was found."
+            "\n  Start one (for example `ollama serve`) and pull a local model"
+            "\n  (`ollama pull qwen2.5:0.5b`), or re-run without --require-local."
+        )
+    elif on_device:
+        first = on_device[0]
+        model = first.local_models[0] if first.local_models else None
+        print("\nReady to use (on-device):")
+        if model is not None:
+            print('  LLM("%s", backend="%s")' % (model.id, first.provider))
+        else:
+            print('  LLM(<model>, backend="%s")' % first.provider)
+    elif report.live:
+        print(
+            "\nServers are up; no model has verified on-device execution metadata."
+            "\n  Inspect the server's native model/routing metadata before requiring locality."
+        )
+
+
+def handle_doctor_command(args: argparse.Namespace) -> int:
+    """Handle `doctor`: report running local LLM servers and their capabilities."""
+    try:
+        from .discovery import DEFAULT_TIMEOUT, discover
+    except ImportError as exc:  # pragma: no cover - packaging error
+        _fail("the discovery module is unavailable ({0}).".format(exc))
+
+    timeout = getattr(args, "timeout", None) or DEFAULT_TIMEOUT
+    try:
+        report = discover(extra_urls=getattr(args, "urls", None), timeout=float(timeout))
+    except ValueError as exc:
+        _fail(str(exc))
+
+    require_local = bool(getattr(args, "require_local", False))
+    if getattr(args, "keep_loading", False):
+        for server in report.offline:
+            if server.status is not None and server.status >= 500:
+                server.loading = True
+
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(report.to_dict(), indent=2))
+    elif not getattr(args, "quiet", False):
+        _render_doctor(report, require_local)
+
+    if require_local:
+        return 0 if report.on_device() else 1
+    return 0 if report.live else 1
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
+
+
+def _print_mcp_tools(server: Any, tools: List[Any]) -> None:
+    """Human-readable table of a server's tools."""
+    from .mcp import sanitize_tool_name
+
+    print("Server: {0} ({1})".format(server.name, server.transport_kind))
+    if not tools:
+        print("  (no tools advertised)")
+        return
+    for tool in tools:
+        summary = (tool.description or "").strip().splitlines()
+        first_line = summary[0] if summary else ""
+        print("  - {0}: {1}".format(sanitize_tool_name(tool.name), first_line))
+        params = (tool.input_schema or {}).get("properties") or {}
+        required = set((tool.input_schema or {}).get("required") or [])
+        for pname, meta in params.items():
+            ptype = (meta or {}).get("type", "any") if isinstance(meta, dict) else "any"
+            flag = " (required)" if pname in required else ""
+            print("      {0}: {1}{2}".format(pname, ptype, flag))
+
+
+def handle_mcp_command(args: argparse.Namespace) -> None:
+    """Handle ``mcp tools`` and ``mcp call`` subcommands."""
+    action = getattr(args, "mcp_action", None)
+    if action not in ("tools", "call"):
+        _fail("mcp requires an action: 'tools' or 'call'.")
+
+    from .mcp import MCPServer
+
+    command = getattr(args, "mcp_command", None)
+    url = getattr(args, "mcp_url", None)
+    name = getattr(args, "name", None)
+    try:
+        if command:
+            exe, extra = _split_mcp_command(command)
+            server = MCPServer(
+                name or _derive_mcp_name(command, None, 1),
+                command=exe,
+                args=extra,
+                timeout=getattr(args, "timeout", 30.0) or 30.0,
+            )
+        else:
+            server = MCPServer(
+                name or _derive_mcp_name(None, url, 1),
+                url=url,
+                headers=_parse_headers(getattr(args, "mcp_headers", None)),
+                timeout=getattr(args, "timeout", 30.0) or 30.0,
+            )
+    except ValueError as exc:
+        _fail("invalid MCP server configuration: {0}".format(exc))
+
+    try:
+        server.open()
+    except Exception as exc:  # noqa: BLE001 - surface a clean CLI error
+        _fail("could not connect to MCP server: {0}".format(exc))
+
+    try:
+        if action == "tools":
+            tools = server.list_tools()
+            if getattr(args, "json", False):
+                print(json.dumps(server.to_openai_tools(), indent=2))
+            else:
+                _print_mcp_tools(server, tools)
+            return
+        raw_args = getattr(args, "args", None)
+        parsed = _load_json_value_or_file(raw_args, "--args") if raw_args else {}
+        if parsed is None:
+            parsed = {}
+        if not isinstance(parsed, dict):
+            _fail("--args must be a JSON object.")
+        try:
+            output = server.call_tool(args.tool, parsed)
+        except Exception as exc:  # noqa: BLE001 - tool errors are reported, not raised
+            _fail("tool {0!r} failed: {1}".format(args.tool, exc))
+        print(output)
+    finally:
+        server.close()
+
+
+def handle_logs_command(args: argparse.Namespace) -> None:
+    from .conversation_log import DEFAULT_LOG_PATH, ConversationLog
+
+    path = args.db or DEFAULT_LOG_PATH
+    if not os.path.isfile(path):
+        _fail("Conversation database does not exist: %s" % path)
+    try:
+        with ConversationLog(path) as log:
+            if args.logs_action == "list":
+                if args.limit < 1:
+                    raise ValueError("--limit must be positive.")
+                print(json.dumps(log.get_conversations(args.limit), indent=2))
+            else:
+                print(log.export_conversation(args.id, args.format))
+    except (KeyError, ValueError, OSError) as exc:
+        _fail(str(exc))
+
+
+def handle_hardware_command(args: argparse.Namespace) -> None:
+    from .hardware import get_system_memory, recommend_quantization
+
+    try:
+        result = get_system_memory()
+        if args.params_b is not None:
+            result["recommendation"] = recommend_quantization(
+                args.params_b, args.memory_gb, args.context_length
+            )
+        print(json.dumps(result, indent=2))
+    except ValueError as exc:
+        _fail(str(exc))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -1527,6 +2031,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             handle_list_command(args)
         elif command == "embed":
             handle_embed_command(args)
+        elif command in ("doctor", "discover", "probe"):
+            return handle_doctor_command(args)
+        elif command == "mcp":
+            handle_mcp_command(args)
+        elif command == "logs":
+            handle_logs_command(args)
+        elif command == "hardware":
+            handle_hardware_command(args)
         else:
             parser.print_help()
             return 1
