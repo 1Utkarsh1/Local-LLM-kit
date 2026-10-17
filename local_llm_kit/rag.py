@@ -51,6 +51,7 @@ __all__ = [
     "DEFAULT_SEPARATORS",
     "DEFAULT_SYSTEM_PROMPT",
     "chunk_text",
+    "mmr",
     "SimpleVectorStore",
     "retrieve",
     "build_rag_prompt",
@@ -107,6 +108,67 @@ def _cosine_matrix(query: List[float], matrix: List[List[float]]) -> List[float]
         except Exception:
             logger.debug("numpy RAG cosine path failed, using fallback")
     return [_cosine(query, row) for row in matrix]
+
+
+def _min_max_norm(scores: Sequence[float]) -> List[float]:
+    """Normalise scores to ``[0, 1]`` (all-equal input maps to zeros)."""
+    values = [float(s) for s in scores]
+    if not values:
+        return []
+    lo, hi = min(values), max(values)
+    span = hi - lo
+    if span <= 0.0:
+        return [0.0 for _ in values]
+    return [(v - lo) / span for v in values]
+
+
+def mmr(
+    query_vec: Sequence[float],
+    doc_vecs: Sequence[Sequence[float]],
+    k: int = 4,
+    lambda_mult: float = 0.5,
+) -> List[int]:
+    """Maximal Marginal Relevance selection: relevant *and* diverse hits.
+
+    Greedily picks ``k`` document indexes balancing query similarity
+    against similarity to already-picked documents::
+
+        score(i) = lambda * sim(query, i) - (1 - lambda) * max sim(i, picked)
+
+    Args:
+        query_vec: Query vector.
+        doc_vecs: Candidate document vectors.
+        k: Number of indexes to select (capped at the candidate count).
+        lambda_mult: Relevance/diversity trade-off in ``[0, 1]``.
+            ``1.0`` is pure relevance ranking; ``0.0`` is pure diversity.
+
+    Returns:
+        Selected document indexes in selection order. Deterministic: ties
+        break towards the lower index.
+    """
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ValueError("k must be a positive integer, got %r" % (k,))
+    if not isinstance(lambda_mult, (int, float)) or not 0.0 <= lambda_mult <= 1.0:
+        raise ValueError("lambda_mult must be in [0, 1], got %r" % (lambda_mult,))
+    query = _as_vector(list(query_vec), name="query_vec")
+    docs = [_as_vector(list(row), name="doc_vecs[%d]" % i) for i, row in enumerate(doc_vecs)]
+    if not docs:
+        return []
+    relevance = [_cosine(query, row) for row in docs]
+    selected: List[int] = []
+    remaining = set(range(len(docs)))
+    for _ in range(min(k, len(docs))):
+        best: Optional[int] = None
+        best_score = 0.0
+        for i in sorted(remaining):
+            diversity = max((_cosine(docs[i], docs[j]) for j in selected), default=0.0)
+            score = lambda_mult * relevance[i] - (1.0 - lambda_mult) * diversity
+            if best is None or score > best_score:
+                best, best_score = i, score
+        assert best is not None
+        selected.append(best)
+        remaining.discard(best)
+    return selected
 
 
 def _as_vector(value: Any, name: str = "vector") -> List[float]:
@@ -510,25 +572,24 @@ class SimpleVectorStore:
         """True when every stored entry carries a non-empty vector."""
         return bool(self.vectors) and all(len(v) > 0 for v in self.vectors)
 
+    def _hit(self, i: int, score: float) -> Dict[str, Any]:
+        return {
+            "index": i,
+            "id": self.ids[i],
+            "text": self.texts[i],
+            "metadata": dict(self.metadatas[i]),
+            "score": float(score),
+        }
+
     def _ranked_hits(self, scores: Sequence[float], k: int) -> List[Dict[str, Any]]:
         order = sorted(range(len(scores)), key=lambda i: (scores[i], -i), reverse=True)
-        hits = []
-        for i in order[: min(k, len(order))]:
-            hits.append(
-                {
-                    "index": i,
-                    "id": self.ids[i],
-                    "text": self.texts[i],
-                    "metadata": dict(self.metadatas[i]),
-                    "score": float(scores[i]),
-                }
-            )
-        return hits
+        return [self._hit(i, scores[i]) for i in order[: min(k, len(order))]]
 
     def search(
         self,
         query: Union[str, Sequence[float]],
         k: int = 4,
+        lambda_mult: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """Search the store for the ``k`` most similar entries.
 
@@ -537,6 +598,9 @@ class SimpleVectorStore:
                 or ranked with TF-IDF when the store has no vectors) or a
                 raw query vector (dense mode only).
             k: Number of hits to return (capped at the store size).
+            lambda_mult: Optional MMR trade-off in ``[0, 1]`` (see
+                :func:`mmr`). ``None`` (default) is pure relevance ranking.
+                Requires dense vectors; lexical stores raise ``ValueError``.
 
         Returns:
             Hits ordered by decreasing score (ties broken by insertion
@@ -550,6 +614,8 @@ class SimpleVectorStore:
             return []
         if isinstance(query, str):
             if self.embed_fn is None and not self._has_dense_vectors():
+                if lambda_mult is not None:
+                    raise ValueError("lambda_mult needs dense vectors (lexical store).")
                 # Lexical mode: TF-IDF over raw texts, no embeddings needed.
                 return self._ranked_hits(_lexical_scores(query, self.texts), k)
             if self.embed_fn is None:
@@ -569,8 +635,88 @@ class SimpleVectorStore:
             raise ValueError(
                 "Query dimension %d does not match store dimension %d" % (len(query_vec), self.dim)
             )
-        scores = _cosine_matrix(query_vec, self.vectors)
-        return self._ranked_hits(scores, k)
+        if lambda_mult is None:
+            scores = _cosine_matrix(query_vec, self.vectors)
+            return self._ranked_hits(scores, k)
+        if not isinstance(lambda_mult, (int, float)) or not 0.0 <= lambda_mult <= 1.0:
+            raise ValueError("lambda_mult must be in [0, 1], got %r" % (lambda_mult,))
+        # Fetch-then-rerank: shortlist by relevance, diversify with MMR.
+        pool = min(len(self.vectors), max(k * 5, 25))
+        relevance = _cosine_matrix(query_vec, self.vectors)
+        order = sorted(range(len(self.vectors)), key=lambda i: (relevance[i], -i), reverse=True)[
+            :pool
+        ]
+        picked = mmr(query_vec, [self.vectors[i] for i in order], k, float(lambda_mult))
+        return [self._hit(order[i], relevance[order[i]]) for i in picked]
+
+    def search_hybrid(
+        self,
+        query: str,
+        k: int = 4,
+        alpha: float = 0.5,
+        lambda_mult: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """Hybrid dense + lexical search with optional MMR diversification.
+
+        Fuses dense cosine similarity with TF-IDF lexical scores (each
+        min-max normalised to ``[0, 1]`` over the store)::
+
+            fused = alpha * dense_norm + (1 - alpha) * lexical_norm
+
+        Args:
+            query: Text query (embedded with the store's ``embed_fn`` for
+                the dense half). Vector queries are rejected: hybrid fusion
+                needs the raw text for its lexical half.
+            k: Number of hits to return (capped at the store size).
+            alpha: Dense/lexical trade-off in ``[0, 1]``. ``1.0`` is pure
+                dense ranking; ``0.0`` is pure lexical.
+            lambda_mult: Optional MMR trade-off in ``[0, 1]`` applied to a
+                relevance shortlist (see :meth:`search`).
+
+        Returns:
+            Ranked hits (same shape as :meth:`search`).
+        """
+        if not isinstance(query, str):
+            raise ValueError("Hybrid search needs a text query for its lexical half.")
+        if k < 1:
+            raise ValueError("k must be >= 1, got %r" % (k,))
+        if not isinstance(alpha, (int, float)) or not 0.0 <= alpha <= 1.0:
+            raise ValueError("alpha must be in [0, 1], got %r" % (alpha,))
+        if not self.texts:
+            return []
+        if self.embed_fn is None and not self._has_dense_vectors():
+            raise ValueError("Hybrid search needs dense vectors (no embed_fn or embeddings).")
+        if self.embed_fn is None:
+            raise ValueError(
+                "String queries need an embed_fn: pass a query vector "
+                "or construct the store with embed_fn=...."
+            )
+        query_vec = _embed_one(self.embed_fn, query)
+        if not self._has_dense_vectors():
+            raise ValueError(
+                "Vector queries need stored embeddings: add entries with "
+                "embeddings=... or construct the store with embed_fn=...."
+            )
+        if self.dim is not None and len(query_vec) != self.dim:
+            raise ValueError(
+                "Query dimension %d does not match store dimension %d" % (len(query_vec), self.dim)
+            )
+        dense = _cosine_matrix(query_vec, self.vectors)
+        lexical = _lexical_scores(query, self.texts)
+        dense_n = _min_max_norm(dense)
+        lexical_n = _min_max_norm(lexical)
+        fused = [
+            float(alpha) * dense_score + (1.0 - float(alpha)) * lex_score
+            for dense_score, lex_score in zip(dense_n, lexical_n)
+        ]
+        order = sorted(range(len(fused)), key=lambda i: (fused[i], -i), reverse=True)
+        if lambda_mult is None:
+            return [self._hit(i, fused[i]) for i in order[: min(k, len(order))]]
+        if not isinstance(lambda_mult, (int, float)) or not 0.0 <= lambda_mult <= 1.0:
+            raise ValueError("lambda_mult must be in [0, 1], got %r" % (lambda_mult,))
+        pool = order[: min(len(order), max(k * 5, 25))]
+        picked = mmr(query_vec, [self.vectors[i] for i in pool], k, float(lambda_mult))
+        return [self._hit(pool[i], fused[pool[i]]) for i in picked]
 
     # -- persistence ----------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
@@ -672,6 +818,7 @@ def retrieve(
     store: SimpleVectorStore,
     embed_fn: Optional[EmbedFn] = None,
     k: int = 4,
+    lambda_mult: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """Retrieve the ``k`` most relevant docs for ``query``.
 
@@ -681,6 +828,8 @@ def retrieve(
         embed_fn: Embedding function for string queries. Defaults to the
             store's own ``embed_fn``.
         k: Number of hits to return.
+        lambda_mult: Optional MMR trade-off in ``[0, 1]``; ``None``
+            (default) is pure relevance ranking.
 
     Returns:
         Ranked hits (see :meth:`SimpleVectorStore.search`).
@@ -689,9 +838,9 @@ def retrieve(
     if isinstance(query, str):
         if fn is None:
             # Lexical mode: TF-IDF over raw texts, no embeddings needed.
-            return store.search(query, k=k)
-        return store.search(_embed_one(fn, query), k=k)
-    return store.search(query, k=k)
+            return store.search(query, k=k, lambda_mult=lambda_mult)
+        return store.search(_embed_one(fn, query), k=k, lambda_mult=lambda_mult)
+    return store.search(query, k=k, lambda_mult=lambda_mult)
 
 
 # ---------------------------------------------------------------------------

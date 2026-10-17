@@ -174,6 +174,11 @@ Server presets
      - apfel
      - http://localhost:11434/v1 (run ``apfel --serve``; shares Ollama's port)
 
+   * - Transformers serve
+     - transformers-serve
+     - http://localhost:8000/v1 (run ``transformers serve``;
+       shares vLLM's default port)
+
 Use the ID of a model already loaded by the server. A preset chooses the
 connection URL and protocol parameter mapping. Override the URL with
 ``backend_kwargs={"base_url": "http://host:port/v1"}``; set ``api_key`` there if
@@ -209,6 +214,9 @@ Upstream setup references:
   `server endpoints/options <https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/server.py>`_
 * `KoboldCpp API and setup <https://github.com/LostRuins/koboldcpp#apis-and-integrations>`_
 * `apfel OpenAI API compatibility <https://github.com/Arthur-Ficial/apfel#openai-api-compatibility>`_
+
+* `transformers serve <https://huggingface.co/docs/transformers/main/en/serving>`_
+  (``pip install transformers[serving]``; default ``http://localhost:8000``)
 
 For example, launch MLX-LM with prepared weights using
 ``mlx_lm.server --model /path/to/local/mlx-model --host 127.0.0.1 --port 8080``,
@@ -272,6 +280,20 @@ Use ``backend="transformers"`` with the ``transformers`` extra for Hugging Face
 models, or ``backend="llamacpp"`` with the ``llamacpp`` extra for local GGUF files.
 Tool calls and JSON output use the kit's prompt formatting unless the backend
 implements a native capability. Prompted JSON is not a schema-enforcement guarantee.
+
+The ``transformers-serve`` preset connects to a running ``transformers serve``
+instance instead of loading weights in-process: same adapter, same model ID
+rules as the other presets, default ``http://localhost:8000/v1``.
+
+Transient-failure retries
+-------------------------
+
+The ``ollama`` and ``openai-compat`` backends (including all server presets)
+retry connection errors, timeouts, and HTTP 429/5xx responses on
+non-streaming calls: ``retries=2`` with exponential ``retry_backoff=0.5``
+seconds by default, ``retries=0`` to fail fast, both settable through
+``backend_kwargs``. Streaming calls are never retried (a partial stream
+cannot resume safely).
 
 Offline operation and validation scope
 --------------------------------------

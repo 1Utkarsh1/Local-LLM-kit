@@ -194,5 +194,105 @@ class TestAirLLMAdapter(unittest.TestCase):
                 AirLLMBackend("/trusted/model")
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestHTTPRetries(unittest.TestCase):
+    def _http_error(self, code):
+        import io
+        import urllib.error
+        from email.message import Message
+
+        return urllib.error.HTTPError(
+            "http://localhost:1/v1/models",
+            code,
+            "error",
+            Message(),
+            io.BytesIO(b'{"error": "server-error"}'),
+        )
+
+    def _url_error(self):
+        import urllib.error
+
+        return urllib.error.URLError("connection refused")
+
+    def _fake_resp(self, payload):
+        import json as _json
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return _json.dumps(payload).encode("utf-8")
+
+        return FakeResp()
+
+    def test_openai_compat_retries_500_then_succeeds(self):
+        import urllib.request
+
+        from local_llm_kit.backends.openai_compat import OpenAICompatBackend
+
+        backend = OpenAICompatBackend("m", retries=2, retry_backoff=0)
+        with mock.patch.object(
+            urllib.request,
+            "urlopen",
+            side_effect=[self._http_error(500), self._fake_resp({"data": []})],
+        ) as opener:
+            self.assertEqual(backend._get_json("/models"), {"data": []})
+        self.assertEqual(opener.call_count, 2)
+
+    def test_no_retry_on_400(self):
+        import urllib.request
+
+        from local_llm_kit.backends.openai_compat import OpenAICompatBackend
+
+        backend = OpenAICompatBackend("m", retries=3, retry_backoff=0)
+        with mock.patch.object(
+            urllib.request, "urlopen", side_effect=self._http_error(400)
+        ) as opener:
+            with self.assertRaisesRegex(RuntimeError, "HTTP 400"):
+                backend._get_json("/models")
+        self.assertEqual(opener.call_count, 1)
+
+    def test_retries_exhausted_reraises_last_error(self):
+        import urllib.request
+
+        from local_llm_kit.backends.ollama import OllamaBackend
+
+        backend = OllamaBackend(retries=1, retry_backoff=0)
+        with mock.patch.object(urllib.request, "urlopen", side_effect=self._url_error()) as opener:
+            with self.assertRaises(ConnectionError):
+                backend._get_json("/api/tags")
+        self.assertEqual(opener.call_count, 2)
+
+    def test_retries_zero_fails_fast(self):
+        import urllib.request
+
+        from local_llm_kit.backends.openai_compat import OpenAICompatBackend
+
+        backend = OpenAICompatBackend("m", retries=0, retry_backoff=0)
+        with mock.patch.object(urllib.request, "urlopen", side_effect=self._url_error()) as opener:
+            with self.assertRaises(ConnectionError):
+                backend._get_json("/models")
+        self.assertEqual(opener.call_count, 1)
+
+    def test_invalid_retry_options_rejected(self):
+        from local_llm_kit.backends.ollama import OllamaBackend
+        from local_llm_kit.backends.openai_compat import OpenAICompatBackend
+
+        for cls in (OllamaBackend, OpenAICompatBackend):
+            with self.assertRaisesRegex(ValueError, "retries"):
+                cls("m", retries=-1)
+            with self.assertRaisesRegex(ValueError, "retry_backoff"):
+                cls("m", retry_backoff=-0.5)
+
+    def test_429_respected_like_5xx(self):
+        from local_llm_kit.backends.base import is_transient_error
+
+        self.assertTrue(is_transient_error(self._http_error(429)))
+        self.assertTrue(is_transient_error(self._http_error(503)))
+        self.assertTrue(is_transient_error(self._url_error()))
+        self.assertFalse(is_transient_error(self._http_error(400)))
+        self.assertFalse(is_transient_error(self._http_error(404)))
+        self.assertFalse(is_transient_error(ValueError("bad payload")))

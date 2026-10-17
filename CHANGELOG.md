@@ -32,6 +32,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI: `local-llm-kit mcp tools` and `local-llm-kit mcp call`, plus repeatable `--mcp-command` / `--mcp-url` on `chat`.
 - `examples/mcp_tools.py` (runs fully offline against a built-in demo server) and `docs/source/mcp.rst`.
 
+- Responses-API subset on the dev server (`POST /v1/responses`, non-streaming
+  and SSE): string/message-list `input`, top-level `instructions`, `tools` with
+  the same execute-tools default, `function_call` output items for unexecuted
+  tool calls; stateful options rejected explicitly.
+- Upstream model discovery: new `LLM.list_models()` (backend listing with a
+  single-model fallback, never raises) and `GET /v1/models` aggregation.
+- Transient-failure retries for the `ollama` and `openai-compat` backends
+  (`retries`/`retry_backoff` via `backend_kwargs`; non-streaming calls only).
+- RAG quality: `SimpleVectorStore.search(..., lambda_mult=...)` MMR
+  diversification, new `search_hybrid(..., alpha=...)` dense+lexical fusion
+  (both with optional MMR rerank), and `retrieve()` passthroughs.
+- `transformers-serve` preset for Hugging Face `transformers serve`
+  (`http://localhost:8000/v1`).
+- History truncation keeps tool exchanges atomic (assistant `tool_calls`
+  are never split from their `tool` results) in both truncation and
+  summarization.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added

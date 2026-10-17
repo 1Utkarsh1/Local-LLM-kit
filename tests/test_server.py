@@ -199,6 +199,70 @@ class TestOpenAIServer(unittest.TestCase):
         self.assertGreaterEqual(resp.status_code, 400)
         self.assertLess(resp.status_code, 500)
 
+    def test_responses_string_input(self):
+        resp = self.client.post(
+            "/v1/responses", json={"model": "echo-model", "input": "hello responses"}
+        )
+        self.assertEqual(resp.status_code, 200, msg=resp.text[:500])
+        body = resp.json()
+        self.assertEqual(body["object"], "response")
+        self.assertEqual(body["status"], "completed")
+        output = body["output"][0]
+        self.assertEqual(output["type"], "message")
+        self.assertEqual(output["role"], "assistant")
+        self.assertIn("hello responses", output["content"][0]["text"])
+
+    def test_responses_message_list_and_instructions(self):
+        resp = self.client.post(
+            "/v1/responses",
+            json={
+                "model": "echo-model",
+                "instructions": "Be terse.",
+                "input": [
+                    {"role": "user", "content": "first"},
+                    {"type": "input_text", "text": "second"},
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "third"}],
+                    },
+                ],
+            },
+        )
+        self.assertEqual(resp.status_code, 200, msg=resp.text[:500])
+        self.assertIn("third", resp.json()["output"][0]["content"][0]["text"])
+
+    def test_responses_rejects_bad_input_and_stateful_options(self):
+        for payload in ({"input": ""}, {"input": []}, {"input": [{"type": "nonsense"}]}):
+            resp = self.client.post("/v1/responses", json=payload)
+            self.assertEqual(resp.status_code, 400, msg=resp.text[:300])
+        for payload in (
+            {"input": "hi", "previous_response_id": "resp_1"},
+            {"input": "hi", "background": True},
+            {"input": "hi", "store": True},
+            {"input": "hi", "reasoning": {"effort": "low"}},
+        ):
+            resp = self.client.post("/v1/responses", json=payload)
+            self.assertEqual(resp.status_code, 400, msg=resp.text[:300])
+
+    def test_responses_streaming_deltas_and_completed(self):
+        resp = self.client.post("/v1/responses", json={"input": "hi", "stream": True})
+        self.assertEqual(resp.status_code, 200, msg=resp.text[:500])
+        events = [
+            line[len("data: ") :]
+            for line in resp.text.splitlines()
+            if line.startswith("data: ") and line.strip() != "data: [DONE]"
+        ]
+        import json as _json
+
+        parsed = [_json.loads(e) for e in events]
+        deltas = [e["delta"] for e in parsed if e.get("type") == "response.output_text.delta"]
+        self.assertTrue(deltas)
+        completed = [e for e in parsed if e.get("type") == "response.completed"]
+        self.assertEqual(len(completed), 1)
+        full = completed[0]["response"]["output"][0]["content"][0]["text"]
+        self.assertEqual(full, "".join(deltas))
+
     def test_embeddings_use_the_llm_vectors_when_it_returns_openai_shape(self):
         """LLM.embed() answers with {"data": [...]}: use those vectors, not a stub."""
         app = make_app(DictEmbedLLM())

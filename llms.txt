@@ -42,6 +42,22 @@ Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental a
 
 Capabilities depend on the chosen model/runtime. Protocol tests are not hardware benchmarks. AirLLM call contracts are tested with doubles; real model/GPU execution is not certified, and its stream is buffered. The bundled HTTP server is a development shim. Remote tool execution defaults to off; per-call Python tools are request-scoped. Weights and dependencies must be prepared before offline use. Discovery tests run offline against an HTTP fixture; real-server certification is opt-in via `LOCAL_LLM_KIT_LIVE=1`. These integrations are included in version 0.2.0.
 
+Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm. Server presets: sglang, vllm, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm, koboldcpp and transformers-serve. These cover 12 distinct local runtimes (transformers-serve shares the transformers engine); this is not a usage ranking. A preset connects to an already-running server with a served model ID; it does not install or host that engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate embedding backend.
+
+## Boundaries
+
+The dev server additionally exposes a Responses-API subset (`POST /v1/responses`:
+string/message-list input, instructions, function_call output items; stateful
+options rejected) and aggregates upstream `/v1/models` listings. HTTP backends
+retry transient failures on non-streaming calls (retries=2 default, 0 to fail
+fast). RAG offers MMR diversification and dense+lexical hybrid search.
+Capabilities depend on the chosen model/runtime. Protocol tests are not hardware
+benchmarks. AirLLM call contracts are tested with doubles; real model/GPU
+execution is not certified, and its stream is buffered. The bundled HTTP server
+is a development shim. Remote tool execution defaults to off; per-call Python
+tools are request-scoped. Weights and dependencies must be prepared before
+offline use. These integrations are included in version 0.2.0.
+
 ## References
 
 - [Repository and quickstart](https://github.com/1Utkarsh1/Local-LLM-kit)
