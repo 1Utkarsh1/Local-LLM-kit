@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
+
 ### Added
 - Native Apple Foundation Models adapter and apfel profile, including native schemas, fresh sessions, inline image attachments, exact token counting, cooperative timeouts and streaming stop handling.
 - Server discovery, native capability metadata, `doctor` CLI and a locality guard that rejects unknown or remote routes.
@@ -31,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Validation scope
 - Core requirements remain Python 3.9+ with no new mandatory dependencies; Apple SDK and official SDK interoperability have separate version requirements.
-- These are unreleased changes. Protocol/SDK tests do not establish performance superiority or certify every runtime/hardware combination.
+- Protocol/SDK tests do not establish performance superiority or certify every runtime/hardware combination.
 
 ## [0.2.0] - 2026-10-17
 

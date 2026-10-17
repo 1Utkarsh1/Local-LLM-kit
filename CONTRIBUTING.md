@@ -2,7 +2,7 @@
 
 Thanks for contributing! This guide gets you from zero to a passing PR in ~10 minutes.
 
-> **v0.2.0 context:** core install stays light (stdlib + `typing-extensions`, Python 3.9+).
+> Core install stays light (stdlib + `typing-extensions`, Python 3.9+).
 > Heavy deps (`torch`/`transformers`/`llama-cpp-python`/`fastapi`/`uvicorn`, etc.)
 > are **optional extras, lazily imported** — never import them at module top-level in core paths.
 > Keep the legacy API working: `LLM` / `chat()` / `complete()` / `add_function()`.

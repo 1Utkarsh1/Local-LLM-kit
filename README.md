@@ -9,18 +9,15 @@ Use OpenAI-shaped chat, streaming, tools and structured output while choosing
 where your model runs. The core install needs only `typing-extensions`; model
 engines and validation packages are optional.
 
-**Development status:** PyPI **0.2.0** is the current release. Native Apple FM,
+**Release 0.3.0** includes native Apple FM,
 MCP, discovery, Responses, agents, hybrid retrieval, logging and the hardware
-advisor below are **unreleased changes on this branch**. To try this branch:
+advisor. Install or upgrade from PyPI:
 
 ```bash
-git clone https://github.com/1Utkarsh1/Local-LLM-kit.git
-cd Local-LLM-kit
-git checkout feat/consolidated-community-upgrades
-python -m pip install -e '.[structured,server]'
+python -m pip install --upgrade local-llm-kit
 ```
 
-For the released API, use the [0.2.0 documentation](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.2.0).
+For the released API, use the [0.3.0 documentation](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.3.0).
 No API key is needed for local inference. Prepare your engine, dependencies and
 model weights before disconnecting from the internet.
 

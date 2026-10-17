@@ -4,7 +4,7 @@
 
 ## Status
 
-PyPI 0.2.0 is the stable release. Discovery, Apple FM, MCP, agents, validated structured output, hybrid retrieval, logging, hardware advice and Responses are unreleased additions on feat/consolidated-community-upgrades. Do not describe them as shipped in 0.2.0.
+Release 0.3.0 includes discovery, Apple FM, MCP, agents, validated structured output, hybrid retrieval, logging, hardware advice and Responses. Install or upgrade with `python -m pip install --upgrade local-llm-kit`. These additions were not shipped in 0.2.0.
 
 ## API and fit
 
@@ -12,7 +12,7 @@ Use when an application needs an OpenAI-shaped Python chat/completion API across
 
 In-process adapters: transformers, llamacpp, experimental airllm, native apple-fm. HTTP: native ollama and OpenAI-compatible presets vllm, sglang, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm, koboldcpp, transformers-serve, apfel. Generic servers use openai-compat with base_url. A preset connects to an already-running engine; it does not host or install it. Features depend on the chosen model/runtime. These are compatibility options, not a usage ranking.
 
-## Unreleased additions
+## Additions in 0.3.0
 
 - `discover`, `probe_endpoint`, `find_local_server` and CLI `doctor`: read native capability metadata when available. Unknown locality stays unknown. `LLM(..., require_local=True)` refuses unverified/remote execution and checks again before chat/completion. It trusts metadata and is not a network sandbox.
 - HTTP adapters use `max_retries` (integer or RetryPolicy), default 2. Streaming retries only connection setup, never emitted output.
@@ -31,7 +31,7 @@ Core stays light. Native inference dependencies are optional and prepared weight
 ## References
 
 - [Repository and quickstart](https://github.com/1Utkarsh1/Local-LLM-kit)
-- [Released 0.2.0 API](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.2.0)
+- [Released 0.3.0 API](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.3.0)
 - [Backend compatibility](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/backends.rst)
 - [API reference](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/api_reference.rst)
 - [Examples](https://github.com/1Utkarsh1/Local-LLM-kit/tree/main/examples)

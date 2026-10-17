@@ -64,7 +64,8 @@ jobs:
         run: >
           python -c
           "import local_llm_kit;
-          assert local_llm_kit.__version__ == '0.2.0', local_llm_kit.__version__;
+          from importlib.metadata import version;
+          assert local_llm_kit.__version__ == version('local-llm-kit'), local_llm_kit.__version__;
           from local_llm_kit import LLM, chat, complete, add_function;
           print('smoke OK', local_llm_kit.__version__)"
 

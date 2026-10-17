@@ -8,7 +8,7 @@ body:
     attributes:
       label: Package version
       description: Output of `pip show local-llm-kit`
-      placeholder: "e.g. 0.2.0"
+      placeholder: "e.g. 0.3.0"
     validations: { required: true }
   - type: input
     id: python

@@ -4,14 +4,12 @@ Quickstart
 Install and run offline
 -----------------------
 
-The core package needs no GPU or model download. Unreleased features need a
-source install until the next PyPI release.
+The core package needs no GPU or model download. The examples here target
+Local LLM Kit 0.3.0 or newer.
 
 .. code-block:: bash
 
-   pip install local-llm-kit
-   # From a checkout, including unreleased changes:
-   pip install -e .
+   pip install --upgrade local-llm-kit
 
 .. code-block:: python
 

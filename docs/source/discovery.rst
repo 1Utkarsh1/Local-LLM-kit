@@ -1,7 +1,7 @@
 Discover servers and model capabilities
-======================================
+=======================================
 
-These APIs are unreleased additions. ``discover()`` probes known loopback
+These APIs are available in 0.3.0. ``discover()`` probes known loopback
 endpoints concurrently without generating text. ``probe_endpoint(url)`` checks
 one endpoint; extra URLs can be supplied to discovery. Authentication is not
 handled by discovery, so an authenticated server may appear unavailable.

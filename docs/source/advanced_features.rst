@@ -1,7 +1,7 @@
 Agents, retrieval and local history
-==================================
+===================================
 
-These features are unreleased additions. See the repository README for runnable
+These features are available in 0.3.0. See the repository README for runnable
 examples and :doc:`community_pr_review` for their provenance and review fixes.
 
 Agents and structured output

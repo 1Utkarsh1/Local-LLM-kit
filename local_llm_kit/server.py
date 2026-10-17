@@ -44,6 +44,8 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
+from . import __version__
+
 __all__ = ["create_app", "run", "main"]
 
 
@@ -722,7 +724,7 @@ def create_app(
             content={"error": {"message": message, "type": err_type}},
         )
 
-    app = FastAPI(title="local-llm-kit server", version="0.2.0")
+    app = FastAPI(title="local-llm-kit server", version=__version__)
 
     app.add_middleware(
         CORSMiddleware,

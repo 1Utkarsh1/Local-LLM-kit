@@ -9,9 +9,10 @@ inference engine to be installed in the client environment.
 
    python -m venv .venv
    source .venv/bin/activate
-   pip install local-llm-kit
+   pip install --upgrade local-llm-kit
 
-For unreleased features, install from the branch or checkout containing them:
+Release 0.3.0 includes the discovery, MCP, agents and retrieval APIs documented
+here. For development, install from a checkout:
 
 .. code-block:: bash
 

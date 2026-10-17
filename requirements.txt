@@ -1,4 +1,4 @@
-# local-llm-kit v0.2.0 — core runtime (light install: stdlib + typing-extensions).
+# local-llm-kit — core runtime (light install: stdlib + typing-extensions).
 # Install with:  pip install -e .
 typing-extensions>=4.6.0
 
