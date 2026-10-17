@@ -101,7 +101,8 @@ Server presets
      - http://localhost:8080/v1
    * - llama-server
      - llama-server
-     - http://localhost:8080/v1 (start with --port 8080)
+     - http://localhost:9931/v1 (the default since October 2026; the Docker
+       image and older builds use 8080)
    * - Jan
      - jan
      - http://127.0.0.1:1337/v1 (enable server and configure its API key)
@@ -121,6 +122,14 @@ connection URL and protocol parameter mapping. Override the URL with
 needed. The generic ``openai-compat`` backend supports other servers exposing the
 same endpoints. Server and model capabilities determine tool calling, schemas,
 vision and embedding availability.
+
+Rather than guessing which port is in use, probe them all with
+``local-llm-kit doctor`` — see :doc:`discovery`. It reports what is listening,
+reads each server's own capability metadata (Ollama ``/api/show``, llama.cpp
+``/props``, LM Studio ``/api/v1/models``, apfel ``/v1/models``), and flags models
+that a server routes off the machine. The preset catalog is de-duplicated by
+normalised URL and the provider is identified from the server's response, so
+several providers sharing a default port is not ambiguous.
 
 .. code-block:: python
 

@@ -37,6 +37,126 @@ CLI equivalent:
 local-llm-kit chat --model llama3.2:3b --backend ollama
 ```
 
+## Stop guessing which server is running
+
+The usual local-AI failure is not a bad model call — it is not knowing what is
+listening where, whether the model finished loading, what it can actually do, and
+whether it is really running on your machine.
+
+```bash
+local-llm-kit doctor
+```
+
+```
+Probed 10 local endpoints in 28ms; 1 responded.
+
+Live servers:
+  ok  http://127.0.0.1:11434/v1  ollama         25ms  4 models
+
+ollama  (http://127.0.0.1:11434/v1)
+    qwen2.5:0.5b                 ctx 32768    completion, tools
+    glm-5.2:cloud                ctx 1000000  completion, tools, thinking  OFF-DEVICE -> https://ollama.com:443
+  note: 3 of 4 model(s) are routed off-device (https://ollama.com:443)
+
+Ready to use (on-device):
+  LLM("qwen2.5:0.5b", backend="ollama")
+```
+
+It probes the well-known local endpoints (Ollama, LM Studio, llama.cpp, vLLM,
+LocalAI, SGLang, Jan, GPT4All, MLX-LM, KoboldCpp, text-generation-webui, apfel),
+reads each server's *own* capability metadata, and reports the result. Dead ports
+are reported, not raised. `--json` gives the machine-readable form,
+`--require-local` exits non-zero unless an on-device model is available, and
+`--url localhost:9000` adds an endpoint. `doctor`, `discover` and `probe` are
+aliases.
+
+The same thing from Python:
+
+```python
+from local_llm_kit import discover, find_local_server
+
+for server in discover().live:
+    print(server.base_url, server.provider, "->", [m.id for m in server.models])
+    for model in server.local_models:
+        print("  on-device:", model.id, model.context_length, model.capabilities)
+
+server = find_local_server()          # first server with an on-device model, or None
+```
+
+Nothing is downloaded or inferred; probes are unauthenticated GETs to
+model-listing endpoints with a sub-second default timeout.
+
+### Capabilities come from the server, not from a constant
+
+Where a server publishes real model metadata, this kit now reports it instead of
+guessing:
+
+| Server | Source of truth | What it supplies |
+|---|---|---|
+| Ollama | `POST /api/show`, `GET /api/tags` | real `context_length`, `capabilities`, and `remote_host` for provider-routed models |
+| llama.cpp `llama-server` | `GET /props`, `/v1/models` | live `n_ctx`, `modalities.vision`, model `meta` |
+| LM Studio | `GET /api/v1/models` | `capabilities.vision`, `trained_for_tool_use`, `max_context_length` |
+| apfel (Apple Foundation Models) | `GET /v1/models` | `context_window`, `capabilities` |
+
+For example, Ollama's `qwen2.5:0.5b` reports a 32768-token window, and the adapter
+now says so rather than falling back to a 4096 default:
+
+```python
+llm = LLM("qwen2.5:0.5b", backend="ollama",
+          backend_kwargs={"auto_detect_capabilities": True})
+llm.context_window        # 32768, read from the server
+```
+
+Capability lookup is opt-in there so constructing a backend never requires a
+running server; `discover()` and `doctor` use it by default.
+
+### Keep inference on your machine
+
+Some setups look local but are not: an Ollama `:cloud` model is served from
+`ollama.com`. Discovery flags those, and `require_local` refuses them:
+
+```python
+llm = LLM("qwen2.5:0.5b", backend="ollama", require_local=True)   # on-device: OK
+LLM("glm-5.2:cloud", backend="ollama", require_local=True)        # RuntimeError
+# RuntimeError: Model 'glm-5.2:cloud' is served from https://ollama.com:443,
+#               not on this machine.
+```
+
+A guarantee that cannot be verified is not granted silently: if the backend
+*could* report routing but the lookup failed, `require_local` raises rather than
+assuming the model is local. Backends with no notion of remote routing treat it
+as a no-op.
+
+## Survive the cold start
+
+Finding the server is half the problem; the other half is asking before it is
+ready. A desktop app has not bound its port yet, a model is still loading
+(llama.cpp answers `503 {"error":{"message":"Loading model"}}`), or the server
+is briefly overloaded.
+
+Server backends now retry transient failures: a refused connection, `429`, and
+`5xx`. Client errors such as `400` fail immediately, and the same defaults the
+official OpenAI Python client uses apply — two retries, 0.5s initial delay, 8s
+ceiling, `Retry-After` honoured (clamped to 120s) and jittered so several
+clients do not retry in lockstep.
+
+Measured on this machine, with the server starting 0.5s after the first request:
+
+| Setting | Result |
+|---|---|
+| `max_retries=0` | `ConnectionError` after 0.01s |
+| `max_retries=2` (default) | **succeeds** in 1.22s, transparently |
+
+```python
+LLM("qwen2.5:0.5b", backend="ollama")                            # default: 2 retries
+LLM("m", backend="vllm", backend_kwargs={"max_retries": 5})       # more patience
+LLM("m", backend="vllm", backend_kwargs={"max_retries": 0})       # fail fast
+```
+
+Streaming retries only the connection phase: once a token has been emitted,
+retrying would replay output the caller already received. A bad request is
+never retried, so a `400` from the server is reported as-is.
+
 ## Offline mode (no model needed)
 
 Every example and the test-suite run without downloads via the `echo` backend:
@@ -85,7 +205,7 @@ Use a model ID that the running server actually serves. These presets use the sh
 | vLLM | `"vllm"` | `http://localhost:8000/v1` |
 | LM Studio | `"lmstudio"` | `http://localhost:1234/v1` |
 | LocalAI | `"localai"` | `http://localhost:8080/v1` |
-| llama-server | `"llama-server"` | `http://localhost:8080/v1`; launch with `--port 8080` |
+| llama-server | `"llama-server"` | `http://localhost:9931/v1` (llama.cpp's default since Oct 2026); pass `base_url` for the 8080 Docker image or an older build |
 | Jan | `"jan"` | `http://127.0.0.1:1337/v1`; enable its local server and supply its API key |
 | GPT4All | `"gpt4all"` | `http://127.0.0.1:4891/v1`; enable Local API Server in settings |
 | MLX-LM | `"mlx-lm"` | `http://127.0.0.1:8080/v1`; run `mlx_lm.server` on Apple Silicon |
@@ -278,6 +398,10 @@ Text-only backends receive the `text` parts and ignore images instead of crashin
 ## CLI
 
 ```bash
+local-llm-kit doctor                     # what is running, and can it run offline?
+local-llm-kit doctor --json              # machine-readable, includes failures
+local-llm-kit doctor --require-local     # exit 1 unless an on-device model exists
+local-llm-kit doctor --url localhost:9000
 local-llm-kit chat --model llama3.2:3b --backend ollama --system "You are helpful."
 local-llm-kit complete --model ./m.gguf --backend llamacpp --prompt "Once upon a time,"
 local-llm-kit serve --backend echo --port 8000
@@ -301,6 +425,7 @@ Server presets and `airllm` are also accepted by the CLI. `pull` reuses reposito
 | `examples/tools_structured.py` | `@tool` + `response_format` | yes |
 | `examples/rag_minimal.py` | chunk → store → retrieve → chat | yes |
 | `examples/vision_chat.py` | `image_url` message, graceful fallback | yes |
+| `examples/discover_servers.py` | find running servers, read capabilities, refuse off-device models | yes (skips cleanly) |
 
 ## Migration: 0.1.x → 0.2.0
 

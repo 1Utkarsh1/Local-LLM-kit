@@ -8,19 +8,28 @@ Applications that want one OpenAI-shaped chat/completion interface across local 
 
 ## Actual API
 
-`from local_llm_kit import LLM, chat, complete, embed, tool`
+`from local_llm_kit import LLM, chat, complete, embed, tool, discover, find_local_server, probe_endpoint`
 
 `LLM(model_path="echo", backend="echo").chat([{"role":"user","content":"Hello"}])` returns a dictionary; text is at `response["choices"][0]["message"]["content"]`.
 
-Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm. Server presets: sglang, vllm, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm and koboldcpp. These cover 12 distinct local runtimes; this is not a usage ranking. A preset connects to an already-running server with a served model ID; it does not install or host that engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate embedding backend.
+Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm. Server presets: sglang, vllm, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm and koboldcpp. These cover 12 distinct local runtimes; this is not a usage ranking. A preset connects to an already-running server with a served model ID; it does not install or host that engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate embedding backend. `llama-server` defaults to port 9931 (upstream default since October 2026); the Docker image and older builds use 8080.
+
+## Finding servers and real capabilities
+
+`discover()` probes the well-known local endpoints concurrently (stdlib only, unauthenticated GETs, no inference) and returns `DiscoveryReport`; `find_local_server()` returns the first server with an on-device model or None; `probe_endpoint(url)` checks one endpoint. `local-llm-kit doctor [--json] [--require-local] [--url HOST:PORT]` is the CLI form and exits 0/1 for scripting.
+
+Capabilities come from each server's own metadata where it exists: Ollama `POST /api/show` + `GET /api/tags` (real `context_length`, `capabilities`, `remote_host`), llama.cpp `GET /props` (live `n_ctx`, `modalities.vision`), LM Studio `GET /api/v1/models` (`capabilities.vision`, `trained_for_tool_use`, `max_context_length`), apfel `GET /v1/models` (`context_window`, `capabilities`). The provider is identified from the server's response, not from the port number.
+
+Ollama models that a server routes off the machine (a `:cloud` model runs on ollama.com) are flagged as `remote` with their `remote_host`. `LLM(..., require_local=True)` refuses such a model, and raises rather than assuming when routing cannot be verified. `OllamaBackend(..., auto_detect_capabilities=True)` makes `LLM.context_window` use the server's real value.
 
 ## Boundaries
 
-Capabilities depend on the chosen model/runtime. Protocol tests are not hardware benchmarks. AirLLM call contracts are tested with doubles; real model/GPU execution is not certified, and its stream is buffered. The bundled HTTP server is a development shim. Remote tool execution defaults to off; per-call Python tools are request-scoped. Weights and dependencies must be prepared before offline use. These integrations are included in version 0.2.0.
+Capabilities depend on the chosen model/runtime. Protocol tests are not hardware benchmarks. AirLLM call contracts are tested with doubles; real model/GPU execution is not certified, and its stream is buffered. The bundled HTTP server is a development shim. Remote tool execution defaults to off; per-call Python tools are request-scoped. Weights and dependencies must be prepared before offline use. Discovery tests run offline against an HTTP fixture; real-server certification is opt-in via `LOCAL_LLM_KIT_LIVE=1`. These integrations are included in version 0.2.0.
 
 ## References
 
 - [Repository and quickstart](https://github.com/1Utkarsh1/Local-LLM-kit)
+- [Server discovery and capabilities](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/discovery.rst)
 - [Backend compatibility](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/backends.rst)
 - [Python API](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/api_reference.rst)
 - [Examples](https://github.com/1Utkarsh1/Local-LLM-kit/tree/main/examples)

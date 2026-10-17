@@ -48,6 +48,7 @@ __all__ = [
     "handle_pull_command",
     "handle_list_command",
     "handle_embed_command",
+    "handle_doctor_command",
 ]
 
 
@@ -846,6 +847,62 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read input texts from a file (one per non-empty line), " "or '-' for stdin.",
     )
 
+    # -- doctor ----------------------------------------------------------
+    doctor_p = sub.add_parser(
+        "doctor",
+        aliases=["discover", "probe"],
+        help="Find running local LLM servers and report what they can do.",
+        description=(
+            "Probe the well-known local LLM endpoints (Ollama, LM Studio, "
+            "llama.cpp, vLLM, LocalAI, Jan, GPT4All, MLX-LM, KoboldCpp, ...), "
+            "read each server's own capability metadata, and report which "
+            "models are genuinely on-device."
+        ),
+    )
+    doctor_p.add_argument(
+        "--url",
+        dest="urls",
+        action="append",
+        default=None,
+        metavar="BASE_URL",
+        help="Extra endpoint to probe, e.g. --url localhost:9000. Repeatable.",
+    )
+    doctor_p.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Per-request timeout in seconds (default: 0.75).",
+    )
+    doctor_p.add_argument(
+        "--json",
+        dest="json",
+        action="store_true",
+        default=False,
+        help="Emit the full report as JSON (machine-readable, includes failures).",
+    )
+    doctor_p.add_argument(
+        "--require-local",
+        dest="require_local",
+        action="store_true",
+        default=False,
+        help="Exit non-zero unless a server with only on-device models is found.",
+    )
+    doctor_p.add_argument(
+        "--keep-loading",
+        dest="keep_loading",
+        action="store_true",
+        default=False,
+        help="Wait and report servers that are still loading a model "
+        "(a 5xx answer instead of a refused connection).",
+    )
+    doctor_p.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        default=False,
+        help="Print nothing; use the exit code (0 = found).",
+    )
+
     return parser
 
 
@@ -1496,6 +1553,123 @@ def handle_embed_command(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+def _describe_model(model: Any) -> str:
+    """One-line capability summary for a discovered model."""
+    bits = []
+    if model.context_length:
+        bits.append("ctx %d" % model.context_length)
+    if model.capabilities:
+        bits.append(", ".join(model.capabilities))
+    return "  ".join(bits) if bits else "capabilities unknown"
+
+
+def _render_doctor(report: Any, require_local: bool) -> None:
+    """Print a human-readable discovery report."""
+    print(
+        "Probed %d local endpoints in %sms; %d responded."
+        % (report.probed, report.elapsed_ms, len(report.live))
+    )
+
+    if report.live:
+        print("\nLive servers:")
+        width = max(len(s.base_url) for s in report.servers)
+        for server in report.live:
+            count = len(server.models)
+            status = "%d model%s" % (count, "" if count == 1 else "s")
+            if server.loading:
+                status = "loading a model"
+            print(
+                "  ok  %-*s  %-10s %7sms  %s"
+                % (
+                    width,
+                    server.base_url,
+                    server.provider,
+                    server.latency_ms,
+                    status,
+                )
+            )
+    else:
+        print("\nNo local LLM server responded.")
+
+    for server in report.live:
+        print("\n%s  (%s)" % (server.provider, server.base_url))
+        if server.context_window:
+            print("  server context window: %d tokens" % server.context_window)
+        if server.vision is not None:
+            print("  server vision support: %s" % ("yes" if server.vision else "no"))
+        for model in server.models:
+            marker = "  OFF-DEVICE -> %s" % (model.remote_host or "remote") if model.remote else ""
+            print("    %-38s %s%s" % (model.id[:38], _describe_model(model), marker))
+        for note in server.notes:
+            print("  note: %s" % note)
+
+    offline = [s for s in report.offline if s.status is not None]
+    if offline:
+        print("\nReachable but not ready:")
+        for server in offline:
+            print("  %-*s  %s" % (28, server.base_url, server.error))
+    if not report.live and not offline:
+        tried = ", ".join(
+            sorted({s.base_url.split("//")[-1].split("/")[0] for s in report.offline})
+        )
+        print("\nNothing was listening on: %s" % tried)
+
+    on_device = report.on_device()
+    if require_local and not on_device:
+        print(
+            "\nNo server offering an on-device model was found."
+            "\n  Start one (for example `ollama serve`) and pull a local model"
+            "\n  (`ollama pull qwen2.5:0.5b`), or re-run without --require-local."
+        )
+    elif on_device:
+        first = on_device[0]
+        model = first.local_models[0] if first.local_models else None
+        print("\nReady to use (on-device):")
+        if model is not None:
+            print('  LLM("%s", backend="%s")' % (model.id, first.provider))
+        else:
+            print('  LLM(<model>, backend="%s")' % first.provider)
+    elif report.live:
+        print(
+            "\nServers are up, but none offers an on-device model."
+            "\n  Pull one, e.g. `ollama pull qwen2.5:0.5b`."
+        )
+
+
+def handle_doctor_command(args: argparse.Namespace) -> int:
+    """Handle `doctor`: report running local LLM servers and their capabilities."""
+    try:
+        from .discovery import DEFAULT_TIMEOUT, discover
+    except ImportError as exc:  # pragma: no cover - packaging error
+        _fail("the discovery module is unavailable ({0}).".format(exc))
+
+    timeout = getattr(args, "timeout", None) or DEFAULT_TIMEOUT
+    try:
+        report = discover(extra_urls=getattr(args, "urls", None), timeout=float(timeout))
+    except ValueError as exc:
+        _fail(str(exc))
+
+    require_local = bool(getattr(args, "require_local", False))
+    if getattr(args, "keep_loading", False):
+        for server in report.offline:
+            if server.status is not None and server.status >= 500:
+                server.loading = True
+
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(report.to_dict(), indent=2))
+    elif not getattr(args, "quiet", False):
+        _render_doctor(report, require_local)
+
+    if require_local:
+        return 0 if report.on_device() else 1
+    return 0 if report.live else 1
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
@@ -1527,6 +1701,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             handle_list_command(args)
         elif command == "embed":
             handle_embed_command(args)
+        elif command in ("doctor", "discover", "probe"):
+            return handle_doctor_command(args)
         else:
             parser.print_help()
             return 1
