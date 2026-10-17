@@ -598,12 +598,15 @@ class ApfelBridgeTest(unittest.TestCase):
         )
         self.assertEqual(payload["repetition_penalty"], 1.1)
 
-    def test_prompt_completion_rejected_with_chat_pointer(self):
+    def test_prompt_completion_maps_to_chat(self):
         backend = OpenAICompatBackend("apple-foundationmodel", provider="apfel")
-        with self.assertRaisesRegex(RuntimeError, "chat\\(\\)"):
-            backend.generate("hi")
-        with self.assertRaisesRegex(RuntimeError, "chat_stream"):
-            list(backend.generate_stream("hi"))
+        with mock.patch.object(
+            backend, "_post_json", return_value={"choices": [{"message": {"content": "mapped"}}]}
+        ) as post:
+            self.assertEqual(backend.generate("hi")["text"], "mapped")
+        self.assertEqual(post.call_args.args[0], "/chat/completions")
+        with mock.patch.object(backend, "chat_stream", return_value=iter([{"text": "mapped"}])):
+            self.assertEqual(list(backend.generate_stream("hi")), [{"text": "mapped"}])
 
     def test_apfel_has_no_embeddings_endpoint(self):
         backend = OpenAICompatBackend("apple-foundationmodel", provider="apfel")
@@ -626,10 +629,15 @@ class ApfelBridgeTest(unittest.TestCase):
         for banned in ("top_k", "repeat_penalty", "repetition_penalty"):
             self.assertNotIn(banned, sent)
 
-    def test_apfel_complete_rejected_end_to_end(self):
+    def test_apfel_complete_maps_to_chat_end_to_end(self):
         llm = LLM("apple-foundationmodel", backend="apfel", use_cache=False)
-        with self.assertRaisesRegex(RuntimeError, "chat\\(\\)"):
-            llm.complete("hi")
+        with mock.patch.object(
+            llm.backend,
+            "_post_json",
+            return_value={"choices": [{"message": {"content": "mapped"}}]},
+        ) as post:
+            self.assertEqual(llm.complete("hi")["choices"][0]["text"], "mapped")
+        self.assertEqual(post.call_args.args[0], "/chat/completions")
 
 
 @unittest.skipUnless(

@@ -15,9 +15,8 @@ Two transports are supported:
     Launch a local server as a subprocess (``command`` + ``args``) and speak
     newline-delimited JSON-RPC over its stdin/stdout.  This is the transport
     used by virtually every local MCP server (``npx @modelcontextprotocol/...``,
-    ``uvx mcp-server-...``, ``python -m my_server``), and it keeps inference
-    fully on-device — nothing leaves the machine unless *you* configure an
-    HTTP server.
+    ``uvx mcp-server-...``, ``python -m my_server``). A local process may
+    itself use the network; transport alone does not establish offline use.
 
 ``http``
     POST JSON-RPC to a Streamable HTTP endpoint (``url``).  Responses may be
@@ -36,24 +35,26 @@ Example::
 
 Notes / compatibility:
 
-  - The default protocol revision is :data:`DEFAULT_PROTOCOL_VERSION`; pass
-    ``protocol_version=`` to override.  We accept whatever revision the server
-    reports and never hard-fail on a mismatch.
-  - ``initialize`` is sent best-effort: the 2026 revision is stateless and
-    servers that do not implement it are tolerated.
-  - Everything is synchronous and thread-safe (one request in flight at a
-    time per server, guarded by a lock).
+  - The default uses a legacy initialize handshake. Explicit
+    protocol_version="2026-07-28" uses stateless server/discover and metadata.
+    Unsupported revisions fail clearly.
+  - Only the tools surface is exposed; resources/prompts, subscriptions, OAuth
+    and interactive multi-round requests are outside this client subset.
+
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import math
 import os
 import queue
 import re
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -144,7 +145,9 @@ class MCPTool:
         name = data.get("name")
         if not isinstance(name, str) or not name.strip():
             raise MCPProtocolError("tools/list entry is missing a valid 'name'.")
-        schema = data.get("inputSchema") or data.get("input_schema") or {}
+        schema = data.get("inputSchema", data.get("input_schema", {}))
+        if not isinstance(schema, dict):
+            raise MCPProtocolError("MCP inputSchema must be an object.")
         description = data.get("description") or data.get("title") or ""
         return cls(
             name=name,
@@ -373,49 +376,89 @@ class _HttpTransport:
         self._session_id = value
 
     def post(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """POST *message* and return the matched JSON-RPC response (or None)."""
-        body = json.dumps(message).encode("utf-8")
+        """Read only through the matching result; SSE connections may remain open."""
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "User-Agent": "%s/%s" % (CLIENT_NAME, _version()),
+            "MCP-Protocol-Version": getattr(self, "protocol_version", DEFAULT_PROTOCOL_VERSION),
         }
         headers.update(self.headers)
+        if getattr(self, "protocol_version", "") == "2026-07-28":
+            headers["Mcp-Method"] = message["method"]
+            name = (message.get("params") or {}).get("name")
+            if isinstance(name, str):
+                safe = (
+                    name.strip() == name
+                    and all(32 <= ord(char) <= 126 for char in name)
+                    and not name.startswith("=?base64?")
+                )
+                headers["Mcp-Name"] = (
+                    name
+                    if safe
+                    else "=?base64?%s?=" % base64.b64encode(name.encode()).decode("ascii")
+                )
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
-        req = urllib.request.Request(self.url, data=body, headers=headers, method="POST")
+        req = urllib.request.Request(
+            self.url, data=json.dumps(message).encode("utf-8"), headers=headers, method="POST"
+        )
+        deadline = time.monotonic() + self.timeout
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                sid = resp.headers.get("Mcp-Session-Id") or resp.headers.get("mcp-session-id")
+                sid = resp.headers.get("Mcp-Session-Id")
                 if sid:
                     self._session_id = sid
                 content_type = (resp.headers.get("Content-Type") or "").lower()
+                if "text/event-stream" in content_type and "id" in message:
+                    data_lines = []
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError("MCP HTTP request deadline expired.")
+                        # urllib has no public response deadline API. Apply the remaining
+                        # budget to its socket when available, in addition to the loop check.
+                        socket = getattr(
+                            getattr(getattr(resp, "fp", None), "raw", None), "_sock", None
+                        )
+                        if socket is not None:
+                            socket.settimeout(remaining)
+                        raw = resp.readline()
+                        if not raw:
+                            return (
+                                _sse_match("\n".join(data_lines), message["id"])
+                                if data_lines
+                                else None
+                            )
+                        line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                        if not line:
+                            found = _sse_match("\n".join(data_lines), message["id"])
+                            data_lines = []
+                            if found is not None:
+                                return found
+                        elif line.startswith("data:"):
+                            data_lines.append(line[5:].lstrip(" "))
                 payload = resp.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as exc:
-            detail = ""
             try:
-                detail = exc.read().decode("utf-8", "replace")[:500]
-            except Exception:  # noqa: BLE001 - best-effort body
-                pass
+                detail = exc.read(500).decode("utf-8", "replace")
+            finally:
+                exc.close()
             raise MCPProtocolError(
-                "MCP HTTP request to %s failed: HTTP %s %s %s"
-                % (self.url, exc.code, exc.reason, detail)
+                "MCP HTTP request failed: HTTP %s %s" % (exc.code, detail)
             ) from exc
-        except urllib.error.URLError as exc:
-            raise MCPProtocolError(
-                "MCP HTTP request to %s failed: %s" % (self.url, exc.reason)
-            ) from exc
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            raise MCPProtocolError("MCP HTTP request to %s failed: %s" % (self.url, exc)) from exc
         if not payload.strip():
             return None
-        if "text/event-stream" in content_type:
-            return self._parse_sse(payload, message.get("id"))
         try:
             parsed = json.loads(payload)
         except json.JSONDecodeError as exc:
-            raise MCPProtocolError(
-                "MCP HTTP server returned non-JSON body: %r" % payload[:200]
-            ) from exc
-        return self._select(parsed, message.get("id"))
+            raise MCPProtocolError("MCP HTTP server returned invalid JSON.") from exc
+        selected = self._select(parsed, message.get("id"))
+        if selected is not None and "id" in message and selected.get("id") != message["id"]:
+            raise MCPProtocolError("MCP HTTP response id does not match the request.")
+        return selected
 
     @staticmethod
     def _select(parsed: Any, want_id: Any) -> Optional[Dict[str, Any]]:
@@ -426,39 +469,23 @@ class _HttpTransport:
             return None
         return parsed if isinstance(parsed, dict) else None
 
-    @staticmethod
-    def _parse_sse(payload: str, want_id: Any) -> Optional[Dict[str, Any]]:
-        """Extract the JSON-RPC response with *want_id* from an SSE stream."""
-        data_lines: List[str] = []
-        found: Optional[Dict[str, Any]] = None
-        for raw in payload.splitlines():
-            line = raw.rstrip("\r")
-            if not line.strip():
-                if data_lines:
-                    found = _sse_match("\n".join(data_lines), want_id) or found
-                    data_lines = []
-                continue
-            if line.startswith("data:"):
-                data_lines.append(line[5:].lstrip(" "))
-        if data_lines:
-            found = _sse_match("\n".join(data_lines), want_id) or found
-        return found
-
     def close(self) -> None:
-        # Best-effort session teardown; servers treat a missing session as gone.
         if not self._session_id:
             return
         headers = {
             "Accept": "application/json, text/event-stream",
             "User-Agent": "%s/%s" % (CLIENT_NAME, _version()),
             "Mcp-Session-Id": self._session_id,
+            "MCP-Protocol-Version": getattr(self, "protocol_version", DEFAULT_PROTOCOL_VERSION),
         }
         headers.update(self.headers)
-        req = urllib.request.Request(self.url, headers=headers, method="DELETE")
+        request = urllib.request.Request(self.url, headers=headers, method="DELETE")
         try:
-            urllib.request.urlopen(req, timeout=5).close()
-        except Exception:  # noqa: BLE001 - teardown is best-effort
+            urllib.request.urlopen(request, timeout=min(self.timeout, 5.0)).close()
+        except Exception:  # Teardown is best-effort when the server has gone away.
             pass
+        finally:
+            self._session_id = None
 
 
 def _sse_match(blob: str, want_id: Any) -> Optional[Dict[str, Any]]:
@@ -513,7 +540,16 @@ class MCPServer:
         if bool(command) == bool(url):
             raise ValueError("Provide exactly one of 'command' (stdio) or 'url' (http).")
         self.name = name.strip()
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("MCP timeout must be a finite positive number.")
         self.timeout = float(timeout)
+        if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
+            raise ValueError("Unsupported MCP protocol version: %r" % protocol_version)
         self.protocol_version = protocol_version
         self.server_info: Dict[str, Any] = {}
         self.instructions: str = ""
@@ -528,6 +564,7 @@ class MCPServer:
         else:
             self.transport = _HttpTransport(url or "", headers=headers, timeout=self.timeout)
             self.transport_kind = "http"
+            self.transport.protocol_version = protocol_version
 
     # -- lifecycle --------------------------------------------------------
     def open(self) -> "MCPServer":
@@ -573,6 +610,20 @@ class MCPServer:
         if not self._opened:
             raise MCPProtocolError("MCP server %r is not open; call open() first." % self.name)
         message: Dict[str, Any] = {"jsonrpc": "2.0", "id": self._rpc_id(), "method": method}
+        if self.protocol_version == "2026-07-28":
+            params = dict(params or {})
+            meta = dict(params.get("_meta") or {})
+            meta.update(
+                {
+                    "io.modelcontextprotocol/protocolVersion": self.protocol_version,
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": CLIENT_NAME,
+                        "version": _version(),
+                    },
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                }
+            )
+            params["_meta"] = meta
         if params is not None:
             message["params"] = params
         with self._lock:
@@ -597,12 +648,15 @@ class MCPServer:
                 self.transport.send(message)
 
     def _await_response(self, want_id: Any) -> Optional[Dict[str, Any]]:
+        deadline = time.monotonic() + self.timeout
         while True:
-            message = self.transport.recv(self.timeout)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MCPProtocolError("MCP request deadline expired for server %r." % self.name)
+            message = self.transport.recv(remaining)
             if message is None:
                 raise MCPProtocolError(
-                    "Timed out after %ss waiting for MCP server %r (id=%s)."
-                    % (self.timeout, self.name, want_id)
+                    "Timed out after %ss waiting for MCP server %r." % (self.timeout, self.name)
                 )
             if message.get("id") == want_id and ("result" in message or "error" in message):
                 return message
@@ -654,7 +708,20 @@ class MCPServer:
 
     # -- protocol operations ----------------------------------------------
     def initialize(self) -> Dict[str, Any]:
-        """Best-effort initialize; tolerates servers that do not implement it."""
+        """Negotiate the selected legacy or stateless tools protocol."""
+        if self.protocol_version == "2026-07-28":
+            result = self.request("server/discover")
+            if not isinstance(result, dict) or self.protocol_version not in result.get(
+                "supportedVersions", []
+            ):
+                raise MCPProtocolError(
+                    "Server did not advertise the requested stateless MCP revision."
+                )
+            self.instructions = str(result.get("instructions") or "")
+            self.server_info = (result.get("_meta") or {}).get(
+                "io.modelcontextprotocol/serverInfo", {}
+            )
+            return result
         params = {
             "protocolVersion": self.protocol_version,
             "capabilities": {},
@@ -665,7 +732,7 @@ class MCPServer:
         except MCPProtocolError as exc:
             # Method-not-found (-32601) or a stateless server that answers with
             # a bare error: continue, since tools/* may still work.
-            if exc.code == -32601 or "not found" in str(exc).lower():
+            if exc.code == -32601:
                 logger.debug("MCP server %r has no initialize; continuing.", self.name)
                 return {}
             raise
@@ -673,12 +740,11 @@ class MCPServer:
             self.server_info = result.get("serverInfo") or {}
             self.instructions = str(result.get("instructions") or "")
             agreed = result.get("protocolVersion")
-            if agreed and agreed not in SUPPORTED_PROTOCOL_VERSIONS:
-                logger.info(
-                    "MCP server %r negotiated protocol %s (client knows %s).",
-                    self.name,
-                    agreed,
-                    ", ".join(SUPPORTED_PROTOCOL_VERSIONS),
+            if isinstance(agreed, str) and self.transport_kind == "http":
+                self.transport.protocol_version = agreed
+            if agreed and (agreed not in SUPPORTED_PROTOCOL_VERSIONS or agreed == "2026-07-28"):
+                raise MCPProtocolError(
+                    "Server negotiated an unsupported legacy revision: %s" % agreed
                 )
         try:
             self.notify("notifications/initialized")
@@ -733,7 +799,9 @@ class MCPServer:
         """
         if not isinstance(name, str) or not name.strip():
             raise ValueError("tool name must be a non-empty string.")
-        args = arguments if isinstance(arguments, dict) else {}
+        if arguments is not None and not isinstance(arguments, dict):
+            raise TypeError("MCP tool arguments must be a dictionary or None.")
+        args = {} if arguments is None else arguments
         result = self.request("tools/call", {"name": name, "arguments": args}) or {}
         if not isinstance(result, dict):
             raise MCPToolError("MCP tool %r returned an unexpected result." % name)

@@ -71,3 +71,36 @@ __all__ = [
     "ServerReport",
     "ModelRecord",
 ]
+
+
+_LAZY_EXPORTS = {
+    "Agent": "agent",
+    "AgentResult": "agent",
+    "ConversationLog": "conversation_log",
+    "get_conversation_log": "conversation_log",
+    "PromptTemplate": "prompt_templates",
+    "TemplateRegistry": "prompt_templates",
+    "register_template": "prompt_templates",
+    "get_template": "prompt_templates",
+    "render_template": "prompt_templates",
+    "chat_structured": "structured",
+    "extract_json": "structured",
+    "repair_json": "structured",
+    "validate_schema": "structured",
+    "get_system_memory": "hardware",
+    "estimate_model_vram": "hardware",
+    "recommend_quantization": "hardware",
+    "RAGPipeline": "rag",
+    "SimpleVectorStore": "rag",
+}
+__all__ += list(_LAZY_EXPORTS)
+
+
+def __getattr__(name):
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError("module %r has no attribute %r" % (__name__, name))
+    from importlib import import_module
+
+    value = getattr(import_module("." + _LAZY_EXPORTS[name], __name__), name)
+    globals()[name] = value
+    return value

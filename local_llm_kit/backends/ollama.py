@@ -8,6 +8,7 @@ the user to run ``ollama serve`` / ``ollama pull <model>``.
 """
 
 import json
+import math
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional, Union
@@ -98,7 +99,14 @@ class OllamaBackend(BaseBackend):
         self.model = model
         self.model_path = model
         self.host = host.rstrip("/")
-        self.timeout = timeout
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("timeout must be a finite positive number.")
+        self.timeout = float(timeout)
         self.context_window = context_window
         self.keep_alive = keep_alive
         self.extra_headers = dict(headers or {})
@@ -111,6 +119,7 @@ class OllamaBackend(BaseBackend):
         self.remote = False
         self.remote_host: Optional[str] = None
         self._detected = False
+        self._routing_verified = False
 
     # -- capability detection ------------------------------------------
 
@@ -172,6 +181,7 @@ class OllamaBackend(BaseBackend):
                 "detected": True,
                 "remote": self.remote,
                 "remote_host": self.remote_host,
+                "routing_verified": self._routing_verified,
             }
         )
         self._detected = True
@@ -190,6 +200,7 @@ class OllamaBackend(BaseBackend):
 
     def _detect_remote(self, timeout: float) -> None:
         """Record whether ``/api/tags`` marks this model as provider-routed."""
+        self._routing_verified = False
         try:
             tags = self._get_json(_TAGS_PATH, timeout=timeout, policy=_NO_RETRY)
         except Exception:  # noqa: BLE001 - best-effort
@@ -197,8 +208,12 @@ class OllamaBackend(BaseBackend):
         for entry in tags.get("models") or []:
             if not isinstance(entry, dict):
                 continue
-            if (entry.get("name") or entry.get("model")) != self.model:
+            candidate = entry.get("name") or entry.get("model")
+            if candidate not in (self.model, self.model + ":latest"):
                 continue
+            self._routing_verified = True
+            self.remote = False
+            self.remote_host = None
             host = entry.get("remote_host")
             if isinstance(host, str) and host:
                 self.remote = True
@@ -206,7 +221,7 @@ class OllamaBackend(BaseBackend):
             elif entry.get("remote_model"):
                 self.remote = True
                 self.remote_host = host or "remote"
-            elif "cloud" in self.model.lower():
+            elif self.model.lower().endswith(":cloud"):
                 self.remote = True
                 self.remote_host = host or "remote"
             return
@@ -483,7 +498,7 @@ class OllamaBackend(BaseBackend):
             if isinstance(remote_host, str) and remote_host:
                 entry["remote"] = True
                 entry["remote_host"] = remote_host
-            elif m.get("remote_model") or "cloud" in str(entry["id"]).lower():
+            elif m.get("remote_model") or str(entry["id"]).lower().endswith(":cloud"):
                 entry["remote"] = True
             out.append(entry)
         return out
@@ -681,10 +696,15 @@ class OllamaBackend(BaseBackend):
                 return urllib.request.urlopen(request_factory(), timeout=effective_timeout)
             except urllib.error.HTTPError as e:
                 if effective.should_retry_status(e.code) and attempt < effective.max_retries:
-                    effective.sleep(attempt + 1, retry_after_seconds(e.headers))
+                    delay = retry_after_seconds(e.headers)
+                    e.close()
+                    effective.sleep(attempt + 1, delay)
                     attempt += 1
                     continue
-                body = e.read().decode("utf-8", errors="replace")
+                try:
+                    body = e.read().decode("utf-8", errors="replace")
+                finally:
+                    e.close()
                 raise RuntimeError(
                     "Ollama request %s %s failed with HTTP %s: %s" % (method, path, e.code, body)
                 ) from e

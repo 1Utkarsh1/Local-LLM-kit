@@ -3,8 +3,8 @@ Prompt template system for local_llm_kit.
 
 Provides:
     * :class:`PromptTemplate` -- lightweight templates with ``{{variable}}``
-      and ``{{variable|default}}`` substitution that are JSON-safe (only
-      double-brace expressions are replaced).
+      and ``{{variable|default}}`` plain-text substitution (only double-brace expressions are replaced).
+      Values are not escaped; use json.dumps for JSON data.
     * :class:`TemplateRegistry` -- in-memory named-template registry with
       YAML/JSON file loading.
     * Module-level helpers (:func:`register_template`, :func:`get_template`,
@@ -21,8 +21,6 @@ Python 3.9 compatible (``typing.Dict``/``List``/``Optional`` house style).
 import json
 import re
 from typing import Any, Dict, List, Optional
-
-from .conversation_log import get_conversation_log  # noqa: F401  (shared helpers)
 
 __all__ = [
     "PromptTemplate",
@@ -60,6 +58,12 @@ class PromptTemplate:
         name: Optional[str] = None,
         description: str = "",
     ) -> None:
+        if not isinstance(template_str, str):
+            raise TypeError("template_str must be a string.")
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            raise ValueError("Template name must be a non-empty string or None.")
+        if not isinstance(description, str):
+            raise TypeError("description must be a string.")
         self.template_str = template_str
         self.name = name
         self.description = description
@@ -116,7 +120,7 @@ class PromptTemplate:
             return cls(data, name=name or _stem_name(path))
         if isinstance(data, dict):
             return cls(
-                str(data.get("template", data.get("template_str", ""))),
+                data.get("template", data.get("template_str")),
                 name=name or data.get("name") or _stem_name(path),
                 description=data.get("description", ""),
             )
@@ -154,8 +158,8 @@ class TemplateRegistry:
                 raise ValueError("Template must have a name when registered as an object")
             self._templates[tmpl.name] = tmpl
         else:
-            name = str(template_or_name)
-            if not name:
+            name = template_or_name
+            if not isinstance(name, str) or not name.strip():
                 raise ValueError("template name must be a non-empty string")
             if template_str is None:
                 raise ValueError("template_str is required when registering by name")
@@ -209,11 +213,8 @@ class TemplateRegistry:
         for entry in entries:
             if not entry.endswith((".json", ".yaml", ".yml")):
                 continue
-            try:
-                self.register_from_file(entry)
-                count += 1
-            except Exception:
-                pass
+            self.register_from_file(entry)
+            count += 1
         return count
 
     def __contains__(self, name: str) -> bool:
@@ -289,14 +290,4 @@ def _load_template_file(path: str) -> Any:
             raise ValueError("Empty YAML file: {0}".format(path))
         return data
 
-    # Unknown extension: try JSON, then YAML.
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        try:
-            import yaml  # type: ignore[import-untyped]
-        except ImportError:
-            raise ValueError(
-                "Cannot parse {0!r}: not valid JSON and 'pyyaml' is not installed.".format(path)
-            ) from None
-        return yaml.safe_load(text)
+    return text

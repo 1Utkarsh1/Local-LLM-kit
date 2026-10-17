@@ -27,7 +27,16 @@ def main() -> None:
         """Greet someone by name."""
         return "Hello, %s!" % name
 
-    server.run(transport="stdio")
+    if len(sys.argv) > 1:
+        server.run(
+            transport="streamable-http",
+            host="127.0.0.1",
+            port=int(sys.argv[1]),
+            stateless_http=True,
+            json_response=len(sys.argv) > 2,
+        )
+    else:
+        server.run(transport="stdio")
 
 
 if __name__ == "__main__":

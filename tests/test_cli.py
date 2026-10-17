@@ -201,6 +201,7 @@ class TestDoctorCommand(unittest.TestCase):
             models=[
                 ModelRecord(
                     id="qwen2.5:0.5b",
+                    local_verified=True,
                     capabilities=["completion", "tools"],
                     context_length=32768,
                 ),

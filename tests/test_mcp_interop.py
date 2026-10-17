@@ -5,7 +5,8 @@ This is the *real runtime* counterpart to the mocked contract tests in
 (``mcp`` >= 2.0, which requires Python >= 3.10) as a subprocess and drives it
 through :class:`local_llm_kit.mcp.MCPServer`.
 
-It is skipped by default so CI stays offline and light. Enable it explicitly::
+It is skipped in the default suite and enabled in the Python 3.12 Linux CI job.
+Enable it locally::
 
     pip install "mcp"                       # Python >= 3.10
     LOCAL_LLM_KIT_MCP_INTEROP=1 pytest tests/test_mcp_interop.py -v
@@ -14,8 +15,13 @@ A skip means "not run here", not "passed".
 """
 
 import os
+import socket
+import subprocess
 import sys
+import time
 import unittest
+import urllib.error
+import urllib.request
 
 from local_llm_kit.mcp import MCPServer
 
@@ -52,6 +58,55 @@ class TestOfficialSdkInterop(unittest.TestCase):
 
             self.assertIn("42", srv.call_tool("add", {"a": 2, "b": 40}))
             self.assertIn("Ada", srv.call_tool("greet", {"name": "Ada"}))
+
+    def test_stateless_2026_protocol_with_official_sdk(self):
+        with MCPServer(
+            "modern",
+            command=sys.executable,
+            args=[SERVER],
+            timeout=10,
+            protocol_version="2026-07-28",
+        ) as server:
+            self.assertIn("2026-07-28", server.initialize()["supportedVersions"])
+            self.assertIn("add", [tool.name for tool in server.list_tools()])
+            self.assertIn("42", server.call_tool("add", {"a": 2, "b": 40}))
+
+    def test_stateless_http_json_and_sse_with_official_sdk(self):
+        for json_mode in (False, True):
+            with self.subTest(json_mode=json_mode):
+                with socket.socket() as sock:
+                    sock.bind(("127.0.0.1", 0))
+                    port = sock.getsockname()[1]
+                args = [sys.executable, SERVER, str(port)] + (["json"] if json_mode else [])
+                process = subprocess.Popen(
+                    args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                url = "http://127.0.0.1:%s/mcp" % port
+                try:
+                    deadline = time.monotonic() + 10
+                    while True:
+                        try:
+                            with urllib.request.urlopen(url, timeout=0.1):
+                                break
+                        except urllib.error.HTTPError as error:
+                            error.close()
+                            break  # HTTP 405 is enough to establish readiness.
+                        except OSError:
+                            if process.poll() is not None or time.monotonic() >= deadline:
+                                self.fail("Official MCP HTTP fixture did not start.")
+                            time.sleep(0.02)
+                    with MCPServer(
+                        "http-interop", url=url, timeout=3, protocol_version="2026-07-28"
+                    ) as server:
+                        self.assertIn("add", [tool.name for tool in server.list_tools()])
+                        self.assertIn("42", server.call_tool("add", {"a": 2, "b": 40}))
+                finally:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=3)
 
 
 if __name__ == "__main__":

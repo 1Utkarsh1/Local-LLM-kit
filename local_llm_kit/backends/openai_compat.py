@@ -14,14 +14,15 @@ Provider profiles: ``provider`` selects protocol quirks. ``"apfel"`` targets
 ``apfel --serve`` (https://github.com/Arthur-Ficial/apfel), whose server
 answers 400 to sampling fields it does not implement (``top_k``/penalties)
 and 501 to ``POST /v1/completions`` and ``POST /v1/embeddings``. That
-profile therefore omits those fields, rejects prompt-completion calls with
-a pointer to ``chat()``, and reports no embedding support.
+profile therefore omits those fields, maps prompt completions to chat,
+and reports no embedding support.
 
 Stdlib-only (``urllib`` + ``json``). ``api_key`` is optional — local
 servers usually don't need one.
 """
 
 import json
+import math
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Iterator, List, Optional, Union
@@ -73,7 +74,14 @@ class OpenAICompatBackend(BaseBackend):
         self.model_path = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-        self.timeout = timeout
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("timeout must be a finite positive number.")
+        self.timeout = float(timeout)
         self.context_window = context_window
         self.extra_headers = dict(headers or {})
         self.retry = coerce_policy(DEFAULT_RETRY if max_retries is None else max_retries)
@@ -95,10 +103,12 @@ class OpenAICompatBackend(BaseBackend):
         **kwargs: Any,
     ) -> Dict[str, Any]:
         if self._chat_only:
-            raise RuntimeError(
-                "The 'apfel' server exposes only POST /v1/chat/completions "
-                "(POST /v1/completions answers 501). Use chat() instead of "
-                "generate()/complete() with this provider."
+            return self.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_new_tokens=max_new_tokens,
+                stream=stream,
+                **kwargs,
             )
         if stream:
             text = "".join(
@@ -150,11 +160,13 @@ class OpenAICompatBackend(BaseBackend):
         **kwargs: Any,
     ) -> Iterator[Dict[str, Any]]:
         if self._chat_only:
-            raise RuntimeError(
-                "The 'apfel' server exposes only POST /v1/chat/completions "
-                "(POST /v1/completions answers 501). Use chat_stream() instead "
-                "of generate_stream() with this provider."
+            yield from self.chat_stream(
+                [{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_new_tokens=max_new_tokens,
+                **kwargs,
             )
+            return
         payload = self._completion_payload(
             prompt,
             temperature,
@@ -224,6 +236,9 @@ class OpenAICompatBackend(BaseBackend):
             }
             if tool_calls:
                 result["tool_calls"] = tool_calls
+            reasoning = "".join(chunk.get("reasoning_content", "") for chunk in chunks)
+            if reasoning:
+                result["reasoning_content"] = reasoning
             return result
         payload = self._chat_payload(
             messages,
@@ -249,6 +264,7 @@ class OpenAICompatBackend(BaseBackend):
         return {
             "text": self._content_text(message.get("content")),
             "tool_calls": message.get("tool_calls"),
+            "reasoning_content": message.get("reasoning_content") or message.get("reasoning"),
             "finish_reason": choice.get("finish_reason", "stop"),
             "usage": resp.get("usage"),
             "model": resp.get("model", self.model),
@@ -292,6 +308,10 @@ class OpenAICompatBackend(BaseBackend):
                 chunk: Dict[str, Any] = {
                     "text": self._content_text(delta.get("content")),
                 }
+                if delta.get("reasoning_content") or delta.get("reasoning"):
+                    chunk["reasoning_content"] = (
+                        delta.get("reasoning_content") or delta["reasoning"]
+                    )
                 if delta.get("tool_calls"):
                     chunk["tool_calls_delta"] = delta["tool_calls"]
                     for part in delta["tool_calls"]:
@@ -314,7 +334,12 @@ class OpenAICompatBackend(BaseBackend):
                     chunk["finish_reason"] = choice["finish_reason"]
                     if calls:
                         chunk["tool_calls"] = [calls[index] for index in sorted(calls)]
-                if chunk["text"] or chunk.get("finish_reason") or "tool_calls_delta" in chunk:
+                if (
+                    chunk["text"]
+                    or chunk.get("finish_reason")
+                    or "tool_calls_delta" in chunk
+                    or chunk.get("reasoning_content")
+                ):
                     yield chunk
 
     # -- embeddings (/v1/embeddings) -----------------------------------
@@ -508,10 +533,15 @@ class OpenAICompatBackend(BaseBackend):
                 return urllib.request.urlopen(request_factory(), timeout=self.timeout)
             except urllib.error.HTTPError as e:
                 if policy.should_retry_status(e.code) and attempt < policy.max_retries:
-                    policy.sleep(attempt + 1, retry_after_seconds(e.headers))
+                    delay = retry_after_seconds(e.headers)
+                    e.close()
+                    policy.sleep(attempt + 1, delay)
                     attempt += 1
                     continue
-                body = e.read().decode("utf-8", errors="replace")
+                try:
+                    body = e.read().decode("utf-8", errors="replace")
+                finally:
+                    e.close()
                 raise RuntimeError(
                     "OpenAI-compatible request %s %s%s failed with HTTP %s: %s"
                     % (method, self.base_url, path, e.code, body)

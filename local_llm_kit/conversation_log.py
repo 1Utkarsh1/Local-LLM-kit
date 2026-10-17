@@ -1,115 +1,40 @@
-"""
-SQLite-backed conversation logging for local_llm_kit.
+"""Opt-in SQLite conversation history with atomic writes and lossless message export.
 
-This module provides :class:`ConversationLog` -- a thread-safe (thread-local
-SQLite connections) persistent store for LLM conversations, messages, and
-tool-call records.  Uses only the Python standard library (``sqlite3``),
-which is imported lazily so the light core install is never disturbed.
-
-Thread safety
--------------
-Each thread receives its own ``sqlite3.Connection`` via ``threading.local``
-so connections are never shared across threads (the default SQLite behaviour
-that would otherwise raise ``ProgrammingError``).  Write operations are
-serialized by SQLite's own file locking with a generous busy timeout.
-
-Python 3.9 compatible (stdlib only; ``typing.Dict``/``List``/``Optional``
-house style).
-
-Backward compatibility
-----------------------
-``PromptTemplate``, ``TemplateRegistry`` and the template convenience
-helpers have moved to :mod:`local_llm_kit.prompt_templates`.  They are
-re-exported here so existing ``from local_llm_kit.conversation_log import
-PromptTemplate`` imports keep working.
+One locked connection works across threads, including an in-memory database.
+Nothing is written until a ConversationLog is explicitly constructed.
 """
 
 import json
 import os
 import threading
 import uuid
+from functools import wraps
 from typing import Any, Dict, List, Optional
 
-# Re-export prompt-template symbols for backward compatibility.  Importing
-# prompt_templates imports this module (circular), so guard with a flag.
-_PROMPT_TEMPLATES_LOADED = False
-_PromptTemplate = None  # type: ignore[assignment, misc]
-_TemplateRegistry = None  # type: ignore[assignment, misc]
+__all__ = ["ConversationLog", "DEFAULT_LOG_PATH", "get_conversation_log"]
 
 
-def _ensure_prompt_template_exports() -> None:
-    """Lazy-load prompt template exports on first access to avoid a cycle."""
-    global _PromptTemplate, _TemplateRegistry, _PROMPT_TEMPLATES_LOADED
-    if _PROMPT_TEMPLATES_LOADED:
-        return
-    from .prompt_templates import PromptTemplate, TemplateRegistry
+def _locked(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
 
-    _PromptTemplate = PromptTemplate
-    _TemplateRegistry = TemplateRegistry
-    _PROMPT_TEMPLATES_LOADED = True
+    return call
 
 
-def __getattr__(name: str) -> Any:
-    """PEP 562 lazy attribute access for backward-compatible re-exports."""
-    if name in (
-        "PromptTemplate",
-        "TemplateRegistry",
-        "DEFAULT_REGISTRY",
-        "register_template",
-        "get_template",
-        "render_template",
-        "get_conversation_log",
-    ):
-        _ensure_prompt_template_exports()
-        if name in ("PromptTemplate",):
-            return _PromptTemplate
-        if name in ("TemplateRegistry",):
-            return _TemplateRegistry
-        if name == "DEFAULT_REGISTRY":
-            from .prompt_templates import DEFAULT_REGISTRY
+def _atomic(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self._lock, self._conn:
+            self._batch = True
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                self._batch = False
 
-            return DEFAULT_REGISTRY
-        if name == "register_template":
-            from .prompt_templates import register_template
+    return call
 
-            return register_template
-        if name == "get_template":
-            from .prompt_templates import get_template
-
-            return get_template
-        if name == "render_template":
-            from .prompt_templates import render_template
-
-            return render_template
-        if name == "get_conversation_log":
-            return get_conversation_log
-    raise AttributeError("module %r has no attribute %r" % (__name__, name))
-
-
-def __dir__() -> List[str]:
-    base = [n for n in globals() if not n.startswith("_")]
-    return base + [
-        "PromptTemplate",
-        "TemplateRegistry",
-        "DEFAULT_REGISTRY",
-        "register_template",
-        "get_template",
-        "render_template",
-        "get_conversation_log",
-    ]
-
-
-__all__ = [  # noqa: F822
-    "ConversationLog",
-    "DEFAULT_LOG_PATH",
-    "get_conversation_log",
-    "PromptTemplate",
-    "TemplateRegistry",
-    "DEFAULT_REGISTRY",
-    "register_template",
-    "get_template",
-    "render_template",
-]
 
 # ---------------------------------------------------------------------------
 # Default on-disk path (XDG_DATA_HOME or ~/.local/share/local-llm-kit/)
@@ -169,6 +94,7 @@ CREATE TABLE IF NOT EXISTS messages (
     finish_reason     TEXT,
     prompt_tokens     INTEGER,
     completion_tokens INTEGER,
+    payload           TEXT,
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 
@@ -178,6 +104,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     name      TEXT NOT NULL,
     arguments TEXT NOT NULL,
     result    TEXT,
+    call_id   TEXT,
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
 );
 """
@@ -193,8 +120,7 @@ class ConversationLog:
 
     Stores conversations, their messages (user / assistant / tool / system),
     and any tool-call records produced during a turn.  Connections are
-    thread-local so the object is safe to share across threads (each thread
-    gets its own connection).
+    serialized with a reentrant lock, including complete interaction transactions.
 
     :param path: filesystem path to the SQLite database file.  When
         ``None`` the default XDG/standard-path location is used
@@ -202,44 +128,27 @@ class ConversationLog:
     """
 
     def __init__(self, path: Optional[str] = None) -> None:
-        self._path = path or DEFAULT_LOG_PATH
-        self._local = threading.local()
-        self._init_lock = threading.Lock()
-        _ensure_parent_dir(self._path)
-        # Initialise the schema in the creator thread.
-        self._get_conn()
-
-    # -- connection management ------------------------------------------------
-
-    def _get_conn(self) -> Any:
-        """Return the thread-local SQLite connection, creating + initialising it if needed."""
         import sqlite3
 
-        conn = getattr(self._local, "connection", None)
-        if conn is None:
-            conn = sqlite3.connect(self._path, check_same_thread=False, timeout=30.0)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON")
-            self._local.connection = conn
-            with self._init_lock:
-                conn.executescript(_SCHEMA)
-                conn.commit()
-        return conn
+        self._path = str(path) if path is not None else DEFAULT_LOG_PATH
+        self._lock = threading.RLock()
+        self._batch = False
+        _ensure_parent_dir(self._path)
+        self._conn = sqlite3.connect(self._path, check_same_thread=False, timeout=30.0)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        with self._conn:
+            self._conn.executescript(_SCHEMA)
+            # Preserve databases made by the original prototype.
+            for table, column in (("messages", "payload"), ("tool_calls", "call_id")):
+                columns = {row[1] for row in self._conn.execute("PRAGMA table_info(%s)" % table)}
+                if column not in columns:
+                    self._conn.execute("ALTER TABLE %s ADD COLUMN %s TEXT" % (table, column))
 
-    @property
-    def _conn(self) -> Any:
-        """Thread-local connection property (lazily initialised)."""
-        return self._get_conn()
-
+    @_locked
     def close(self) -> None:
-        """Close the connection for the *current* thread (if any)."""
-        conn = getattr(self._local, "connection", None)
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-            self._local.connection = None
+        """Close the store; it cannot be used again after closing."""
+        self._conn.close()
 
     def __enter__(self) -> "ConversationLog":
         return self
@@ -253,15 +162,16 @@ class ConversationLog:
         params: Optional[tuple] = None,
         commit: bool = False,
     ) -> Any:
-        """Execute a SQL statement on the thread-local connection."""
+        """Execute a statement while the caller holds the connection lock."""
         conn = self._conn
         cur = conn.execute(query, params or ())
-        if commit:
+        if commit and not self._batch:
             conn.commit()
         return cur
 
     # -- CRUD -----------------------------------------------------------------
 
+    @_locked
     def create(
         self,
         model: Optional[str] = None,
@@ -280,6 +190,7 @@ class ConversationLog:
         )
         return conv_id
 
+    @_locked
     def add_message(
         self,
         conv_id: str,
@@ -289,14 +200,15 @@ class ConversationLog:
         finish_reason: Optional[str] = None,
         prompt_tokens: Optional[int] = None,
         completion_tokens: Optional[int] = None,
+        payload: Optional[Dict[str, Any]] = None,
     ) -> int:
         """Append a message to *conv_id* and return the new message row id."""
         ts = _now_ts()
         cur = self._execute(
             "INSERT INTO messages "
             "(conversation_id, created_at, role, content, model, finish_reason, "
-            " prompt_tokens, completion_tokens) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " prompt_tokens, completion_tokens, payload) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 conv_id,
                 ts,
@@ -306,17 +218,20 @@ class ConversationLog:
                 finish_reason,
                 prompt_tokens,
                 completion_tokens,
+                json.dumps(payload) if payload is not None else None,
             ),
             commit=True,
         )
         return int(cur.lastrowid)
 
+    @_locked
     def add_tool_call(
         self,
         message_id: int,
         name: str,
         arguments: Any,
         result: Optional[str] = None,
+        call_id: Optional[str] = None,
     ) -> int:
         """Record a tool call associated with *message_id*.
 
@@ -330,12 +245,13 @@ class ConversationLog:
         else:
             args_json = json.dumps(arguments)
         cur = self._execute(
-            "INSERT INTO tool_calls (message_id, name, arguments, result) " "VALUES (?, ?, ?, ?)",
-            (message_id, name, args_json, result),
+            "INSERT INTO tool_calls (message_id, name, arguments, result, call_id) VALUES (?, ?, ?, ?, ?)",
+            (message_id, name, args_json, result, call_id),
             commit=True,
         )
         return int(cur.lastrowid)
 
+    @_locked
     def get_conversations(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Return the most recent conversations (newest first)."""
         conn = self._conn
@@ -346,6 +262,7 @@ class ConversationLog:
         ).fetchall()
         return [_row_to_conv(row) for row in rows]
 
+    @_locked
     def get_conversation(self, conv_id: str) -> Dict[str, Any]:
         """Return a single conversation's metadata (raises ``KeyError`` if absent)."""
         conn = self._conn
@@ -358,27 +275,30 @@ class ConversationLog:
             raise KeyError("Conversation not found: %s" % conv_id)
         return _row_to_conv(row)
 
+    @_locked
     def get_messages(self, conv_id: str) -> List[Dict[str, Any]]:
         """Return all messages for *conv_id* in insertion order."""
         conn = self._conn
         rows = conn.execute(
             "SELECT id, conversation_id, created_at, role, content, model, "
-            "finish_reason, prompt_tokens, completion_tokens "
+            "finish_reason, prompt_tokens, completion_tokens, payload "
             "FROM messages WHERE conversation_id = ? ORDER BY id ASC",
             (conv_id,),
         ).fetchall()
         return [_row_to_message(row) for row in rows]
 
+    @_locked
     def get_tool_calls(self, message_id: int) -> List[Dict[str, Any]]:
         """Return tool-call records associated with *message_id*."""
         conn = self._conn
         rows = conn.execute(
-            "SELECT id, message_id, name, arguments, result "
+            "SELECT id, message_id, name, arguments, result, call_id "
             "FROM tool_calls WHERE message_id = ? ORDER BY id ASC",
             (message_id,),
         ).fetchall()
         return [_row_to_tool_call(row) for row in rows]
 
+    @_locked
     def search(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Full-message search (LIKE) across all conversations.
 
@@ -389,7 +309,7 @@ class ConversationLog:
         conn = self._conn
         rows = conn.execute(
             "SELECT m.id, m.conversation_id, m.created_at, m.role, m.content, "
-            "       m.model, m.finish_reason, m.prompt_tokens, m.completion_tokens "
+            "       m.model, m.finish_reason, m.prompt_tokens, m.completion_tokens, m.payload "
             "FROM messages m "
             "WHERE m.content LIKE ? "
             "ORDER BY m.created_at DESC LIMIT ?",
@@ -397,6 +317,7 @@ class ConversationLog:
         ).fetchall()
         return [_row_to_message(row) for row in rows]
 
+    @_locked
     def delete(self, conv_id: str) -> int:
         """Delete a conversation and all of its messages/tool calls.
 
@@ -409,12 +330,14 @@ class ConversationLog:
         )
         return cur.rowcount
 
+    @_locked
     def clear(self) -> None:
         """Delete *all* conversations, messages, and tool calls."""
         self._execute("DELETE FROM conversations", commit=True)
 
     # -- High-level convenience API ------------------------------------------
 
+    @_atomic
     def log_interaction(
         self,
         model: str,
@@ -425,127 +348,73 @@ class ConversationLog:
         conversation_id: Optional[str] = None,
         system_prompt: Optional[str] = None,
     ) -> str:
-        """Log a complete LLM interaction in a single call.
+        """Atomically append supplied messages and a response.
 
-        This is the primary high-level entry point.  It creates (or reuses)
-        a conversation, records every message in *messages*, the assistant
-        response, and optionally the tool calls that were emitted.
-
-        :param model: model identifier (e.g. ``"gpt-4o"`` or ``"echo"``).
-        :param messages: the full message list sent to the model.  Each entry
-            should be an OpenAI-style dict (``{"role": ..., "content": ...}``).
-        :param response: the model's response dict (OpenAI ``chat`` shape),
-            a plain string, or ``None``.
-        :param tools_used: optional list of tool-call records (OpenAI-style
-            ``tool_calls`` entries or ``{"name": ..., "arguments": ...}``).
-        :param metadata: optional free-form metadata stored on the
-            conversation.
-        :param conversation_id: if provided, append to this existing
-            conversation instead of creating a new one.
-        :param system_prompt: optional system instruction stored on the
-            conversation (only used when *conversation_id* is not given).
-
-        :returns: the conversation ID.
+        With an existing ID, supply only new messages or a complete history
+        beginning with previously stored messages; that prefix is deduplicated.
+        Full message payloads preserve images, tool IDs and reasoning fields.
         """
         if conversation_id is None:
-            conversation_id = self.create(
-                model=model,
-                system_prompt=system_prompt,
-                metadata=metadata,
-            )
-        elif metadata is not None:
-            # Merge metadata into an existing conversation (best-effort).
-            try:
-                existing = self.get_conversation(conversation_id)
-                existing_meta = existing.get("metadata") or {}
-                if isinstance(existing_meta, dict):
-                    merged = dict(existing_meta)
-                    merged.update(metadata)
-                    self._update_conversation_metadata(conversation_id, merged)
-            except KeyError:
-                pass
-
-        # --- Record incoming messages ---
-        for msg in messages:
-            if not isinstance(msg, dict):
-                continue
-            role = msg.get("role", "")
-            if not role:
-                continue
-            content = msg.get("content")
-            if isinstance(content, list):
-                # Vision parts: flatten to text for logging.
-                parts = []
-                for part in content:
-                    if isinstance(part, dict):
-                        parts.append(part.get("text", part.get("type", "")) or "")
-                    else:
-                        parts.append(str(part))
-                content = "\n".join(p for p in parts if p)
-            elif content is not None:
-                content = str(content)
-            self.add_message(conv_id=conversation_id, role=role, content=content)
-
-        # --- Record the assistant response ---
-        assistant_content = None
-        finish_reason = None
-        tool_calls_list = []
-
+            conversation_id = self.create(model, system_prompt, metadata)
+        else:
+            self.get_conversation(conversation_id)
+            if metadata is not None:
+                self._update_conversation_metadata(conversation_id, metadata)
+        if not isinstance(messages, list) or any(not isinstance(msg, dict) for msg in messages):
+            raise TypeError("messages must be a list of message objects.")
+        previous = [row["payload"] for row in self.get_messages(conversation_id)]
+        if previous and messages[: len(previous)] == previous:
+            messages = messages[len(previous) :]
         if isinstance(response, str):
-            assistant_content = response
+            assistant, usage, finish = {"role": "assistant", "content": response}, {}, None
         elif isinstance(response, dict):
-            # OpenAI-style: {"choices": [{"message": {"content": ...}}]}
-            choices = response.get("choices")
-            if isinstance(choices, list) and choices:
-                msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
-            else:
-                msg = {}
-            assistant_content = response.get("content") or response.get("text")
-            if assistant_content is None and isinstance(msg, dict):
-                assistant_content = msg.get("content")
-            if isinstance(assistant_content, list):
-                parts = []
-                for part in assistant_content:
-                    if isinstance(part, dict):
-                        parts.append(part.get("text", part.get("type", "")) or "")
-                    else:
-                        parts.append(str(part))
-                assistant_content = "\n".join(p for p in parts if p)
-            elif assistant_content is not None:
-                assistant_content = str(assistant_content)
-            usage = response.get("usage") or {}
-            if isinstance(usage, dict):
-                finish_reason = msg.get("finish_reason") if isinstance(msg, dict) else None
-            tool_calls_list = response.get("tool_calls") or []
-            if not tool_calls_list and isinstance(msg, dict):
-                tool_calls_list = msg.get("tool_calls") or []
-
-        msg_id = self.add_message(
-            conv_id=conversation_id,
-            role="assistant",
-            content=assistant_content,
-            model=model,
-            finish_reason=finish_reason,
-        )
-
-        # --- Record tool calls (if any) ---
-        all_tools = list(tools_used or []) + list(tool_calls_list or [])
-        for tc in all_tools:
-            if not isinstance(tc, dict):
-                continue
-            fn = tc.get("function", tc) if isinstance(tc, dict) else {}
-            name = fn.get("name", "") if isinstance(fn, dict) else ""
-            if not name:
-                continue
-            arguments = fn.get("arguments", "{}")
-            result = tc.get("result") or tc.get("output")
-            try:
-                self.add_tool_call(message_id=msg_id, name=name, arguments=arguments, result=result)
-            except Exception:
-                pass
-
+            choice = (response.get("choices") or [{}])[0]
+            assistant = dict(
+                choice.get("message") or {"content": response.get("text", response.get("content"))},
+                role="assistant",
+            )
+            usage, finish = response.get("usage") or {}, choice.get("finish_reason")
+        else:
+            raise TypeError("response must be text or a chat response object.")
+        if tools_used:
+            existing = list(assistant.get("tool_calls") or [])
+            keys = {
+                call.get("id") or json.dumps(call.get("function", call), sort_keys=True)
+                for call in existing
+            }
+            for call in tools_used:
+                key = call.get("id") or json.dumps(call.get("function", call), sort_keys=True)
+                if key not in keys:
+                    existing.append(call)
+                    keys.add(key)
+            assistant["tool_calls"] = existing
+        for index, message in enumerate(messages + [assistant]):
+            if not isinstance(message.get("role"), str) or not message["role"]:
+                raise ValueError("Every message must have a non-empty role.")
+            final = index == len(messages)
+            content = message.get("content")
+            mid = self.add_message(
+                conversation_id,
+                message["role"],
+                content if isinstance(content, str) or content is None else json.dumps(content),
+                model=model,
+                finish_reason=finish if final else None,
+                prompt_tokens=usage.get("prompt_tokens") if final else None,
+                completion_tokens=usage.get("completion_tokens") if final else None,
+                payload=message,
+            )
+            for call in message.get("tool_calls") or []:
+                function = call.get("function", call)
+                self.add_tool_call(
+                    mid,
+                    function["name"],
+                    function.get("arguments", "{}"),
+                    call.get("result", call.get("output")),
+                    call.get("id"),
+                )
         return conversation_id
 
+    @_locked
     def get_conversation_history(
         self,
         conversation_id: str,
@@ -569,6 +438,7 @@ class ConversationLog:
             result.append(enriched)
         return result
 
+    @_locked
     def export_conversation(
         self,
         conversation_id: str,
@@ -643,6 +513,9 @@ class ConversationLog:
         # fmt == "openai": flatten to OpenAI-style message list
         openai_msgs: List[Dict[str, Any]] = []
         for msg in history:
+            if msg.get("payload") is not None:
+                openai_msgs.append(msg["payload"])
+                continue
             role = msg.get("role")
             entry: Dict[str, Any] = {"role": role, "content": msg.get("content")}
             if role == "assistant":
@@ -655,7 +528,7 @@ class ConversationLog:
                             args = json.dumps(args)
                         openai_calls.append(
                             {
-                                "id": "call_{0}".format(tc.get("id", "")),
+                                "id": tc.get("call_id") or "call_{0}".format(tc.get("id", "")),
                                 "type": "function",
                                 "function": {
                                     "name": tc.get("name"),
@@ -665,8 +538,9 @@ class ConversationLog:
                         )
                     entry["tool_calls"] = openai_calls
             elif role == "tool":
-                entry["tool_call_id"] = msg.get("id")
-                entry["name"] = msg.get("model") or msg.get("finish_reason")
+                raise ValueError(
+                    "Legacy tool message has no original tool_call_id; export JSON/text instead of inventing replay linkage."
+                )
             openai_msgs.append(entry)
         return json.dumps({"model": conv.get("model"), "messages": openai_msgs}, indent=2)
 
@@ -720,6 +594,7 @@ def _row_to_message(row: Any) -> Dict[str, Any]:
         "finish_reason": row["finish_reason"],
         "prompt_tokens": row["prompt_tokens"],
         "completion_tokens": row["completion_tokens"],
+        "payload": _decode_json(row["payload"]),
     }
 
 
@@ -730,6 +605,7 @@ def _row_to_tool_call(row: Any) -> Dict[str, Any]:
         "name": row["name"],
         "arguments": _decode_json(row["arguments"]),
         "result": row["result"],
+        "call_id": row["call_id"],
     }
 
 

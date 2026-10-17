@@ -23,11 +23,13 @@ Probed endpoints come from :data:`local_llm_kit.discovery.ENDPOINTS`; pass your
 own with ``discover(extra_urls=["http://localhost:9000/v1"])``.
 
 Nothing here performs inference, downloads weights, or sends credentials.
-Probes are unauthenticated GET requests to model-listing endpoints.
+Probes are unauthenticated metadata reads, including POST /api/show for Ollama.
 """
 
 import concurrent.futures
+import ipaddress
 import json
+import math
 import time
 import urllib.error
 import urllib.parse
@@ -130,8 +132,12 @@ def normalize_base_url(url: str) -> str:
     parts = urllib.parse.urlsplit(text)
     if not parts.hostname:
         raise ValueError("base_url must include a host: %r" % (url,))
-    netloc = parts.hostname
-    if parts.port:
+    if parts.scheme not in ("http", "https"):
+        raise ValueError("base_url must use http or https.")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("Discovery probes do not accept credentials in URLs.")
+    netloc = "[%s]" % parts.hostname if ":" in parts.hostname else parts.hostname
+    if parts.port is not None:
         netloc = "%s:%d" % (netloc, parts.port)
     path = parts.path.rstrip("/")
     for suffix in ("/chat/completions", "/completions", "/embeddings", "/models"):
@@ -141,6 +147,20 @@ def normalize_base_url(url: str) -> str:
     if not path.endswith("/v1"):
         path = path + "/v1" if path else "/v1"
     return "%s://%s%s" % (parts.scheme or "http", netloc, path)
+
+
+def is_loopback_url(url: str) -> bool:
+    """Whether an HTTP endpoint explicitly addresses this machine."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https"):
+            return False
+        host = parts.hostname or ""
+        if host.lower() == "localhost":
+            return True
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _server_root(base_url: str) -> str:
@@ -164,6 +184,8 @@ class ModelRecord:
     #: True when the server routes this model off-device (for example Ollama's
     #: ``:cloud`` models, which run on ollama.com rather than on this machine).
     remote: bool = False
+    #: Server-native metadata explicitly identifies local execution.
+    local_verified: bool = False
     remote_host: Optional[str] = None
     #: Raw provider payload, kept for ``--json`` output and debugging.
     raw: Dict[str, Any] = field(default_factory=dict)
@@ -174,6 +196,7 @@ class ModelRecord:
             "capabilities": list(self.capabilities),
             "context_length": self.context_length,
             "remote": self.remote,
+            "local_verified": self.local_verified,
             "remote_host": self.remote_host,
         }
 
@@ -222,7 +245,9 @@ class ServerReport:
 
     @property
     def local_models(self) -> List[ModelRecord]:
-        return [m for m in self.models if not m.remote]
+        if not is_loopback_url(self.base_url):
+            return []
+        return [m for m in self.models if m.local_verified and not m.remote]
 
     @property
     def has_local_models(self) -> bool:
@@ -238,7 +263,7 @@ class ServerReport:
     @property
     def all_local(self) -> bool:
         """True when the server is live and exposes no off-device models."""
-        return self.live and bool(self.models) and not self.remote_models
+        return self.live and bool(self.models) and len(self.local_models) == len(self.models)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -402,7 +427,7 @@ def _looks_remote(model_id: str, payload: Dict[str, Any]) -> Tuple[bool, Optiona
         return True, host
     if payload.get("remote_model"):
         return True, host or "remote"
-    if any(marker in model_id.lower() for marker in _REMOTE_MARKERS):
+    if model_id.lower().endswith(":cloud"):
         return True, host
     return False, None
 
@@ -539,6 +564,7 @@ def _enrich_ollama(report: ServerReport, root: str, timeout: float) -> None:
                 capabilities=capabilities,
                 context_length=raw_context if isinstance(raw_context, int) else None,
                 remote=remote,
+                local_verified=not remote,
                 remote_host=remote_host,
                 raw=item,
             )
@@ -568,6 +594,8 @@ def _enrich_llama_server(report: ServerReport, root: str, timeout: float) -> Non
         report.notes.append("server is sleeping (idle sleep is enabled)")
     model_path = payload.get("model_path")
     if isinstance(model_path, str) and model_path:
+        for model in report.models:
+            model.local_verified = not model.remote
         report.notes.append("model file: %s" % model_path)
 
 
@@ -625,6 +653,8 @@ def _enrich_lmstudio(report: ServerReport, root: str, timeout: float) -> None:
                 )
             )
         if records:
+            for model in records:
+                model.local_verified = bool(model.raw.get("loaded_instances"))
             report.models = records
             report.notes.append("capabilities read from lmstudio %s" % path)
             return
@@ -683,7 +713,12 @@ def probe_endpoint(
     Raises:
         ValueError: only for a malformed *base_url* argument.
     """
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(timeout)
+        or timeout <= 0
+    ):
         raise ValueError("timeout must be a positive number of seconds.")
     normalized = normalize_base_url(base_url)
     root = _server_root(normalized)
@@ -724,6 +759,10 @@ def probe_endpoint(
             except Exception as exc:  # noqa: BLE001 - enrichment is best-effort
                 report.notes.append("context lookup failed: %s" % exc)
 
+    if report.live and any(not m.local_verified and not m.remote for m in report.models):
+        report.notes.append(
+            "Execution locality is unknown for some models; a loopback endpoint can proxy a remote service."
+        )
     remote = report.remote_models
     if remote:
         hosts = sorted({m.remote_host or "remote" for m in remote})
@@ -774,7 +813,12 @@ def discover(
         A :class:`DiscoveryReport`. Dead endpoints appear with ``live=False``,
         so callers can show a full picture rather than only successes.
     """
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(timeout)
+        or timeout <= 0
+    ):
         raise ValueError("timeout must be a positive number of seconds.")
     if isinstance(max_workers, bool) or not isinstance(max_workers, int) or max_workers < 1:
         raise ValueError("max_workers must be a positive integer.")

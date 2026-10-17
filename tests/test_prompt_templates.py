@@ -163,34 +163,5 @@ class TestModuleLevelHelpers(unittest.TestCase):
             get_template("definitely_not_registered")
 
 
-class TestBackwardCompatReexports(unittest.TestCase):
-    def test_conversation_log_module_reexports_templates(self):
-        from local_llm_kit.conversation_log import (
-            DEFAULT_REGISTRY as cl_registry,
-        )
-        from local_llm_kit.conversation_log import (
-            PromptTemplate as CLPromptTemplate,
-        )
-        from local_llm_kit.conversation_log import (
-            TemplateRegistry as CLTemplateRegistry,
-        )
-        from local_llm_kit.conversation_log import (
-            get_template as cl_get,
-        )
-        from local_llm_kit.conversation_log import (
-            register_template as cl_register,
-        )
-        from local_llm_kit.conversation_log import (
-            render_template as cl_render,
-        )
-
-        self.assertIs(cl_registry, DEFAULT_REGISTRY)
-        self.assertIs(CLPromptTemplate, PromptTemplate)
-        self.assertIs(CLTemplateRegistry, TemplateRegistry)
-        self.assertIs(cl_get, get_template)
-        self.assertIs(cl_register, register_template)
-        self.assertIs(cl_render, render_template)
-
-
 if __name__ == "__main__":
     unittest.main()

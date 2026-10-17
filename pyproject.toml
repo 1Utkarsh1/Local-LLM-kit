@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,7 +10,8 @@ dynamic = ["version"]
 description = "One Python API for offline LLMs and local servers: Ollama, AirLLM, SGLang, vLLM, LM Studio and llama.cpp"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Utkarsh Rajput", email = "utkarshrajput815@gmail.com" },
 ]
@@ -21,7 +22,6 @@ keywords = ['llm', 'local-llm', 'offline-ai', 'openai-compatible', 'transformers
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -41,6 +41,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+structured = ["jsonschema>=4.18,<5"]
+yaml = ["PyYAML>=6.0,<7"]
 airllm = [
     "airllm>=2.11,<5",
     "numpy>=1.24.0",
@@ -91,6 +93,8 @@ rag = [
 ]
 # Everything runnable (all runtime extras, excludes dev tooling)
 all = [
+    "jsonschema>=4.18,<5",
+    "PyYAML>=6.0,<7",
     "airllm>=2.11,<5",
     "apple-fm-sdk>=0.2.1; sys_platform == 'darwin' and python_version >= '3.10'",
     "mlx>=0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
@@ -114,6 +118,7 @@ all = [
 ]
 # Contributor tooling (lint + format + test + packaging checks)
 dev = [
+    "jsonschema>=4.18,<5",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.4.0",

@@ -21,8 +21,8 @@ Design notes
   working on Python 3.9.
 * **Two transports.** ``stdio`` (a local server launched as a subprocess) and
   ``http`` (Streamable HTTP JSON-RPC, JSON body or request-scoped SSE).
-* **Local by default.** A ``stdio`` server runs on your machine; nothing leaves
-  the device unless you configure an ``http`` server yourself.
+* **Explicit connections.** A local stdio process can itself use the network.
+  Select trusted tools and configure their network behavior for offline use.
 
 Quick start (Python)
 --------------------
@@ -85,14 +85,19 @@ use the tools.
 Protocol coverage
 -----------------
 
-The client performs the ``initialize`` handshake on a best effort basis (the
-2026 revision of the spec is stateless, so servers without ``initialize`` still
-work), then uses:
+By default the client uses a legacy ``initialize`` handshake for compatibility
+with existing servers, followed by ``tools/list`` (with pagination) and
+``tools/call``. Select ``MCPServer(..., protocol_version='2026-07-28')`` for the
+current stateless revision: it uses ``server/discover``, per-request protocol
+and client metadata, plus HTTP method/name headers. An unsupported explicit
+revision fails rather than silently claiming compatibility.
 
-* ``tools/list`` — with ``nextCursor`` pagination — to discover tools.
-* ``tools/call`` — to invoke a tool; MCP content blocks are flattened to text
-  (images/audio become ``[image: <mime>]`` placeholders, resources become
-  ``[resource: <uri>]``).
+Both paths are exercised against the official Python MCP SDK. The tools client
+flattens text content; images/audio/resources use descriptive placeholders.
+This does not implement resources, prompts, subscriptions, OAuth or interactive
+multi-round requests. Protocol references:
+`MCP SDK version negotiation <https://ts.sdk.modelcontextprotocol.io/v2/protocol-versions>`_
+and `MCP lifecycle <https://go.sdk.modelcontextprotocol.io/protocol/>`_.
 
 Content-block flattening returns ``isError`` results as
 :class:`~local_llm_kit.mcp.MCPToolError`, which the tool loop surfaces as an

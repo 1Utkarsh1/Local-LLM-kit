@@ -1,69 +1,38 @@
 # Local LLM Kit
 
-> A lightweight Python interface for offline language models and local LLM servers. Import: `local_llm_kit`; distribution: `local-llm-kit`; license: MIT.
+> Lightweight Python client for local models and local inference servers. Distribution: local-llm-kit. Import: local_llm_kit. MIT. Core Python 3.9+, stdlib plus typing-extensions.
 
-## Where it fits
+## Status
 
-Applications that want one OpenAI-shaped chat/completion interface across local runtimes, native tool calls and structured outputs where supported, an offline deterministic test backend, small embedding/RAG helpers, or MCP (Model Context Protocol) tools discovered from local/remote servers. The core client uses stdlib HTTP and typing-extensions; inference packages are optional extras. The MCP client (`local_llm_kit.mcp.MCPServer`) is also stdlib-only and works on Python 3.9, unlike the official `mcp` SDK (Python >= 3.10).
+PyPI 0.2.0 is the stable release. Discovery, Apple FM, MCP, agents, validated structured output, hybrid retrieval, logging, hardware advice and Responses are unreleased additions on feat/consolidated-community-upgrades. Do not describe them as shipped in 0.2.0.
 
-## Actual API
+## API and fit
 
-`from local_llm_kit import LLM, chat, complete, embed, tool, discover, find_local_server, probe_endpoint`
+Use when an application needs an OpenAI-shaped Python chat/completion API across local runtimes, request-scoped tools, an offline echo fixture, or small retrieval helpers. Example: `LLM('echo', backend='echo').chat([{'role':'user','content':'Hi'}])`; answer text is `response['choices'][0]['message']['content']`.
 
-`LLM(model_path="echo", backend="echo").chat([{"role":"user","content":"Hello"}])` returns a dictionary; text is at `response["choices"][0]["message"]["content"]`.
+In-process adapters: transformers, llamacpp, experimental airllm, native apple-fm. HTTP: native ollama and OpenAI-compatible presets vllm, sglang, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm, koboldcpp, transformers-serve, apfel. Generic servers use openai-compat with base_url. A preset connects to an already-running engine; it does not host or install it. Features depend on the chosen model/runtime. These are compatibility options, not a usage ranking.
 
-Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm. Server presets: sglang, vllm, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm and koboldcpp. These cover 12 distinct local runtimes; this is not a usage ranking. A preset connects to an already-running server with a served model ID; it does not install or host that engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate embedding backend. `llama-server` defaults to port 9931 (upstream default since October 2026); the Docker image and older builds use 8080.
+## Unreleased additions
 
-## Finding servers and real capabilities
+- `discover`, `probe_endpoint`, `find_local_server` and CLI `doctor`: read native capability metadata when available. Unknown locality stays unknown. `LLM(..., require_local=True)` refuses unverified/remote execution and checks again before chat/completion. It trusts metadata and is not a network sandbox.
+- HTTP adapters use `max_retries` (integer or RetryPolicy), default 2. Streaming retries only connection setup, never emitted output.
+- Apple FM uses Apple's SDK on an eligible Mac, Python 3.10+, macOS 26+, Xcode 26+ and enabled Apple Intelligence. Fresh sessions, schema forwarding, stop-aware streams, inline image attachment adapter and exact token count. Actual vision requires SDK/OS image support. apfel maps completions to chat and has no embeddings.
+- `MCPServer`, `LLM.add_mcp_server`, CLI `mcp tools|call`: synchronous stdio/HTTP tools subset, namespacing and deadlines. `Agent` owns a bounded tool loop using the same executor as LLM.chat. Invalid truncated arguments are never repaired into executable tool calls.
+- `LLM.chat_structured`: JSON Schema type/constraint checks via optional [structured] or Pydantic. `repair_json`/`extract_json` are opt-in output helpers.
+- `SimpleVectorStore`, `RAGPipeline`: BM25, dense/lexical rank fusion, optional MMR, filters, delete and JSON persistence. A small in-memory store, not a distributed vector database. Citation prompts do not validate grounding.
+- `ConversationLog`: opt-in SQLite logging, atomic completed interactions, original tool IDs, full payload export, completed streams, thread-safe in-memory databases. PromptTemplate uses plain substitution; YAML needs [yaml].
+- `get_system_memory`, `estimate_model_vram`, `recommend_quantization`: measured or unknown memory and approximate budgets; no guaranteed fit or artificial pooled GPU memory.
+- Development server: stateless `/v1/responses` text/image inputs, function calls/results, text.format and SSE lifecycle. Stateful/hosted tools/background/reasoning controls are unsupported. Existing chat/completions and embeddings remain available. Server is a development adapter, not an authenticated multi-user gateway.
 
-`discover()` probes the well-known local endpoints concurrently (stdlib only, unauthenticated GETs, no inference) and returns `DiscoveryReport`; `find_local_server()` returns the first server with an on-device model or None; `probe_endpoint(url)` checks one endpoint. `local-llm-kit doctor [--json] [--require-local] [--url HOST:PORT]` is the CLI form and exits 0/1 for scripting.
+## Validation boundaries
 
-Capabilities come from each server's own metadata where it exists: Ollama `POST /api/show` + `GET /api/tags` (real `context_length`, `capabilities`, `remote_host`), llama.cpp `GET /props` (live `n_ctx`, `modalities.vision`), LM Studio `GET /api/v1/models` (`capabilities.vision`, `trained_for_tool_use`, `max_context_length`), apfel `GET /v1/models` (`context_window`, `capabilities`). The provider is identified from the server's response, not from the port number.
-
-Ollama models that a server routes off the machine (a `:cloud` model runs on ollama.com) are flagged as `remote` with their `remote_host`. `LLM(..., require_local=True)` refuses such a model, and raises rather than assuming when routing cannot be verified. `OllamaBackend(..., auto_detect_capabilities=True)` makes `LLM.context_window` use the server's real value.
-
-Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm.
-Native Apple on-device inference: backend "apple-fm" (apple-fm-sdk, macOS 26+,
-Xcode 26+, Python 3.10+, Apple Intelligence on) with native json_schema
-structured output, client-side tool loop, streaming, data-URL vision, and
-exact token counting; or bridge to `apfel --serve` with backend "apfel" (chat-only, no embeddings endpoint,
-top_k/penalty fields omitted). Server presets: sglang, vllm, lmstudio, localai,
-llama-server, jan, gpt4all, mlx-lm, koboldcpp and apfel. These cover 14 distinct
-local runtimes; this is not a usage ranking. A preset connects to an
-already-running server with a served model ID; it does not install or host that
-engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate
-embedding backend.
-
-MCP: `from local_llm_kit import LLM` then `llm.add_mcp_server("fs", command="npx", args=[...])` registers a server's tools (namespaced `fs__<tool>`) for the chat tool loop; `from local_llm_kit.mcp import MCPServer` drives discovery/invocation directly. CLI: `local-llm-kit mcp tools|call` and `chat --mcp-command/--mcp-url`.
-
-Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm. Server presets: sglang, vllm, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm and koboldcpp. These cover 12 distinct local runtimes; this is not a usage ranking. A preset connects to an already-running server with a served model ID; it does not install or host that engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate embedding backend.
-
-## Boundaries
-
-Capabilities depend on the chosen model/runtime. Protocol tests are not hardware benchmarks. AirLLM call contracts are tested with doubles; real model/GPU execution is not certified, and its stream is buffered. The bundled HTTP server is a development shim. Remote tool execution defaults to off; per-call Python tools are request-scoped. Weights and dependencies must be prepared before offline use. Discovery tests run offline against an HTTP fixture; real-server certification is opt-in via `LOCAL_LLM_KIT_LIVE=1`. These integrations are included in version 0.2.0.
-
-Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm. Server presets: sglang, vllm, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm, koboldcpp and transformers-serve. These cover 12 distinct local runtimes (transformers-serve shares the transformers engine); this is not a usage ranking. A preset connects to an already-running server with a served model ID; it does not install or host that engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate embedding backend.
-
-## Boundaries
-
-The dev server additionally exposes a Responses-API subset (`POST /v1/responses`:
-string/message-list input, instructions, function_call output items; stateful
-options rejected) and aggregates upstream `/v1/models` listings. HTTP backends
-retry transient failures on non-streaming calls (retries=2 default, 0 to fail
-fast). RAG offers MMR diversification and dense+lexical hybrid search.
-Capabilities depend on the chosen model/runtime. Protocol tests are not hardware
-benchmarks. AirLLM call contracts are tested with doubles; real model/GPU
-execution is not certified, and its stream is buffered. The bundled HTTP server
-is a development shim. Remote tool execution defaults to off; per-call Python
-tools are request-scoped. Weights and dependencies must be prepared before
-offline use. These integrations are included in version 0.2.0.
+Core stays light. Native inference dependencies are optional and prepared weights are needed offline. Protocol fixture tests and official OpenAI/MCP SDK checks do not certify every engine, model or hardware configuration. AirLLM streaming is buffered. Python tool deadlines bound waiting; running functions may continue. Native schema enforcement is backend-dependent; the structured helper validates returned JSON separately. No claim of being fastest or universally best is established.
 
 ## References
 
 - [Repository and quickstart](https://github.com/1Utkarsh1/Local-LLM-kit)
-- [Server discovery and capabilities](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/discovery.rst)
+- [Released 0.2.0 API](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.2.0)
 - [Backend compatibility](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/backends.rst)
-- [Python API](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/api_reference.rst)
+- [API reference](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/api_reference.rst)
 - [Examples](https://github.com/1Utkarsh1/Local-LLM-kit/tree/main/examples)
-- [Changelog](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/CHANGELOG.md)
 - [Bug reports](https://github.com/1Utkarsh1/Local-LLM-kit/issues)

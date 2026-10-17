@@ -3,7 +3,7 @@
 
 Demonstrates:
 1. Querying host physical RAM and GPU VRAM.
-2. Estimating exact memory footprints for quantized models and KV caches.
+2. Estimating approximate memory footprints for quantized models and KV caches.
 3. Receiving hardware-aware quantization recommendations before downloading.
 
 Run:
@@ -44,8 +44,11 @@ def main():
 
     # 3. Recommendation for 8B model
     print("\nRecommendation for 8B Model on Current Machine:")
-    rec = recommend_quantization(8.0, context_length=4096)
-    print(f"  {rec['recommendation']}")
+    try:
+        rec = recommend_quantization(8.0, context_length=4096)
+        print(f"  {rec['recommendation']}")
+    except ValueError as exc:
+        print(f"  {exc}")
 
 
 if __name__ == "__main__":

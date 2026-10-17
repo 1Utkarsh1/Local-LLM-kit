@@ -373,22 +373,22 @@ class TestOffDeviceDetection(unittest.TestCase):
 class TestReportSemantics(unittest.TestCase):
     def _report(self):
         local_only = ServerReport(
-            base_url="http://a/v1",
+            base_url="http://127.0.0.1:10001/v1",
             provider="ollama",
             live=True,
-            models=[ModelRecord(id="small")],
+            models=[ModelRecord(id="small", local_verified=True)],
         )
         mixed = ServerReport(
-            base_url="http://b/v1",
+            base_url="http://127.0.0.1:10002/v1",
             provider="ollama",
             live=True,
             models=[
-                ModelRecord(id="small"),
+                ModelRecord(id="small", local_verified=True),
                 ModelRecord(id="big:cloud", remote=True, remote_host="h"),
             ],
         )
         remote_only = ServerReport(
-            base_url="http://c/v1",
+            base_url="http://127.0.0.1:10003/v1",
             provider="ollama",
             live=True,
             models=[ModelRecord(id="big:cloud", remote=True, remote_host="h")],
@@ -397,13 +397,18 @@ class TestReportSemantics(unittest.TestCase):
 
     def test_all_local_requires_models_and_no_remote_ones(self):
         report = self._report()
-        self.assertEqual([s.base_url for s in report.local_only()], ["http://a/v1"])
-        self.assertEqual([s.base_url for s in report.on_device()], ["http://b/v1", "http://a/v1"])
+        self.assertEqual([s.base_url for s in report.local_only()], ["http://127.0.0.1:10001/v1"])
+        self.assertEqual(
+            [s.base_url for s in report.on_device()],
+            ["http://127.0.0.1:10002/v1", "http://127.0.0.1:10001/v1"],
+        )
 
     def test_require_local_skips_remote_only_servers(self):
         report = self._report()
-        self.assertEqual(report.first_live(require_local=True).base_url, "http://b/v1")
-        self.assertEqual(report.first_live().base_url, "http://b/v1")
+        self.assertEqual(
+            report.first_live(require_local=True).base_url, "http://127.0.0.1:10002/v1"
+        )
+        self.assertEqual(report.first_live().base_url, "http://127.0.0.1:10002/v1")
 
     def test_report_is_json_serialisable(self):
         payload = json.dumps(self._report().to_dict())

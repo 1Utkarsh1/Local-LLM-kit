@@ -35,11 +35,13 @@ Design notes:
 """
 
 import argparse
+import asyncio
 import hashlib
 import inspect
 import json
 import math
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 __all__ = ["create_app", "run", "main"]
@@ -250,132 +252,287 @@ def _coerce_vectors(result: Any, n: int) -> Optional[List[List[float]]]:
     return vectors
 
 
-def _responses_content_text(content: Any) -> str:
-    """Extract plain text from a Responses-API content block.
-
-    Accepts plain strings and lists of ``input_text``/``output_text``/
-    ``text`` parts (whose ``text`` may itself be a string or a
-    ``{"value": ...}`` dict). Anything else degrades to ``str()``.
-    """
-    if content is None:
-        return ""
-    if isinstance(content, str):
+def _responses_content(content: Any) -> Any:
+    if isinstance(content, str) or content is None:
         return content
-    if isinstance(content, list):
-        texts = []
-        for part in content:
-            if isinstance(part, str):
-                texts.append(part)
-            elif isinstance(part, dict):
-                text = part.get("text", "")
-                if isinstance(text, dict):
-                    text = text.get("value", "")
-                if part.get("type") in (None, "input_text", "output_text", "text"):
-                    texts.append(str(text if text is not None else ""))
-                else:
-                    texts.append(str(part))
-            elif part is not None:
-                texts.append(str(part))
-        return "".join(texts)
-    return str(content)
+    if not isinstance(content, list):
+        raise ValueError("Message content must be text or a list of content parts.")
+    parts = []
+    for part in content:
+        if not isinstance(part, dict):
+            raise ValueError("Content parts must be objects.")
+        kind = part.get("type")
+        if kind in ("input_text", "output_text", "text") and isinstance(part.get("text"), str):
+            parts.append({"type": "text", "text": part["text"]})
+        elif kind == "input_image" and isinstance(part.get("image_url"), str):
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": part["image_url"], "detail": part.get("detail", "auto")},
+                }
+            )
+        elif kind == "image_url" and isinstance(part.get("image_url"), (str, dict)):
+            parts.append(part)
+        else:
+            raise ValueError("Unsupported content part: %r" % kind)
+    return parts
 
 
 def _coerce_responses_input(raw: Any) -> List[Dict[str, Any]]:
-    """Normalise a Responses-API ``input`` to chat messages.
-
-    Accepts a plain string, a list of OpenAI chat messages, or a list of
-    Responses items (``message`` objects with ``role``/``content`` and
-    bare ``input_text`` parts, which become user turns). Raises
-    ``ValueError`` for anything else.
-    """
-    if isinstance(raw, str):
-        if not raw:
-            raise ValueError("'input' must be a non-empty string or list.")
+    """Convert stateless Responses messages and tool exchanges to chat input."""
+    if isinstance(raw, str) and raw:
         return [{"role": "user", "content": raw}]
     if not isinstance(raw, list) or not raw:
         raise ValueError("'input' must be a non-empty string or list.")
     messages = []
     for item in raw:
         if not isinstance(item, dict):
-            raise ValueError("Each 'input' item must be an object.")
-        if "role" in item or "content" in item:
-            messages.append(item)
-        elif item.get("type") == "message":
+            raise ValueError("Each input item must be an object.")
+        kind = item.get("type", "message")
+        if kind == "message":
+            role = item.get("role", "user")
+            if role not in ("user", "assistant", "system", "developer", "tool"):
+                raise ValueError("Unsupported input role: %r" % role)
+            message = {"role": role, "content": _responses_content(item.get("content"))}
+            for key in ("tool_calls", "tool_call_id", "name"):
+                if key in item:
+                    message[key] = item[key]
+            messages.append(message)
+        elif kind in ("input_text", "input_image"):
+            messages.append({"role": "user", "content": _responses_content([item])})
+        elif kind == "function_call":
+            if not all(isinstance(item.get(key), str) and item[key] for key in ("call_id", "name")):
+                raise ValueError("function_call requires name and call_id strings.")
+            arguments = item.get("arguments", "{}")
+            if not isinstance(arguments, str):
+                raise ValueError("function_call arguments must be a JSON string.")
             messages.append(
                 {
-                    "role": item.get("role", "user"),
-                    "content": _responses_content_text(item.get("content")),
-                }
-            )
-        elif item.get("type") == "input_text":
-            messages.append({"role": "user", "content": str(item.get("text", ""))})
-        elif item.get("type") == "input_image":
-            image = item.get("image_url", item.get("image"))
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": image} if image else {}}
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": item["call_id"],
+                            "type": "function",
+                            "function": {"name": item["name"], "arguments": arguments},
+                        }
                     ],
                 }
             )
+        elif kind == "function_call_output":
+            if not isinstance(item.get("call_id"), str) or not isinstance(item.get("output"), str):
+                raise ValueError("function_call_output requires call_id and text output strings.")
+            messages.append(
+                {"role": "tool", "tool_call_id": item["call_id"], "content": item["output"]}
+            )
         else:
-            raise ValueError("Unsupported 'input' item type: %r." % (item.get("type"),))
-    if not messages:
-        raise ValueError("'input' must contain at least one message.")
+            raise ValueError("Unsupported input item type: %r" % kind)
     return messages
+
+
+def _responses_usage(usage: Any) -> Any:
+    if not isinstance(usage, dict):
+        return None
+    return {
+        "input_tokens": usage.get("prompt_tokens", usage.get("input_tokens", 0)),
+        "output_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0)),
+        "total_tokens": usage.get("total_tokens", 0),
+        "input_tokens_details": {"cached_tokens": 0},
+        "output_tokens_details": {"reasoning_tokens": 0},
+    }
 
 
 def _responses_object(
     message: Dict[str, Any], model: str, status: str = "completed"
 ) -> Dict[str, Any]:
-    """Build a Responses-API object from a chat message.
-
-    Assistant text becomes an ``output_text`` content part; tool calls (when
-    returned unexecuted) become ``function_call`` output items — the same
-    information the chat endpoint returns as ``tool_calls``.
-    """
-    now = _now()
-    output: List[Dict[str, Any]] = []
-    text = message.get("content") if isinstance(message, dict) else None
-    if text:
+    output = []
+    text = message.get("content")
+    if text is not None:
         output.append(
             {
-                "type": "output_text",
-                "text": text if isinstance(text, str) else str(text),
-                "annotations": [],
+                "id": "msg_" + uuid.uuid4().hex,
+                "type": "message",
+                "role": "assistant",
+                "status": status,
+                "content": [
+                    {"type": "output_text", "text": text, "annotations": [], "logprobs": []}
+                ],
             }
         )
-    for call in (message.get("tool_calls") or []) if isinstance(message, dict) else []:
-        fn = call.get("function", {}) if isinstance(call, dict) else {}
+    for call in message.get("tool_calls") or []:
+        function = call["function"]
         output.append(
             {
-                "id": call.get("id", "call_unknown") if isinstance(call, dict) else "call_unknown",
+                "id": "fc_" + uuid.uuid4().hex,
                 "type": "function_call",
-                "status": "completed",
-                "call_id": (
-                    call.get("id", "call_unknown") if isinstance(call, dict) else "call_unknown"
-                ),
-                "name": fn.get("name", "") if isinstance(fn, dict) else "",
-                "arguments": fn.get("arguments", "") if isinstance(fn, dict) else "",
+                "status": status,
+                "call_id": call["id"],
+                "name": function["name"],
+                "arguments": function["arguments"],
             }
         )
     return {
-        "id": "resp_%x" % (now * 1000000 + (hash(json.dumps(output, sort_keys=True)) % 1000)),
+        "id": "resp_" + uuid.uuid4().hex,
         "object": "response",
-        "created_at": now,
+        "created_at": _now(),
         "model": model,
         "status": status,
-        "output": [
-            {
-                "id": "msg_%x" % now,
-                "type": "message",
-                "role": "assistant",
-                "status": "completed",
-                "content": output,
-            }
-        ],
+        "output": output,
+        "error": None,
+        "incomplete_details": None,
+        "usage": None,
+        "store": False,
+        "metadata": {},
+        "parallel_tool_calls": True,
+        "tools": [],
+        "tool_choice": "auto",
     }
+
+
+def _responses_events(chunks: Any, model: str):
+    """Translate chat deltas to the SDK's Responses event and item lifecycle."""
+    response = _responses_object({}, model, "in_progress")
+    output = []
+    tools = {}
+    text_item = None
+    sequence = 0
+    usage = None
+    finish = "stop"
+
+    def event(kind, **fields):
+        nonlocal sequence
+        payload = dict(type=kind, sequence_number=sequence, **fields)
+        sequence += 1
+        return "event: %s\ndata: %s\n\n" % (kind, json.dumps(payload))
+
+    yield event("response.created", response=dict(response))
+    yield event("response.in_progress", response=dict(response))
+    try:
+        if isinstance(chunks, dict):
+            chunks = [chunks]
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            usage = chunk.get("usage") or usage
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            finish = choice.get("finish_reason") or finish
+            delta = choice.get("delta") or choice.get("message") or {}
+            text = delta.get("content")
+            if text:
+                if text_item is None:
+                    text_index = len(output)
+                    text_item = {
+                        "id": "msg_" + uuid.uuid4().hex,
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "in_progress",
+                        "content": [],
+                    }
+                    yield event(
+                        "response.output_item.added", output_index=text_index, item=dict(text_item)
+                    )
+                    text_item["content"] = [
+                        {"type": "output_text", "text": "", "annotations": [], "logprobs": []}
+                    ]
+                    output.append(text_item)
+                    yield event(
+                        "response.content_part.added",
+                        item_id=text_item["id"],
+                        output_index=text_index,
+                        content_index=0,
+                        part=dict(text_item["content"][0]),
+                    )
+                text_item["content"][0]["text"] += text
+                yield event(
+                    "response.output_text.delta",
+                    item_id=text_item["id"],
+                    output_index=text_index,
+                    content_index=0,
+                    delta=text,
+                    logprobs=[],
+                )
+            calls = delta.get("tool_calls") or []
+            if not calls and delta.get("function_call"):
+                calls = [{"index": 0, "function": delta["function_call"]}]
+            for position, call in enumerate(calls):
+                index = call.get("index", position)
+                function = call.get("function") or {}
+                if index not in tools:
+                    item = {
+                        "id": "fc_" + uuid.uuid4().hex,
+                        "type": "function_call",
+                        "status": "in_progress",
+                        "call_id": call.get("id") or "call_" + uuid.uuid4().hex,
+                        "name": function.get("name", ""),
+                        "arguments": "",
+                    }
+                    tools[index] = (len(output), item)
+                    output.append(item)
+                    yield event(
+                        "response.output_item.added", output_index=len(output) - 1, item=dict(item)
+                    )
+                output_index, item = tools[index]
+                if call.get("id"):
+                    item["call_id"] = call["id"]
+                if function.get("name"):
+                    item["name"] = function["name"]
+                arguments = function.get("arguments", "")
+                if arguments:
+                    item["arguments"] += arguments
+                    yield event(
+                        "response.function_call_arguments.delta",
+                        item_id=item["id"],
+                        output_index=output_index,
+                        delta=arguments,
+                    )
+        for index, item in enumerate(output):
+            item["status"] = "incomplete" if finish == "length" else "completed"
+            if item["type"] == "message":
+                part = item["content"][0]
+                yield event(
+                    "response.output_text.done",
+                    item_id=item["id"],
+                    output_index=index,
+                    content_index=0,
+                    text=part["text"],
+                    logprobs=[],
+                )
+                yield event(
+                    "response.content_part.done",
+                    item_id=item["id"],
+                    output_index=index,
+                    content_index=0,
+                    part=part,
+                )
+            else:
+                yield event(
+                    "response.function_call_arguments.done",
+                    item_id=item["id"],
+                    output_index=index,
+                    arguments=item["arguments"],
+                    name=item["name"],
+                )
+            yield event("response.output_item.done", output_index=index, item=item)
+        response.update(
+            output=output,
+            status="incomplete" if finish == "length" else "completed",
+            usage=_responses_usage(usage),
+        )
+        if finish == "length":
+            response["incomplete_details"] = {"reason": "max_output_tokens"}
+        yield event("response." + response["status"], response=response)
+    except Exception as exc:
+        response.update(
+            output=output, status="failed", error={"code": "server_error", "message": str(exc)}
+        )
+        yield event("response.failed", response=response)
+    finally:
+        close = getattr(chunks, "close", None)
+        if close:
+            close()
 
 
 def _generation_params(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -768,141 +925,138 @@ def create_app(
 
         return StreamingResponse(event_iter(), media_type="text/event-stream")
 
-    # -- responses API (subset) -------------------------------------------
-    # A minimal OpenAI Responses-API shape over the chat engine: string or
-    # message-list ``input`` (plus top-level ``instructions``), optional
-    # ``stream`` of ``response.output_text.delta`` events, and
-    # ``function_call`` output items for unexecuted tool calls. Stateful
-    # features (``previous_response_id``/``store``/``background``,
-    # ``reasoning``) are rejected explicitly rather than silently ignored.
+    # -- stateless Responses subset ----------------------------------------
     @app.post("/v1/responses")
     @app.post("/responses")
     async def responses(request: Request):
         try:
             body = await request.json()
-        except Exception:
-            return _error("Invalid JSON body.")
-        if not isinstance(body, dict):
-            return _error("JSON body must be an object.")
-        for unsupported in ("previous_response_id", "reasoning"):
-            if body.get(unsupported):
-                return _error("'%s' is not supported by this server." % unsupported)
-        if body.get("background"):
-            return _error("'background' responses are not supported by this server.")
-        if body.get("store"):
-            return _error("'store' is not supported; responses are stateless here.")
-
-        try:
-            messages = _coerce_responses_input(body.get("input", ""))
-        except ValueError as exc:
+            if not isinstance(body, dict):
+                raise ValueError("JSON body must be an object.")
+            for key in (
+                "previous_response_id",
+                "conversation",
+                "reasoning",
+                "include",
+                "truncation",
+            ):
+                if key in body and body[key] is not None:
+                    raise ValueError("'%s' is not supported by this stateless server." % key)
+            for key in ("background", "store"):
+                if key in body and body[key] is not False:
+                    raise ValueError("'%s' must be false; this server is stateless." % key)
+            for key in ("stream", "execute_tools", "parallel_tool_calls"):
+                if key in body and not isinstance(body[key], bool):
+                    raise ValueError("'%s' must be a boolean." % key)
+            if body.get("execute_tools"):
+                raise ValueError(
+                    "Responses returns tool calls for the caller to execute; execute_tools is unsupported here."
+                )
+            messages = _coerce_responses_input(body.get("input"))
+            instructions = body.get("instructions")
+            if instructions is not None:
+                if not isinstance(instructions, str):
+                    raise ValueError("'instructions' must be a string.")
+                messages.insert(0, {"role": "system", "content": instructions})
+            tools = body.get("tools", [])
+            if not isinstance(tools, list):
+                raise ValueError("'tools' must be a list.")
+            normalized_tools = []
+            for tool in tools:
+                if not isinstance(tool, dict) or tool.get("type") != "function":
+                    raise ValueError("Only function tools are supported.")
+                function = tool.get(
+                    "function", {key: value for key, value in tool.items() if key != "type"}
+                )
+                if (
+                    not isinstance(function, dict)
+                    or not isinstance(function.get("name"), str)
+                    or not function["name"]
+                ):
+                    raise ValueError("Function tools require a name.")
+                normalized_tools.append({"type": "function", "function": function})
+            tool_choice = body.get("tool_choice", "auto")
+            if isinstance(tool_choice, dict):
+                if tool_choice.get("type") != "function" or not tool_choice.get("name"):
+                    raise ValueError("tool_choice must name a function.")
+                tool_choice = {"type": "function", "function": {"name": tool_choice["name"]}}
+            elif tool_choice not in ("auto", "none", "required"):
+                raise ValueError("Unsupported tool_choice.")
+            converted = dict(body)
+            if "max_output_tokens" in body:
+                converted["max_tokens"] = body["max_output_tokens"]
+            if "text" in body:
+                text = body["text"]
+                if not isinstance(text, dict) or set(text) - {"format"}:
+                    raise ValueError("Only text.format is supported.")
+                fmt = text.get("format", {"type": "text"})
+                if not isinstance(fmt, dict):
+                    raise ValueError("text.format must be an object.")
+                if fmt.get("type") == "json_schema":
+                    if not isinstance(fmt.get("schema"), dict) or not isinstance(
+                        fmt.get("name"), str
+                    ):
+                        raise ValueError("json_schema requires a schema object and name.")
+                    converted["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {key: value for key, value in fmt.items() if key != "type"},
+                    }
+                elif fmt.get("type") == "json_object":
+                    converted["response_format"] = fmt
+                elif fmt.get("type") != "text":
+                    raise ValueError("Unsupported text.format type.")
+            params = _generation_params(converted)
+        except (TypeError, ValueError) as exc:
             return _error(str(exc))
-        instructions = body.get("instructions")
-        if instructions:
-            if not isinstance(instructions, str):
-                return _error("'instructions' must be a string.")
-            messages = [{"role": "system", "content": instructions}] + messages
-        coerced = _coerce_messages(messages)
-
         try:
             llm_obj = _get_llm()
         except RuntimeError as exc:
             return _error(str(exc), status=503, err_type="server_error")
+        model = _model_id()
+        if body.get("model") is not None and body["model"] != model:
+            return _error(
+                "Model %r is not served here; use %r." % (body["model"], model), status=404
+            )
+        chat_kwargs = dict(
+            messages=_coerce_messages(messages),
+            tools=normalized_tools or None,
+            tool_choice=tool_choice,
+            execute_tools=False,
+            **params,
+        )
+        for key in ("top_p", "seed", "parallel_tool_calls"):
+            if key in body:
+                chat_kwargs[key] = body[key]
+        if body.get("stream", False):
 
-        functions, function_call, tools, tool_choice = _extract_functions(body)
-        fmt = _extract_format(body)
-        stream = bool(body.get("stream", False))
-        execute_tools = body.get("execute_tools", False)
-        if not isinstance(execute_tools, bool):
-            return _error("'execute_tools' must be a boolean.")
+            def chunks():
+                result = _call_llm_chat(llm_obj, dict(chat_kwargs, stream=True))
+                if isinstance(result, dict):
+                    yield result
+                else:
+                    yield from result
+
+            return StreamingResponse(
+                _responses_events(chunks(), model), media_type="text/event-stream"
+            )
         try:
-            generation_params = _generation_params(body)
-        except (TypeError, ValueError) as exc:
-            return _error(str(exc))
-        logprobs = bool(body.get("logprobs", False))
-        top_logprobs = body.get("top_logprobs")
-
-        chat_kwargs = {
-            "messages": coerced,
-            "functions": functions,
-            "function_call": function_call,
-            "tools": tools,
-            "tool_choice": tool_choice,
-            "execute_tools": execute_tools,
-            **generation_params,
-            "format": fmt,
-            "logprobs": logprobs,
-            "top_logprobs": top_logprobs,
-        }
-        chat_kwargs = {k: v for k, v in chat_kwargs.items() if v is not None}
-        if "function_call" not in chat_kwargs:
-            chat_kwargs["function_call"] = function_call
-
-        requested_model = body.get("model") or _model_id()
-
-        if not stream:
-            try:
-                result = _call_llm_chat(llm_obj, dict(chat_kwargs, stream=False))
-            except Exception as exc:
-                return _error("Response failed: %s" % exc, status=500, err_type="server_error")
-            if not isinstance(result, dict):
-                return _error("Backend returned non-dict response.", status=500)
-            try:
-                choices = result.get("choices", [])
-                message = choices[0].get("message", {}) if choices else {}
-                _ensure_tool_calls(message)
-                obj = _responses_object(message, requested_model)
-                usage = result.get("usage")
-                if isinstance(usage, dict):
-                    obj["usage"] = usage
-                return JSONResponse(content=obj)
-            except Exception as exc:
-                return _error("Failed to serialise response: %s" % exc, status=500)
-
-        def event_iter():
-            try:
-                chunks = _call_llm_chat(llm_obj, dict(chat_kwargs, stream=True))
-            except Exception as exc:
-                yield "data: %s\n\n" % json.dumps({"error": str(exc)})
-                yield "data: [DONE]\n\n"
-                return
-            try:
-                if isinstance(chunks, dict):
-                    chunks = [chunks]
-                texts = []
-                for chunk in chunks:
-                    if not isinstance(chunk, dict):
-                        continue
-                    text = ""
-                    choices = chunk.get("choices", [])
-                    if choices and isinstance(choices[0], dict):
-                        choice = choices[0]
-                        delta = choice.get("delta")
-                        if isinstance(delta, dict):
-                            content = delta.get("content")
-                            text = content if isinstance(content, str) else ""
-                        if not text:
-                            # Tolerate mock LLMs that return message-shaped
-                            # chunks even in stream mode.
-                            message = choice.get("message", {})
-                            if isinstance(message, dict):
-                                content = message.get("content")
-                                text = content if isinstance(content, str) else ""
-                    if text:
-                        texts.append(text)
-                        yield "data: %s\n\n" % json.dumps(
-                            {"type": "response.output_text.delta", "delta": text}
-                        )
-                completed = _responses_object(
-                    {"role": "assistant", "content": "".join(texts)}, requested_model
-                )
-                yield "data: %s\n\n" % json.dumps(
-                    {"type": "response.completed", "response": completed}
-                )
-            except Exception as exc:
-                yield "data: %s\n\n" % json.dumps({"error": str(exc)})
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(event_iter(), media_type="text/event-stream")
+            result = await asyncio.to_thread(
+                _call_llm_chat, llm_obj, dict(chat_kwargs, stream=False)
+            )
+            choice = result["choices"][0]
+            message = choice["message"]
+            _ensure_tool_calls(message)
+            obj = _responses_object(
+                message,
+                model,
+                "incomplete" if choice.get("finish_reason") == "length" else "completed",
+            )
+            obj["usage"] = _responses_usage(result.get("usage"))
+            if obj["status"] == "incomplete":
+                obj["incomplete_details"] = {"reason": "max_output_tokens"}
+            return JSONResponse(content=obj)
+        except Exception as exc:
+            return _error("Response failed: %s" % exc, status=500, err_type="server_error")
 
     # -- embeddings ------------------------------------------------------
     @app.post("/v1/embeddings")

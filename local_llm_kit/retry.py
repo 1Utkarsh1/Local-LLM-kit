@@ -23,6 +23,7 @@ Only transient failures are retried:
 Client errors such as ``400`` are never retried.
 """
 
+import math
 import random
 import time
 import urllib.error
@@ -69,7 +70,7 @@ class RetryPolicy:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError("%s must be a number." % name)
-            if value < 0:
+            if not math.isfinite(value) or value < 0:
                 raise ValueError("%s must be non-negative." % name)
         if self.max_delay < self.initial_delay:
             raise ValueError("max_delay must be >= initial_delay.")
@@ -87,7 +88,7 @@ class RetryPolicy:
         A server-supplied ``Retry-After`` wins over the computed backoff,
         clamped to :data:`MAX_RETRY_AFTER`.
         """
-        if retry_after is not None and retry_after >= 0:
+        if retry_after is not None and math.isfinite(retry_after) and retry_after >= 0:
             return min(float(retry_after), MAX_RETRY_AFTER)
         backoff = min(self.initial_delay * (2 ** max(0, attempt - 1)), self.max_delay)
         if self.jitter and backoff > 0:
@@ -131,7 +132,7 @@ def retry_after_seconds(headers: object) -> Optional[float]:
         seconds = float(text)
     except ValueError:
         return None
-    if seconds < 0:
+    if not math.isfinite(seconds) or seconds < 0:
         return None
     return min(seconds, MAX_RETRY_AFTER)
 

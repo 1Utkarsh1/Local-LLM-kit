@@ -8,46 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Server discovery** (`local_llm_kit.discovery`): `discover()`, `probe_endpoint()`, `find_local_server()`, `DiscoveryReport`/`ServerReport`/`ModelRecord`, all exported from the package root. Probes the well-known local endpoints concurrently with stdlib `urllib` only, reports unreachable ports as results instead of exceptions, and identifies the provider from the server's own response rather than the port number. Extra endpoints via `extra_urls`, `timeout`/`enrich`/`max_workers` controls, full `to_dict()` for JSON output.
-- **`local-llm-kit doctor`** (aliases `discover`, `probe`): human-readable or `--json` report of what is running and what it can do, with `--url`, `--timeout`, `--require-local`, `--keep-loading` and `--quiet`. Exit code `0` when a server responded (`--require-local`: when an on-device model is available), `1` otherwise.
-- **Off-device model detection**: models a server routes elsewhere (Ollama `:cloud` models run on ollama.com) are flagged by `ServerReport.remote_models` and in the CLI, so a "local" setup cannot silently depend on a remote provider.
-- **`require_local`** on `LLM`: refuses a model the backend reports as routed off this machine, and raises when the backend *could* report routing but the lookup failed rather than assuming the model is local. `LLM.detect_backend_capabilities()` exposes the backend's report; `LLM.assert_local()` re-checks.
-- **Retry policy** (`local_llm_kit.retry`): `RetryPolicy` plus `DEFAULT_RETRY`, with `is_retryable_status`, `retry_after_seconds` and `coerce_policy` helpers. Server backends retry a refused connection and transient statuses (`429`, `5xx` — llama.cpp answers `503` while loading a model) using the same defaults as the official OpenAI Python client: two retries, 0.5s initial delay doubling to an 8s ceiling, jittered, `Retry-After` honoured and clamped to 120s. Configured per backend via `backend_kwargs={"max_retries": ...}` (int, `RetryPolicy`, or `0` to disable).
+- Native Apple Foundation Models adapter and apfel profile, including native schemas, fresh sessions, inline image attachments, exact token counting, cooperative timeouts and streaming stop handling.
+- Server discovery, native capability metadata, `doctor` CLI and a locality guard that rejects unknown or remote routes.
+- Shared transient HTTP retry policy with finite delays and cleanup, plus the Transformers server preset.
+- MCP tools client over stdio and Streamable HTTP, namespaced registration, deadlines and official SDK interoperability tests.
+- Bounded agent loop with request-scoped tools, strict argument parsing and shared tool execution; structured chat with optional full JSON Schema validation and Pydantic validation.
+- BM25, dense/lexical reciprocal rank fusion, MMR diversity, metadata filters, deletion and a small RAG pipeline.
+- Opt-in atomic SQLite conversation logging and lossless tool/message export, plain-text/JSON/YAML templates, and logging CLI commands.
+- Measured hardware memory inspection and approximate model/KV memory planning; no guaranteed fit claims.
+- Stateless Responses API subset with text/image inputs, function calls/results, schema-format forwarding and SDK-compatible text/tool streaming events.
 
-### Changed
-- **Truthful capability reporting.** `OllamaBackend` now reads real model metadata instead of hardcoded defaults: `list_models()` carries the server's `capabilities`, per-model `context_length` and `remote_host`; `detect_capabilities()` reads `POST /api/show` for the true context length and `GET /api/tags` for routing; `supports_vision` reflects the server's capability list. Pass `backend_kwargs={"auto_detect_capabilities": True}` to have `LLM.context_window` use the server value (opt-in, so backend construction never requires a running server; a failed lookup keeps the configured fallback). Measured on Ollama 0.34.2 with `qwen2.5:0.5b`: the adapter reported 4096 tokens and vision support; the server reports 32768 tokens and no vision.
-- **`llama-server` preset port.** llama.cpp changed the `llama-server` default listen port from 8080 to 9931 (ggml-org/llama.cpp#30159, merged 2026-10-09); `OPENAI_SERVER_URLS["llama-server"]` now follows the upstream binary at `http://localhost:9931/v1`. The Docker image still binds 8080 and older builds default to 8080 — pass `backend_kwargs={"base_url": "http://localhost:8080/v1"}` for those, and note that `doctor` probes both ports.
+### Fixed
+- Competing tool loops could bypass the new agent's controls; the agent now disables nested execution.
+- SSE MCP responses waited for EOF after a result, and notifications restarted deadlines. Results now return promptly within an absolute deadline.
+- Structured-output validation accepted invalid field types, and repair changed quoted literals. Schemas now enforce constraints and repair preserves strings.
+- Unverified HTTP endpoints could pass the locality check. Unknown routing now fails closed; loopback alone is insufficient.
+- Reasoning metadata could be dropped from native chat responses and streams.
+- Conversation logs lost original tool IDs, usage and finish reasons, used separate in-memory stores per thread, and could commit partial interactions.
+- Template loading depended on YAML for plain text, and directory loading hid parse failures.
+- Hardware advice fabricated missing measurements and combined separate GPUs into an unrealistic memory budget.
 
-- Apple Foundation Models support, two paths: a native `apple-fm` backend on
-  Apple's official `apple-fm-sdk` (on-device system model; macOS 26+, Xcode 26+,
-  Python 3.10+, Apple Intelligence on; new `apple-fm` extra) with native
-  `json_schema` structured output, client-side tool loop, streaming deltas,
-  data-URL vision via temp-file `ImageAttachment`s, exact `count_tokens_exact`
-  budgeting, and per-request sessions, plus an `apfel` server preset for
-  `apfel --serve` (chat-only, no embeddings endpoint, rejected sampling fields
-  omitted). Ships with `examples/apple_foundation.py`, backend-guide coverage
-  and offline contract tests (`tests/test_apple_fm.py`) plus an opt-in live test.
-
-- Optional MCP (Model Context Protocol) host: `local_llm_kit.mcp.MCPServer` connects to MCP servers over stdio or Streamable HTTP, discovers their tools with pagination, and converts them to OpenAI tool specs. `LLM.add_mcp_server()` registers them (namespaced `server__tool`) so the existing chat/tool-execution loop can call them. The client is stdlib-only, so the light core gains no dependency and Python 3.9 keeps working — the official `mcp` SDK requires Python >= 3.10.
-- CLI: `local-llm-kit mcp tools` and `local-llm-kit mcp call`, plus repeatable `--mcp-command` / `--mcp-url` on `chat`.
-- `examples/mcp_tools.py` (runs fully offline against a built-in demo server) and `docs/source/mcp.rst`.
-
-- Responses-API subset on the dev server (`POST /v1/responses`, non-streaming
-  and SSE): string/message-list `input`, top-level `instructions`, `tools` with
-  the same execute-tools default, `function_call` output items for unexecuted
-  tool calls; stateful options rejected explicitly.
-- Upstream model discovery: new `LLM.list_models()` (backend listing with a
-  single-model fallback, never raises) and `GET /v1/models` aggregation.
-- Transient-failure retries for the `ollama` and `openai-compat` backends
-  (`retries`/`retry_backoff` via `backend_kwargs`; non-streaming calls only).
-- RAG quality: `SimpleVectorStore.search(..., lambda_mult=...)` MMR
-  diversification, new `search_hybrid(..., alpha=...)` dense+lexical fusion
-  (both with optional MMR rerank), and `retrieve()` passthroughs.
-- `transformers-serve` preset for Hugging Face `transformers serve`
-  (`http://localhost:8000/v1`).
-- History truncation keeps tool exchanges atomic (assistant `tool_calls`
-  are never split from their `tool` results) in both truncation and
-  summarization.
+### Validation scope
+- Core requirements remain Python 3.9+ with no new mandatory dependencies; Apple SDK and official SDK interoperability have separate version requirements.
+- These are unreleased changes. Protocol/SDK tests do not establish performance superiority or certify every runtime/hardware combination.
 
 ## [0.2.0] - 2026-10-17
 

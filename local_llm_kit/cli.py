@@ -351,6 +351,13 @@ def _create_llm(args: argparse.Namespace, backend_kwargs: Dict[str, Any]) -> Any
     if not model:
         _fail("a model is required (pass --model/-m).")
     backend = _normalize_backend(getattr(args, "backend", None))
+    log = None
+    if getattr(args, "conversation_log", None):
+        from .conversation_log import DEFAULT_LOG_PATH, ConversationLog
+
+        log = ConversationLog(
+            DEFAULT_LOG_PATH if args.conversation_log == "default" else args.conversation_log
+        )
     try:
         return LLM(
             model_path=model,
@@ -358,6 +365,7 @@ def _create_llm(args: argparse.Namespace, backend_kwargs: Dict[str, Any]) -> Any
             temperature=getattr(args, "temperature", 0.7),
             max_new_tokens=getattr(args, "max_tokens", 512) or 512,
             backend_kwargs=backend_kwargs,
+            **({"conversation_log": log} if log is not None else {}),
         )
     except ImportError as exc:
         missing = str(exc)
@@ -454,27 +462,7 @@ def _chat_once(
     # but third-party-compatible signatures may not).
     kwargs = {k: v for k, v in kwargs.items() if v is not None or k == "messages"}
 
-    try:
-        return llm.chat(**kwargs)
-    except TypeError:
-        # Last-resort legacy fallback for unfamiliar signatures.
-        fallback: Dict[str, Any] = {
-            "messages": messages,
-            "stream": stream,
-        }
-        if functions is not None:
-            fallback["functions"] = functions
-        elif tools is not None:
-            fallback["functions"] = [t["function"] for t in tools]
-        if tool_choice is not None:
-            fallback["function_call"] = _tool_choice_to_function_call(tool_choice)
-        if legacy_format is not None:
-            fallback["format"] = legacy_format
-        if temperature is not None:
-            fallback["temperature"] = temperature
-        if max_tokens is not None:
-            fallback["max_tokens"] = max_tokens
-        return llm.chat(**fallback)
+    return llm.chat(**kwargs)
 
 
 def _complete_once(
@@ -770,6 +758,14 @@ def build_parser() -> argparse.ArgumentParser:
     chat_p = sub.add_parser("chat", help="Interactive chat with a model.")
     _add_common_llm_args(chat_p, require_model=True)
     _add_common_backend_tuning(chat_p)
+    chat_p.add_argument(
+        "--conversation-log",
+        nargs="?",
+        const="default",
+        default=None,
+        metavar="DB",
+        help="Opt in to SQLite chat logging; optionally choose a database path.",
+    )
     chat_p.add_argument("--system", "-s", default=None, help="System message.")
     chat_p.add_argument(
         "--message",
@@ -1078,8 +1074,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Tool arguments: inline JSON object or a path to a JSON file.",
     )
 
-    return parser
+    logs = sub.add_parser("logs", help="List, inspect or export saved conversations.")
+    logs_sub = logs.add_subparsers(dest="logs_action", required=True)
+    for action in ("list", "show", "export"):
+        command = logs_sub.add_parser(action)
+        command.add_argument("--db", default=None, help="SQLite database path.")
+        if action == "list":
+            command.add_argument("--limit", type=int, default=20)
+        else:
+            command.add_argument("id", help="Conversation ID.")
+            command.add_argument(
+                "--format",
+                choices=["json", "text", "openai"],
+                default="text" if action == "show" else "json",
+            )
+    hardware = sub.add_parser(
+        "hardware", help="Inspect available memory and estimate a model budget."
+    )
+    hardware.add_argument(
+        "--params-b", type=float, default=None, help="Parameter count in billions."
+    )
+    hardware.add_argument("--context-length", type=int, default=4096)
+    hardware.add_argument(
+        "--memory-gb", type=float, default=None, help="Override measured available memory in GiB."
+    )
 
+    return parser
 
 
 def handle_chat_command(
@@ -1101,56 +1121,33 @@ def handle_chat_command(
 
     llm = _create_llm(args, backend_kwargs)
 
-    # Register tools from any MCP servers requested on the command line.
-    mcp_names: List[str] = []
-    if getattr(args, "mcp_command", None) or getattr(args, "mcp_url", None):
-        mcp_names = _register_mcp_on_llm(llm, args)
-        if mcp_names:
-            spec_by_name = {s["function"]["name"]: s for s in llm.list_tools()}
-            tools = list(tools or []) + [
-                spec_by_name[name] for name in mcp_names if name in spec_by_name
-            ]
-            if tool_choice is None:
-                tool_choice = "auto"
-            # Live MCP tools are meant to run; enable the executor unless the
-            # user explicitly passed tools that cannot be executed (schemas only).
-            execute_tools = True
+    try:
+        # Register tools from any MCP servers requested on the command line.
+        mcp_names: List[str] = []
+        if getattr(args, "mcp_command", None) or getattr(args, "mcp_url", None):
+            mcp_names = _register_mcp_on_llm(llm, args)
+            if mcp_names:
+                spec_by_name = {s["function"]["name"]: s for s in llm.list_tools()}
+                tools = list(tools or []) + [
+                    spec_by_name[name] for name in mcp_names if name in spec_by_name
+                ]
+                if tool_choice is None:
+                    tool_choice = "auto"
+                # Live MCP tools are meant to run; enable the executor unless the
+                # user explicitly passed tools that cannot be executed (schemas only).
+                execute_tools = True
 
-    messages: List[Dict[str, Any]] = []
-    if getattr(args, "system", None):
-        messages.append({"role": "system", "content": args.system})
+        messages: List[Dict[str, Any]] = []
+        if getattr(args, "system", None):
+            messages.append({"role": "system", "content": args.system})
 
-    stream = bool(getattr(args, "stream", False))
-    temperature = getattr(args, "temperature", 0.7)
-    max_tokens = getattr(args, "max_tokens", 512)
-    logprobs = bool(getattr(args, "logprobs", False))
+        stream = bool(getattr(args, "stream", False))
+        temperature = getattr(args, "temperature", 0.7)
+        max_tokens = getattr(args, "max_tokens", 512)
+        logprobs = bool(getattr(args, "logprobs", False))
 
-    def _run_once() -> Dict[str, Any]:
-        result = _chat_once(
-            llm,
-            messages,
-            functions=functions,
-            tools=tools,
-            tool_choice=tool_choice,
-            legacy_format=legacy_format,
-            modern_format=modern_format,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=False,
-            execute_tools=execute_tools,
-            logprobs=logprobs,
-        )
-        if not isinstance(result, dict) or not result.get("choices"):
-            _fail("backend returned an unexpected response: {0!r}".format(result))
-        return result
-
-    # -- one-shot mode ----------------------------------------------------
-    if getattr(args, "message", None):
-        messages.append({"role": "user", "content": args.message})
-        if stream:
-            print("Assistant: ", end="", flush=True)
-            acc = ""
-            chunks = _chat_once(
+        def _run_once() -> Dict[str, Any]:
+            result = _chat_once(
                 llm,
                 messages,
                 functions=functions,
@@ -1160,61 +1157,20 @@ def handle_chat_command(
                 modern_format=modern_format,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                stream=True,
+                stream=False,
                 execute_tools=execute_tools,
                 logprobs=logprobs,
             )
-            try:
-                for chunk in chunks:
-                    piece = _extract_delta_text(chunk)
-                    if piece:
-                        print(piece, end="", flush=True)
-                        acc += piece
-            except ImportError as exc:
-                _fail("streaming needs no extra deps, but the backend failed: {0}".format(exc))
-            print()
-            messages.append({"role": "assistant", "content": acc})
-            return
-        response = _run_once()
-        assistant = response["choices"][0]["message"]
-        messages.append(assistant)
-        if not _print_tool_calls_from_message(assistant):
-            print(assistant.get("content"))
-        if execute_tools and ("tool_calls" in assistant or "function_call" in assistant):
-            _eprint(
-                "Note: --execute-tools was given, but tools loaded from JSON "
-                "files provide schemas only, so there is nothing local to run. "
-                "Register Python implementations via llm.add_tool() to enable "
-                "in-process execution."
-            )
-        return
+            if not isinstance(result, dict) or not result.get("choices"):
+                _fail("backend returned an unexpected response: {0!r}".format(result))
+            return result
 
-    # -- interactive REPL ---------------------------------------------------
-    print(
-        "Chat with {0} (type 'exit' or 'quit' to end, 'clear' to reset history)".format(args.model)
-    )
-    try:
-        while True:
-            try:
-                user_input = input("\nYou: ")
-            except EOFError:
-                print()
-                break
-            if user_input.strip().lower() in ("exit", "quit"):
-                break
-            if user_input.strip().lower() == "clear":
-                messages = []
-                if getattr(args, "system", None):
-                    messages.append({"role": "system", "content": args.system})
-                print("Chat history cleared.")
-                continue
-            if not user_input.strip():
-                continue
-            messages.append({"role": "user", "content": user_input})
-
+        # -- one-shot mode ----------------------------------------------------
+        if getattr(args, "message", None):
+            messages.append({"role": "user", "content": args.message})
             if stream:
-                print("\nAssistant: ", end="", flush=True)
-                acc_text = ""
+                print("Assistant: ", end="", flush=True)
+                acc = ""
                 chunks = _chat_once(
                     llm,
                     messages,
@@ -1234,16 +1190,55 @@ def handle_chat_command(
                         piece = _extract_delta_text(chunk)
                         if piece:
                             print(piece, end="", flush=True)
-                            acc_text += piece
-                except Exception as exc:  # noqa: BLE001
-                    print("\nError during streaming: {0}".format(exc))
-                    messages.pop()
-                    continue
+                            acc += piece
+                except ImportError as exc:
+                    _fail("streaming needs no extra deps, but the backend failed: {0}".format(exc))
                 print()
-                messages.append({"role": "assistant", "content": acc_text})
-            else:
+                messages.append({"role": "assistant", "content": acc})
+                return
+            response = _run_once()
+            assistant = response["choices"][0]["message"]
+            messages.append(assistant)
+            if not _print_tool_calls_from_message(assistant):
+                print(assistant.get("content"))
+            if execute_tools and ("tool_calls" in assistant or "function_call" in assistant):
+                _eprint(
+                    "Note: --execute-tools was given, but tools loaded from JSON "
+                    "files provide schemas only, so there is nothing local to run. "
+                    "Register Python implementations via llm.add_tool() to enable "
+                    "in-process execution."
+                )
+            return
+
+        # -- interactive REPL ---------------------------------------------------
+        print(
+            "Chat with {0} (type 'exit' or 'quit' to end, 'clear' to reset history)".format(
+                args.model
+            )
+        )
+        try:
+            while True:
                 try:
-                    response = _chat_once(
+                    user_input = input("\nYou: ")
+                except EOFError:
+                    print()
+                    break
+                if user_input.strip().lower() in ("exit", "quit"):
+                    break
+                if user_input.strip().lower() == "clear":
+                    messages = []
+                    if getattr(args, "system", None):
+                        messages.append({"role": "system", "content": args.system})
+                    print("Chat history cleared.")
+                    continue
+                if not user_input.strip():
+                    continue
+                messages.append({"role": "user", "content": user_input})
+
+                if stream:
+                    print("\nAssistant: ", end="", flush=True)
+                    acc_text = ""
+                    chunks = _chat_once(
                         llm,
                         messages,
                         functions=functions,
@@ -1253,21 +1248,56 @@ def handle_chat_command(
                         modern_format=modern_format,
                         temperature=temperature,
                         max_tokens=max_tokens,
-                        stream=False,
+                        stream=True,
                         execute_tools=execute_tools,
                         logprobs=logprobs,
                     )
-                except Exception as exc:  # noqa: BLE001
-                    print("\nError: {0}".format(exc))
-                    messages.pop()
-                    continue
-                if "choices" in response and response["choices"]:
-                    assistant_msg = response["choices"][0]["message"]
-                    messages.append(assistant_msg)
-                    if not _print_tool_calls_from_message(assistant_msg):
-                        print("\nAssistant: {0}".format(assistant_msg.get("content")))
-    except KeyboardInterrupt:
-        print("\nExiting chat...")
+                    try:
+                        for chunk in chunks:
+                            piece = _extract_delta_text(chunk)
+                            if piece:
+                                print(piece, end="", flush=True)
+                                acc_text += piece
+                    except Exception as exc:  # noqa: BLE001
+                        print("\nError during streaming: {0}".format(exc))
+                        messages.pop()
+                        continue
+                    print()
+                    messages.append({"role": "assistant", "content": acc_text})
+                else:
+                    try:
+                        response = _chat_once(
+                            llm,
+                            messages,
+                            functions=functions,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            legacy_format=legacy_format,
+                            modern_format=modern_format,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            stream=False,
+                            execute_tools=execute_tools,
+                            logprobs=logprobs,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        print("\nError: {0}".format(exc))
+                        messages.pop()
+                        continue
+                    if "choices" in response and response["choices"]:
+                        assistant_msg = response["choices"][0]["message"]
+                        messages.append(assistant_msg)
+                        if not _print_tool_calls_from_message(assistant_msg):
+                            print("\nAssistant: {0}".format(assistant_msg.get("content")))
+        except KeyboardInterrupt:
+            print("\nExiting chat...")
+    finally:
+        close = getattr(llm, "close", None)
+        if callable(close):
+            close()
+        log = getattr(llm, "conversation_log", None)
+        if log is not None:
+            log.close()
 
 
 def handle_completion_command(
@@ -1788,7 +1818,11 @@ def _render_doctor(report: Any, require_local: bool) -> None:
         if server.vision is not None:
             print("  server vision support: %s" % ("yes" if server.vision else "no"))
         for model in server.models:
-            marker = "  OFF-DEVICE -> %s" % (model.remote_host or "remote") if model.remote else ""
+            marker = (
+                "  OFF-DEVICE -> %s" % (model.remote_host or "remote")
+                if model.remote
+                else ("" if model.local_verified else "  locality unknown")
+            )
             print("    %-38s %s%s" % (model.id[:38], _describe_model(model), marker))
         for note in server.notes:
             print("  note: %s" % note)
@@ -1821,8 +1855,8 @@ def _render_doctor(report: Any, require_local: bool) -> None:
             print('  LLM(<model>, backend="%s")' % first.provider)
     elif report.live:
         print(
-            "\nServers are up, but none offers an on-device model."
-            "\n  Pull one, e.g. `ollama pull qwen2.5:0.5b`."
+            "\nServers are up; no model has verified on-device execution metadata."
+            "\n  Inspect the server's native model/routing metadata before requiring locality."
         )
 
 
@@ -1938,6 +1972,38 @@ def handle_mcp_command(args: argparse.Namespace) -> None:
         server.close()
 
 
+def handle_logs_command(args: argparse.Namespace) -> None:
+    from .conversation_log import DEFAULT_LOG_PATH, ConversationLog
+
+    path = args.db or DEFAULT_LOG_PATH
+    if not os.path.isfile(path):
+        _fail("Conversation database does not exist: %s" % path)
+    try:
+        with ConversationLog(path) as log:
+            if args.logs_action == "list":
+                if args.limit < 1:
+                    raise ValueError("--limit must be positive.")
+                print(json.dumps(log.get_conversations(args.limit), indent=2))
+            else:
+                print(log.export_conversation(args.id, args.format))
+    except (KeyError, ValueError, OSError) as exc:
+        _fail(str(exc))
+
+
+def handle_hardware_command(args: argparse.Namespace) -> None:
+    from .hardware import get_system_memory, recommend_quantization
+
+    try:
+        result = get_system_memory()
+        if args.params_b is not None:
+            result["recommendation"] = recommend_quantization(
+                args.params_b, args.memory_gb, args.context_length
+            )
+        print(json.dumps(result, indent=2))
+    except ValueError as exc:
+        _fail(str(exc))
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Main CLI entrypoint. Returns a process exit code."""
     parser = build_parser()
@@ -1969,6 +2035,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             return handle_doctor_command(args)
         elif command == "mcp":
             handle_mcp_command(args)
+        elif command == "logs":
+            handle_logs_command(args)
+        elif command == "hardware":
+            handle_hardware_command(args)
         else:
             parser.print_help()
             return 1

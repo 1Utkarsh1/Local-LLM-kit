@@ -1,6 +1,7 @@
 """Find running local LLM servers and report what they can actually do.
 
-Runs offline: it only probes loopback endpoints and never downloads or infers.
+Defaults to loopback metadata probes; extra URLs are explicit. No model downloads.
+The optional --chat flag performs inference.
 If nothing is listening it explains what to start instead of failing.
 
     python examples/discover_servers.py
@@ -73,12 +74,14 @@ def main(argv=None):
                 print("\nReachable but not ready: %s (%s)" % (server.base_url, server.error))
 
     on_device = report.on_device()
+    if args.json and not args.chat:
+        return 0 if (on_device if args.require_local else report.live) else 1
     if not report.live:
         print("\nNo local LLM server answered. Start one, for example:")
         print("  ollama serve && ollama pull qwen2.5:0.5b")
         print("  python examples/discover_servers.py")
     elif not on_device:
-        print("\nServers are up, but none offers a model that runs on this machine.")
+        print("\nServers are up; no model has verified on-device execution metadata.")
     else:
         print("\nOn-device model available on %s" % on_device[0].provider)
 
@@ -90,7 +93,14 @@ def main(argv=None):
             return 1
         model = server.local_models[0]
         print("\nPrompting %r (this loads the model and can take a moment)..." % model.id)
-        llm = LLM(model.id, backend=server.provider, require_local=True)
+        is_ollama = server.provider == "ollama"
+        kwargs = {"host": server.base_url[:-3]} if is_ollama else {"base_url": server.base_url}
+        llm = LLM(
+            model.id,
+            backend="ollama" if is_ollama else "openai-compat",
+            backend_kwargs=kwargs,
+            require_local=True,
+        )
         response = llm.chat(
             [{"role": "user", "content": "Say hello in five words."}], max_tokens=32
         )

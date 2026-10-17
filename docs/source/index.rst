@@ -21,6 +21,7 @@ Welcome to local_llm_kit's documentation!
    api_reference
    examples
    mcp
+   advanced_features
    best_practices
 
 .. toctree::
@@ -37,13 +38,14 @@ Welcome to local_llm_kit's documentation!
 
    contributing
    changelog
+   community_pr_review
 
 Features
 --------
 
 * OpenAI-compatible API interface
 * Local model adapters: Transformers, llama.cpp and optional experimental AirLLM
-* Native Ollama chat and HTTP presets covering 12 local runtimes (see :doc:`backends`)
+* Native Ollama/Apple chat and HTTP runtime presets (see :doc:`backends`)
 * Server discovery and real capability reporting, with an on-device guard (see :doc:`discovery`)
 * Chat completion API
 * Function calling capability

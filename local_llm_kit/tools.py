@@ -22,14 +22,27 @@ Example:
     )
 """
 
+import concurrent.futures
 import inspect
 import json
 import logging
+import math
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from .function_calling import FunctionCall, FunctionRegistry, parse_function_calls
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_tool_timeout(timeout: Optional[float]) -> None:
+    if timeout is not None and (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(timeout)
+        or timeout <= 0
+    ):
+        raise ValueError("tool_timeout must be a finite positive number or None.")
+
 
 _PYTHON_TO_JSON = {
     "str": "string",
@@ -217,6 +230,61 @@ class ToolRegistry(FunctionRegistry):
     def get_tool_list(self) -> List[Dict[str, Any]]:
         """Return registered functions as OpenAI-style ``tools`` list."""
         return [{"type": "function", "function": dict(schema)} for schema in self.get_schema_list()]
+
+    def execute_call(
+        self,
+        call: ToolCall,
+        allowed_names: Optional[List[str]] = None,
+        spec: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = 10.0,
+    ) -> str:
+        """Execute a scoped call; tool failures become bounded error messages."""
+        _validate_tool_timeout(timeout)
+        if allowed_names is not None and call.name not in allowed_names:
+            return "Error: tool '%s' is not available for this request" % call.name
+        if not self.has_function(call.name):
+            return "Error: tool '%s' is not registered" % call.name
+        if not isinstance(call.arguments, dict):
+            return "Error: tool '%s' received invalid arguments (must be an object)" % call.name
+        if spec is not None:
+            params = spec.get("function", spec).get("parameters", {})
+            missing = [r for r in params.get("required", []) if r not in call.arguments]
+            if missing:
+                return "Error: tool '%s' missing required argument(s): %s" % (
+                    call.name,
+                    ", ".join(missing),
+                )
+        try:
+            impl = self.implementations[call.name]
+        except (AttributeError, KeyError):
+            return "Error: tool '%s' has no implementation" % call.name
+        try:
+            if timeout is None:
+                result = impl(**call.arguments)
+            else:
+                # shortcut: timeout bounds waiting, not side effects; use a subprocess
+                # for tools that must be forcibly terminated.
+                pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
+                    future = pool.submit(impl, **call.arguments)
+                    result = future.result(timeout=timeout)
+                finally:
+                    pool.shutdown(wait=False)
+        except concurrent.futures.TimeoutError:
+            return "Error: tool '%s' timed out after %s seconds" % (call.name, timeout)
+        except Exception as exc:  # noqa: BLE001 (tool errors become tool output)
+            logger.warning("Tool '%s' failed: %s", call.name, exc)
+            return "Error: tool '%s' failed (%s: %s)" % (
+                call.name,
+                type(exc).__name__,
+                str(exc)[:200],
+            )
+        if isinstance(result, str):
+            return result
+        try:
+            return json.dumps(result, default=str)
+        except (TypeError, ValueError):  # e.g. circular references
+            return str(result)
 
 
 def normalize_tools(

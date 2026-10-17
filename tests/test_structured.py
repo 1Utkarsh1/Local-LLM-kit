@@ -68,7 +68,7 @@ class TestStructuredJSON(unittest.TestCase):
         # Missing field
         with self.assertRaises(ValueError) as ctx:
             validate_schema({"name": "David"}, schema)
-        self.assertIn("Missing required field: 'age'", str(ctx.exception))
+        self.assertIn("age", str(ctx.exception))
 
     def test_chat_structured_retry_loop(self):
         mock_llm = MagicMock()

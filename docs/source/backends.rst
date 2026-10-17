@@ -8,10 +8,9 @@ not install, launch or reconfigure it.
 Runtime coverage and feature limits
 -----------------------------------
 
-These 14 runtimes cover desktop apps, local files, Apple Silicon, GPU servers
-and offloaded inference. This is a compatibility selection, not a top-ten
-ranking: no comparable active-user measurement has been established.
-llama.cpp's library and server integrations count as one runtime.
+The integrations cover desktop apps, local files, Apple Silicon, GPU servers
+and offloaded inference. This is a compatibility selection; no comparable
+active-user ranking or cross-engine performance claim is established.
 
 .. list-table:: Capability matrix for this client
    :header-rows: 1
@@ -24,7 +23,7 @@ llama.cpp's library and server integrations count as one runtime.
    * - Apple FM (native)
      - In-process SDK (``apple-fm``)
      - Prompted tools/JSON loop; native ``json_schema`` enforcement
-     - data-URL images via temp files; no on-device embedding endpoint
+     - No adapter embedding method
    * - Apfel bridge
      - OpenAI-compatible HTTP
      - Forwarded; native tools + ``json_schema`` server-side
@@ -81,16 +80,9 @@ llama.cpp's library and server integrations count as one runtime.
 All server presets have client routing and payload and HTTP/SSE fixture tests.
 This is protocol validation, not a real-engine or hardware certification.
 Unsupported native tool/schema options may be rejected by the upstream server;
-the client does not silently claim those features were enforced. Native vision
-is forwarded only through the HTTP adapters. In-process adapters currently
-format text; use an HTTP vision model for image inputs.
+the client does not silently claim those features were enforced. Vision parts pass through the HTTP adapters and the native Apple attachment
+adapter where its SDK/OS supports images; other in-process adapters format text.
 
-All server presets have client routing, payload and HTTP/SSE fixture tests.
-This is protocol validation, not a real-engine or hardware certification.
-Unsupported native tool/schema options may be rejected by the upstream server;
-the client does not silently claim those features were enforced. Native vision
-is forwarded only through the HTTP adapters. In-process adapters currently
-format text; use an HTTP vision model for image inputs.
 
 Apple Foundation Models (native backend + apfel bridge)
 -------------------------------------------------------
@@ -120,8 +112,8 @@ framework. Local LLM Kit reaches it two ways:
   Apple Silicon, Apple Intelligence on), which serves OpenAI-compatible
   ``POST /v1/chat/completions`` on ``http://localhost:11434/v1``. The
   preset strips the sampling fields apfel rejects (``top_k``/penalties),
-  rejects prompt-completion calls (apfel answers 501 there; use ``chat()``),
-  and reports no embedding support (apfel answers 501 there too).
+  maps prompt completion to chat (the upstream completions endpoint is absent),
+  and reports no embedding support.
 
 ``python examples/apple_foundation.py`` demonstrates both paths and prints
 setup steps when the model or server is unavailable. Contracts are covered
@@ -288,12 +280,11 @@ rules as the other presets, default ``http://localhost:8000/v1``.
 Transient-failure retries
 -------------------------
 
-The ``ollama`` and ``openai-compat`` backends (including all server presets)
-retry connection errors, timeouts, and HTTP 429/5xx responses on
-non-streaming calls: ``retries=2`` with exponential ``retry_backoff=0.5``
-seconds by default, ``retries=0`` to fail fast, both settable through
-``backend_kwargs``. Streaming calls are never retried (a partial stream
-cannot resume safely).
+The HTTP adapters share ``RetryPolicy``. Set ``backend_kwargs={'max_retries': 0}``
+to fail fast, pass an integer for the retry count, or a RetryPolicy for finite
+delay controls. Selected transient statuses and connection setup failures are
+retried. Streaming retries only connection setup, never already emitted output.
+See :doc:`discovery` for details.
 
 Offline operation and validation scope
 --------------------------------------

@@ -20,10 +20,11 @@ This module provides:
 Python 3.9+ compatible.
 """
 
+import ast
 import json
 import logging
 import re
-from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Type, Union
 
 logger = logging.getLogger(__name__)
 
@@ -36,110 +37,78 @@ _PYTHON_LITERALS = [
     (re.compile(r"\bNone\b"), "null"),
 ]
 _UNQUOTED_KEY_RE = re.compile(r"([,{]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:")
-_SINGLE_QUOTED_STRING_RE = re.compile(r"(?<!\\)'([^'\\]*(?:\\.[^'\\]*)*)'")
 
 
 def repair_json(text: str) -> str:
-    """Repair common syntax defects in local LLM generated JSON strings.
+    """Repair JSON presentation errors without rewriting quoted string values.
 
-    Args:
-        text: Raw text string from an LLM response.
-
-    Returns:
-        Cleaned and normalized JSON string ready for ``json.loads()``.
+    This opt-in output helper is never used to complete executable tool arguments.
+    It can close missing containers, but never invent an unfinished string/value.
     """
     if not isinstance(text, str):
-        raise TypeError(f"repair_json expects string input, got {type(text).__name__}")
-
+        raise TypeError("repair_json expects a string.")
+    if len(text) > 1024 * 1024:
+        raise ValueError("JSON output exceeds the 1 MiB repair limit.")
     s = text.strip()
     if not s:
-        return "{}"
+        raise ValueError("JSON output is empty.")
+    try:
+        json.loads(s)
+        return s
+    except ValueError:
+        pass
+    fence = _CODE_FENCE_RE.search(s)
+    if fence:
+        s = fence.group(1).strip()
+    starts = [i for i in (s.find("{"), s.find("[")) if i >= 0]
+    if not starts:
+        raise ValueError("No JSON object or array was found.")
+    s = s[min(starts) :]
+    # Find the end of the first container, respecting both JSON and Python strings.
+    stack = []
+    quote = None
+    escaped = False
+    for index, char in enumerate(s):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in ('"', "'"):
+            quote = char
+        elif char in "{[":
+            stack.append("}" if char == "{" else "]")
+        elif char in "}]":
+            if not stack or char != stack.pop():
+                raise ValueError("Mismatched JSON containers.")
+            if not stack:
+                s = s[: index + 1]
+                break
+    if quote:
+        raise ValueError("Unterminated JSON string; regenerate the output.")
+    s = s.rstrip() + "".join(reversed(stack))
+    try:
+        return json.dumps(ast.literal_eval(s), allow_nan=False)
+    except (ValueError, SyntaxError, TypeError, RecursionError):
+        pass
+    strings = []
 
-    # 1. Strip markdown code fences if present
-    fence_match = _CODE_FENCE_RE.search(s)
-    if fence_match:
-        s = fence_match.group(1).strip()
+    def hold(match):
+        token = match.group()
+        value = json.loads(token) if token.startswith('"') else ast.literal_eval(token)
+        strings.append(json.dumps(value))
+        return '"@llmk[%d]@"' % (len(strings) - 1)
 
-    # 2. Extract JSON substring if surrounded by conversational text
-    if not (s.startswith("{") or s.startswith("[")):
-        start_brace = s.find("{")
-        start_bracket = s.find("[")
-        if start_brace != -1 and (start_bracket == -1 or start_brace < start_bracket):
-            s = s[start_brace:]
-        elif start_bracket != -1:
-            s = s[start_bracket:]
-
-    # 3. Trim trailing conversational text only after root object/array is fully closed
-    if s.startswith("{") or s.startswith("["):
-        depth = 0
-        in_str = False
-        esc = False
-        root_end = -1
-        for idx, ch in enumerate(s):
-            if ch == '"' and not esc:
-                in_str = not in_str
-            elif not in_str:
-                if ch in ("{", "["):
-                    depth += 1
-                elif ch in ("}", "]"):
-                    depth -= 1
-                    if depth == 0:
-                        root_end = idx
-                        break
-            if ch == "\\" and not esc:
-                esc = True
-            else:
-                esc = False
-        if root_end != -1 and root_end < len(s) - 1:
-            s = s[: root_end + 1]
-
-    # 4. Replace Python literals: True -> true, False -> false, None -> null
+    masked = re.sub(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'", hold, s)
     for pattern, replacement in _PYTHON_LITERALS:
-        s = pattern.sub(replacement, s)
-
-    # 5. Remove trailing commas before closing braces/brackets
-    s = _TRAILING_COMMA_RE.sub(r"\1", s)
-
-    # 6. Convert single-quoted strings to double-quoted JSON strings
-    # Check if string contains single quotes but not double quotes
-    if "'" in s and '"' not in s:
-        s = _SINGLE_QUOTED_STRING_RE.sub(r'"\1"', s)
-    elif "'" in s:
-        # Replace single-quoted dictionary keys: 'key': -> "key":
-        s = re.sub(r"([,{]\s*)'([^'\\]+)'\s*:", r'\1"\2":', s)
-
-    # 7. Quote unquoted alphanumeric object keys: {key: -> {"key":
-    s = _UNQUOTED_KEY_RE.sub(r'\1"\2":', s)
-
-    # 8. Balance unclosed brackets or braces in exact LIFO order
-    s = s.rstrip(", \t\n")
-    if s.count('"') % 2 != 0:
-        s += '"'
-
-    stack: List[str] = []
-    in_str = False
-    esc = False
-    for ch in s:
-        if ch == '"' and not esc:
-            in_str = not in_str
-        elif not in_str:
-            if ch == "{":
-                stack.append("}")
-            elif ch == "[":
-                stack.append("]")
-            elif ch == "}" and stack and stack[-1] == "}":
-                stack.pop()
-            elif ch == "]" and stack and stack[-1] == "]":
-                stack.pop()
-        if ch == "\\" and not esc:
-            esc = True
-        else:
-            esc = False
-
-    if stack:
-        s += "".join(reversed(stack))
-
-    return s
+        masked = pattern.sub(replacement, masked)
+    masked = _TRAILING_COMMA_RE.sub(r"\1", masked)
+    masked = _UNQUOTED_KEY_RE.sub(r'\1"\2":', masked)
+    repaired = re.sub(r'"@llmk\[(\d+)\]@"', lambda match: strings[int(match.group(1))], masked)
+    json.loads(repaired)
+    return repaired
 
 
 def extract_json(text: str) -> Any:
@@ -172,40 +141,36 @@ def extract_json(text: str) -> Any:
 
 
 def validate_schema(data: Any, schema: Union[Dict[str, Any], Type, Callable]) -> None:
-    """Validate parsed JSON data against a JSON schema or Pydantic/dataclass model.
+    """Validate all JSON Schema constraints, or a Pydantic v1/v2 model.
 
-    Raises:
-        ValueError: If validation fails with description of mismatch.
+    Dictionary schemas require the optional ``structured`` extra. Unsupported
+    validators are rejected rather than reported as successful validation.
     """
     if schema is None:
         return
-
-    # 1. Pydantic model (v1 or v2)
-    if hasattr(schema, "model_validate"):  # Pydantic v2
-        try:
-            schema.model_validate(data)
-            return
-        except Exception as exc:
-            raise ValueError(f"Schema validation failed: {exc}") from exc
-    elif hasattr(schema, "parse_obj"):  # Pydantic v1
-        try:
-            schema.parse_obj(data)
-            return
-        except Exception as exc:
-            raise ValueError(f"Schema validation failed: {exc}") from exc
-
-    # 2. JSON Schema dictionary (type: object, required, properties)
     if isinstance(schema, dict):
-        if schema.get("type") == "object":
-            if not isinstance(data, dict):
-                raise ValueError(f"Expected JSON object (dict), got {type(data).__name__}")
-            required = schema.get("required", [])
-            for req in required:
-                if req not in data:
-                    raise ValueError(f"Missing required field: {req!r}")
-        elif schema.get("type") == "array":
-            if not isinstance(data, list):
-                raise ValueError(f"Expected JSON array (list), got {type(data).__name__}")
+        try:
+            from jsonschema import validators
+        except ImportError as exc:
+            raise ImportError(
+                'JSON Schema validation needs pip install "local-llm-kit[structured]".'
+            ) from exc
+        validator_class = validators.validator_for(schema)
+        validator_class.check_schema(schema)
+        from referencing import Registry
+
+        # No automatic remote schema retrieval in an offline helper.
+        error = next(validator_class(schema, registry=Registry()).iter_errors(data), None)
+        if error:
+            raise ValueError("Schema validation failed: %s" % error.message)
+        return
+    validate = getattr(schema, "model_validate", None) or getattr(schema, "parse_obj", None)
+    if not callable(validate):
+        raise TypeError("schema must be a JSON Schema dictionary or a Pydantic model class.")
+    try:
+        validate(data)
+    except Exception as exc:
+        raise ValueError("Schema validation failed: %s" % exc) from exc
 
 
 def chat_structured(
@@ -233,12 +198,33 @@ def chat_structured(
     Raises:
         ValueError: If the model fails to produce valid structured JSON after retries.
     """
-    active_messages = list(messages)
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
+        raise ValueError("max_retries must be a non-negative integer.")
+    if kwargs.get("stream"):
+        raise ValueError("chat_structured requires stream=False.")
+    if not isinstance(messages, (list, tuple)) or any(not isinstance(m, dict) for m in messages):
+        raise TypeError("messages must be a sequence of message dictionaries.")
+    if schema is not None:
+        # Check validator availability/schema validity before running inference.
+        if isinstance(schema, dict):
+            try:
+                from jsonschema import validators
+            except ImportError as exc:
+                raise ImportError(
+                    'Install "local-llm-kit[structured]" for JSON Schema validation.'
+                ) from exc
+            validators.validator_for(schema).check_schema(schema)
+        elif not callable(
+            getattr(schema, "model_validate", None) or getattr(schema, "parse_obj", None)
+        ):
+            raise TypeError("Unsupported schema validator.")
+    active_messages = [dict(m) for m in messages]
 
     # Configure response_format
     req_kwargs = dict(kwargs)
+    req_kwargs.setdefault("execute_tools", False)
     if "response_format" not in req_kwargs:
-        if isinstance(schema, dict) and "properties" in schema:
+        if isinstance(schema, dict):
             req_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"name": "output_schema", "schema": schema},
@@ -259,7 +245,7 @@ def chat_structured(
             if schema:
                 validate_schema(parsed, schema)
             return parsed
-        except Exception as exc:
+        except (ValueError, TypeError) as exc:
             last_error = str(exc)
             logger.warning("Structured output attempt %d failed: %s", attempt + 1, last_error)
             if attempt < max_retries:

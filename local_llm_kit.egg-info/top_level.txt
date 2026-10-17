@@ -1,3 +1,0 @@
-examples
-local_llm_kit
-tests

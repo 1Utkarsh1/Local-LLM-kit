@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Example: Resilient Structured Outputs and Zero-Dependency JSON Auto-Repair.
+"""Example: Resilient Structured Outputs and Opt-In JSON Output Repair.
 
 Demonstrates:
 1. Automated repair of corrupted, malformed, or conversational local model outputs.

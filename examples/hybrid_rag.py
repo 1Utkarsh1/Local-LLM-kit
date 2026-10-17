@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Example: Production-Grade Hybrid RAG with BM25, Dense Embeddings, and RRF.
+"""Example: Small Offline Hybrid RAG with BM25, Dense Embeddings, and RRF.
 
 Demonstrates:
 1. High-level RAGPipeline document ingestion and chunking.
@@ -72,6 +72,7 @@ def main():
     print(f"\nSaved index to {save_path}")
 
     reloaded = SimpleVectorStore.load(save_path, embed_fn=deterministic_embed)
+    os.unlink(save_path)
     print(f"Reloaded store from disk: {len(reloaded)} documents verified.")
 
     # 6. High-level RAGPipeline answering
@@ -80,7 +81,7 @@ def main():
     result = pipeline.query("What causes ERR_CONN_REFUSED?", k=1, mode="hybrid")
     print("\nRAGPipeline Query Output:")
     print(f"Answer: {result['answer']}")
-    print(f"Sources cited: {len(result['sources'])}")
+    print(f"Retrieved sources: {len(result['sources'])}")
 
 
 if __name__ == "__main__":

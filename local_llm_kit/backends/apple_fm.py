@@ -58,11 +58,13 @@ Design notes:
 
 import asyncio
 import base64
+import math
 import os
 import queue
 import sys
 import tempfile
 import threading
+import time
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .base import BaseBackend
@@ -168,6 +170,13 @@ class AppleFMBackend(BaseBackend):
 
         self.model = model or APPLE_MODEL_ID
         self.model_path = self.model
+        if timeout is not None and (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("timeout must be a finite positive number or None.")
         self.timeout = timeout
         self.base_instructions = instructions
         self.use_case = self._normalize_use_case(use_case)
@@ -180,10 +189,18 @@ class AppleFMBackend(BaseBackend):
         self._system_model = system_model
 
         if context_window is not None:
-            self._context_window = int(context_window)
+            if (
+                isinstance(context_window, bool)
+                or not isinstance(context_window, int)
+                or context_window < 1
+            ):
+                raise ValueError("context_window must be a positive integer.")
+            self._context_window = context_window
         else:
             try:
                 self._context_window = int(system_model.context_size)
+                if self._context_window < 1:
+                    self._context_window = _FALLBACK_CONTEXT_WINDOW
             except Exception:
                 self._context_window = _FALLBACK_CONTEXT_WINDOW
 
@@ -281,25 +298,29 @@ class AppleFMBackend(BaseBackend):
         Uses ``asyncio.run`` when no loop is running in this thread
         (the common path, including ``asyncio.to_thread`` workers). When
         called from inside a running loop, the work moves to a helper
-        thread with its own loop so the caller's loop is never blocked
-        or re-entered.
+        thread with its own loop. This synchronous facade still blocks the
+        caller; use LLM.achat() from async code.
         """
+
+        async def bounded():
+            return await asyncio.wait_for(coro_factory(), timeout=self.timeout)
+
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(coro_factory())
+            return asyncio.run(bounded())
 
         box: Dict[str, Any] = {}
 
         def _target() -> None:
             try:
-                box["result"] = asyncio.run(coro_factory())
+                box["result"] = asyncio.run(bounded())
             except BaseException as exc:  # re-raised in the caller thread
                 box["error"] = exc
 
         worker = threading.Thread(target=_target, daemon=True)
         worker.start()
-        worker.join(self.timeout)
+        worker.join(None if self.timeout is None else self.timeout + 0.2)
         if worker.is_alive():
             raise TimeoutError(
                 "Apple Foundation Models request timed out after %s seconds." % (self.timeout,)
@@ -371,13 +392,8 @@ class AppleFMBackend(BaseBackend):
             raise TypeError("prompt must be a string.")
         options = self._options(temperature, max_new_tokens, kwargs.get("seed"))
         stop = kwargs.get("stop")
-        for snapshot in self._stream_snapshots(prompt, options):
-            yield {"text": snapshot}
-        if stop:
-            # Stop sequences truncate the assembled text; per-snapshot
-            # truncation would corrupt the delta stream, so callers that
-            # need early stopping should use generate().
-            pass
+        for delta in _stop_deltas(self._stream_snapshots(prompt, options), stop):
+            yield {"text": delta}
 
     # -- chat API (native sessions) ------------------------------------
 
@@ -434,11 +450,6 @@ class AppleFMBackend(BaseBackend):
         text = _apply_stop(text, stop)
         return {"text": text, "finish_reason": "stop", "model": self.model}
 
-        result = self._run(_call)
-        text = _generated_content_to_text(result)
-        text = _apply_stop(text, stop)
-        return {"text": text, "finish_reason": "stop", "model": self.model}
-
     def chat_stream(
         self,
         messages: List[Dict[str, Any]],
@@ -473,8 +484,8 @@ class AppleFMBackend(BaseBackend):
             return
         with self._materialized(attachments) as objects:
             prompt = _assemble_prompt(parts, objects)
-            for snapshot in self._stream_snapshots(prompt, options, instructions):
-                yield {"text": snapshot}
+            for delta in _stop_deltas(self._stream_snapshots(prompt, options, instructions), stop):
+                yield {"text": delta}
 
     def _chat_prompt(
         self,
@@ -502,6 +513,12 @@ class AppleFMBackend(BaseBackend):
                 continue
             role = str(message.get("role", "user")).capitalize()
             content = message.get("content")
+            if message.get("tool_calls"):
+                import json
+
+                parts.append(("text", "Assistant tool calls: " + json.dumps(message["tool_calls"])))
+            if message.get("role") == "tool":
+                role = "Tool %s" % message.get("name", message.get("tool_call_id", ""))
             if isinstance(content, list):
                 texts: List[str] = []
                 for item in content:
@@ -519,7 +536,14 @@ class AppleFMBackend(BaseBackend):
                 parts.append(("text", "%s: %s" % (role, self.message_text(message))))
         parts.append(("text", "Assistant:"))
         if tools:
-            parts.append(("text", "Available tools (JSON):\n" + _tools_documentation(tools)))
+            parts.append(
+                (
+                    "text",
+                    "Available tools (JSON):\n"
+                    + _tools_documentation(tools)
+                    + '\nTo call a tool, return only {"tool_calls":[{"function":{"name":"tool_name","arguments":{}}}]}. Do not invent tool results.',
+                )
+            )
         instructions = "\n\n".join(system_parts) or None
         return parts, instructions, attachments
 
@@ -541,6 +565,10 @@ class AppleFMBackend(BaseBackend):
                     with os.fdopen(handle, "wb") as stream:
                         stream.write(data)
                     paths.append(path)
+                if paths and not hasattr(self._fm, "ImageAttachment"):
+                    raise NotImplementedError(
+                        "This Apple SDK lacks image attachments; use an SDK/OS with image support."
+                    )
                 yield [self._fm.ImageAttachment(pathlib.Path(path)) for path in paths]
             finally:
                 for path in paths:
@@ -563,46 +591,73 @@ class AppleFMBackend(BaseBackend):
         background callback); snapshots cross over a queue and the caller
         thread diffs them into deltas.
         """
-        inbox: "queue.Queue[Any]" = queue.Queue()
+        inbox: "queue.Queue[Any]" = queue.Queue(maxsize=32)
         sentinel = object()
+        cancelled = threading.Event()
+        state: Dict[str, Any] = {}
 
-        def _target() -> None:
-            async def _consume() -> None:
+        async def enqueue(item):
+            while not cancelled.is_set():
+                try:
+                    inbox.put_nowait(item)
+                    return
+                except queue.Full:
+                    await asyncio.sleep(0.01)
+
+        async def consume():
+            state.update(loop=asyncio.get_running_loop(), task=asyncio.current_task())
+            try:
                 session = self._new_session(instructions)
                 async for snapshot in session.stream_response(prompt, options):
-                    inbox.put(str(snapshot))
-
-            try:
-                asyncio.run(_consume())
-            except BaseException as exc:  # re-raised in the consumer thread
-                inbox.put(exc)
+                    await enqueue(str(snapshot))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                await enqueue(exc)
             finally:
-                inbox.put(sentinel)
+                await enqueue(sentinel)
 
-        worker = threading.Thread(target=_target, daemon=True)
+        def target():
+            try:
+                asyncio.run(consume())
+            except asyncio.CancelledError:
+                pass
+
+        worker = threading.Thread(target=target, daemon=True)
         worker.start()
         previous = ""
-        while True:
-            item = inbox.get()
-            if item is sentinel:
-                break
-            if isinstance(item, BaseException):
-                worker.join()
-                raise item
-            snapshot = str(item)
-            if snapshot.startswith(previous):
+        deadline = None if self.timeout is None else time.monotonic() + self.timeout
+        try:
+            while True:
+                remaining = None if deadline is None else max(0, deadline - time.monotonic())
+                try:
+                    item = inbox.get(timeout=remaining)
+                except queue.Empty:
+                    raise TimeoutError(
+                        "Apple Foundation Models stream exceeded its timeout."
+                    ) from None
+                if item is sentinel:
+                    break
+                if isinstance(item, BaseException):
+                    raise item
+                snapshot = str(item)
+                if not snapshot.startswith(previous):
+                    raise RuntimeError("Apple stream revised text already emitted to the caller.")
                 delta = snapshot[len(previous) :]
-            else:
-                # Snapshot revised earlier text; re-emit rather than drop.
-                delta = snapshot
-            previous = snapshot
-            if delta:
-                yield delta
-        worker.join(self.timeout)
-        if worker.is_alive():
-            raise TimeoutError(
-                "Apple Foundation Models stream timed out after %s seconds." % (self.timeout,)
-            )
+                previous = snapshot
+                if delta:
+                    yield delta
+        finally:
+            cancelled.set()
+            loop, task = state.get("loop"), state.get("task")
+            if loop is not None and task is not None and not task.done():
+                try:
+                    loop.call_soon_threadsafe(task.cancel)
+                except RuntimeError:
+                    pass  # The producer finished while the consumer closed.
+            # shortcut: cancellation is cooperative; SDK code that ignores it
+            # needs a subprocess if hard termination becomes necessary.
+            worker.join(0.2)
 
     # -- introspection --------------------------------------------------
 
@@ -730,6 +785,8 @@ def _parse_image_data_url(url: str) -> Tuple[str, bytes]:
         mime = header[5:].split(";")[0].strip().lower()
         subtype = "".join(c for c in mime.split("/")[-1] if c.isalnum()) or "png"
         suffix = "." + (subtype if subtype in _IMAGE_SUFFIXES else "png")
+        if len(payload) > ((_MAX_IMAGE_BYTES + 2) // 3) * 4:
+            raise ValueError("Inline image exceeds the 20 MiB limit.")
         data = base64.b64decode(payload, validate=True)
     except Exception as exc:
         raise ValueError("Invalid inline image data URL: %s" % (exc,)) from exc
@@ -740,6 +797,32 @@ def _parse_image_data_url(url: str) -> Tuple[str, bytes]:
             "Inline image is %d bytes; the limit is %d bytes." % (len(data), _MAX_IMAGE_BYTES)
         )
     return suffix, data
+
+
+def _stop_deltas(chunks: Iterator[str], stop: Any) -> Iterator[str]:
+    """Hold a suffix so a stop sequence split across chunks never leaks."""
+    stops = [stop] if isinstance(stop, str) else list(stop or [])
+    stops = [marker for marker in stops if isinstance(marker, str) and marker]
+    pending = ""
+    hold = max((len(marker) - 1 for marker in stops), default=0)
+    try:
+        for chunk in chunks:
+            pending += chunk
+            cut = min((pending.find(marker) for marker in stops if marker in pending), default=-1)
+            if cut >= 0:
+                if cut:
+                    yield pending[:cut]
+                return
+            emit = len(pending) - hold
+            if emit > 0:
+                yield pending[:emit]
+                pending = pending[emit:]
+        if pending:
+            yield pending
+    finally:
+        close = getattr(chunks, "close", None)
+        if close:
+            close()
 
 
 def _apply_stop(text: str, stop: Any) -> str:
