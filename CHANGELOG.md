@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Truthful capability reporting.** `OllamaBackend` now reads real model metadata instead of hardcoded defaults: `list_models()` carries the server's `capabilities`, per-model `context_length` and `remote_host`; `detect_capabilities()` reads `POST /api/show` for the true context length and `GET /api/tags` for routing; `supports_vision` reflects the server's capability list. Pass `backend_kwargs={"auto_detect_capabilities": True}` to have `LLM.context_window` use the server value (opt-in, so backend construction never requires a running server; a failed lookup keeps the configured fallback). Measured on Ollama 0.34.2 with `qwen2.5:0.5b`: the adapter reported 4096 tokens and vision support; the server reports 32768 tokens and no vision.
 - **`llama-server` preset port.** llama.cpp changed the `llama-server` default listen port from 8080 to 9931 (ggml-org/llama.cpp#30159, merged 2026-10-09); `OPENAI_SERVER_URLS["llama-server"]` now follows the upstream binary at `http://localhost:9931/v1`. The Docker image still binds 8080 and older builds default to 8080 — pass `backend_kwargs={"base_url": "http://localhost:8080/v1"}` for those, and note that `doctor` probes both ports.
 
+- Apple Foundation Models support, two paths: a native `apple-fm` backend on
+  Apple's official `apple-fm-sdk` (on-device system model; macOS 26+, Xcode 26+,
+  Python 3.10+, Apple Intelligence on; new `apple-fm` extra) with native
+  `json_schema` structured output, client-side tool loop, streaming deltas,
+  data-URL vision via temp-file `ImageAttachment`s, exact `count_tokens_exact`
+  budgeting, and per-request sessions, plus an `apfel` server preset for
+  `apfel --serve` (chat-only, no embeddings endpoint, rejected sampling fields
+  omitted). Ships with `examples/apple_foundation.py`, backend-guide coverage
+  and offline contract tests (`tests/test_apple_fm.py`) plus an opt-in live test.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added

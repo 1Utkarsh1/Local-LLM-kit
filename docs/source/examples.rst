@@ -12,6 +12,8 @@ fully offline and deterministic; it does not measure model quality.
    python examples/rag_minimal.py --backend echo --model echo
    python examples/vision_chat.py --backend echo --model echo
    python examples/openai_compatible.py
+   python examples/apple_foundation.py            # eligible Mac only; else setup steps
+   python examples/apple_foundation.py --bridge   # needs `apfel --serve` running
 
 ``simple_chat.py`` demonstrates streaming and multi-turn calls.
 ``tools_structured.py`` demonstrates modern tools and JSON output.
@@ -19,6 +21,9 @@ fully offline and deterministic; it does not measure model quality.
 ``vision_chat.py`` shows text fallback; a meaningful image answer needs a vision
 model and a supporting HTTP backend. ``openai_compatible.py`` attempts the local
 HTTP server and falls back to echo if it is unavailable.
+``apple_foundation.py`` uses Apple's on-device model natively
+(``--bridge`` uses ``apfel --serve``); both print setup steps instead of
+failing when the model or server is unavailable.
 
 For a prepared Ollama model:
 

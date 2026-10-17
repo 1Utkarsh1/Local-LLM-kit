@@ -17,7 +17,7 @@ authors = [
 maintainers = [
     { name = "Utkarsh Rajput", email = "utkarshrajput815@gmail.com" },
 ]
-keywords = ["llm", "local-llm", "offline-ai", "openai-compatible", "transformers", "llama.cpp", "ollama", "airllm", "sglang", "vllm", "lm-studio", "tool-calling", "structured-output", "rag", "embeddings"]
+keywords = ["llm", "local-llm", "offline-ai", "openai-compatible", "transformers", "llama.cpp", "ollama", "airllm", "apple-foundation-models", "apfel", "sglang", "vllm", "lm-studio", "tool-calling", "structured-output", "rag", "embeddings"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -45,6 +45,12 @@ airllm = [
     "airllm>=2.11,<5",
     "numpy>=1.24.0",
     "mlx>=0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+# Apple on-device Foundation Models (lazy: local_llm_kit.backends.apple_fm).
+# macOS 26+, Apple Intelligence-capable Mac, Xcode 26+ (SDK agreement
+# accepted), Python 3.10+. The marker keeps resolvers off it elsewhere.
+apple-fm = [
+    "apple-fm-sdk>=0.2.1; sys_platform == 'darwin' and python_version >= '3.10'",
 ]
 # HF transformers backend (lazy: local_llm_kit.backends.transformers)
 transformers = [
@@ -86,6 +92,7 @@ rag = [
 # Everything runnable (all runtime extras, excludes dev tooling)
 all = [
     "airllm>=2.11,<5",
+    "apple-fm-sdk>=0.2.1; sys_platform == 'darwin' and python_version >= '3.10'",
     "mlx>=0.12.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "torch>=2.0.0",
     "transformers>=4.41.0",

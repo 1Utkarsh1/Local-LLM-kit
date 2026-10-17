@@ -22,6 +22,18 @@ Capabilities come from each server's own metadata where it exists: Ollama `POST 
 
 Ollama models that a server routes off the machine (a `:cloud` model runs on ollama.com) are flagged as `remote` with their `remote_host`. `LLM(..., require_local=True)` refuses such a model, and raises rather than assuming when routing cannot be verified. `OllamaBackend(..., auto_detect_capabilities=True)` makes `LLM.context_window` use the server's real value.
 
+Backends: echo, transformers, llamacpp, ollama, openai-compat and experimental airllm.
+Native Apple on-device inference: backend "apple-fm" (apple-fm-sdk, macOS 26+,
+Xcode 26+, Python 3.10+, Apple Intelligence on) with native json_schema
+structured output, client-side tool loop, streaming, data-URL vision, and
+exact token counting; or bridge to `apfel --serve` with backend "apfel" (chat-only, no embeddings endpoint,
+top_k/penalty fields omitted). Server presets: sglang, vllm, lmstudio, localai,
+llama-server, jan, gpt4all, mlx-lm, koboldcpp and apfel. These cover 14 distinct
+local runtimes; this is not a usage ranking. A preset connects to an
+already-running server with a served model ID; it does not install or host that
+engine. GPT4All and MLX-LM presets have no embedding endpoint; use a separate
+embedding backend.
+
 ## Boundaries
 
 Capabilities depend on the chosen model/runtime. Protocol tests are not hardware benchmarks. AirLLM call contracts are tested with doubles; real model/GPU execution is not certified, and its stream is buffered. The bundled HTTP server is a development shim. Remote tool execution defaults to off; per-call Python tools are request-scoped. Weights and dependencies must be prepared before offline use. Discovery tests run offline against an HTTP fixture; real-server certification is opt-in via `LOCAL_LLM_KIT_LIVE=1`. These integrations are included in version 0.2.0.

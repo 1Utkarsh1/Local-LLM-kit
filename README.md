@@ -174,6 +174,7 @@ pip install "local-llm-kit[transformers]"                   # HF Transformers
 pip install "local-llm-kit[airllm]"                        # optional AirLLM adapter
 pip install "local-llm-kit[llamacpp]"                       # llama.cpp (GGUF)
 pip install "local-llm-kit[ollama]"                         # Ollama convenience client
+pip install "local-llm-kit[apple-fm]"                       # Apple on-device model (macOS 26+, Python 3.10+)
 pip install "local-llm-kit[server]"                         # `serve` command (FastAPI/uvicorn)
 pip install "local-llm-kit[embeddings]"                     # sentence-transformers, numpy
 pip install "local-llm-kit[rag]"                            # numpy, faiss-cpu, pypdf
@@ -187,11 +188,17 @@ Requires Python 3.9+. The generic `openai-compat` backend (vLLM, LM Studio, llam
 | Backend | `backend=` value | What it runs | Needs | Best for | Vision | Embeddings |
 |---|---|---|---|---|---|---|
 | Echo (mock) | `"echo"` | offline deterministic echo, no model | nothing | tests, CI, docs, offline dev | passes messages through | deterministic stub |
+| Apple FM (native) | `"apple-fm"` | on-device Apple Intelligence system model | `pip install "local-llm-kit[apple-fm]"`; macOS 26+, Xcode 26+, Python 3.10+, Apple Intelligence on | on-device inference, no daemon or downloads | data-URL images via temp files (macOS 27 for understanding) | none on-device |
 | Transformers | `"transformers"` | HF models via `transformers`+`torch` | `pip install "local-llm-kit[transformers]"` | HF text models on GPU/CPU | text adapter | separate embeddings client |
 | AirLLM (experimental adapter) | `"airllm"` | AirLLM offloaded inference | `pip install "local-llm-kit[airllm]"`, prepared weights and suitable hardware | fitting larger models into limited accelerator memory | text only in this adapter | no |
 | llama.cpp | `"llamacpp"` | `.gguf` via `llama-cpp-python` | `pip install "local-llm-kit[llamacpp]"` | quantized local text models | use HTTP server for vision | use HTTP server for embeddings |
 | Ollama | `"ollama"` | models served by `ollama serve` | Ollama daemon | 5-min local setup | model-dependent | `nomic-embed-text` etc. |
 | OpenAI-compatible | `"openai-compat"` | any `POST /v1/chat/completions` server (vLLM, LM Studio, Ollama, llama.cpp server) | server URL | pointing at an existing server | model-dependent | model-dependent |
+
+Apple's on-device model is covered twice: natively via `"apple-fm"`
+(`apple-fm-sdk`, macOS 26+/Xcode 26+/Python 3.10+/Apple Intelligence) and
+without Xcode via the `"apfel"` preset (`apfel --serve`). See
+`examples/apple_foundation.py` and the backend guide.
 
 Auto-detect: `http(s)` model path → `openai-compat`, `ollama:` prefix → `ollama`, `.gguf`/GGML path → `llamacpp`, anything else → `transformers`. Pass `backend=` explicitly for `echo`.
 
@@ -210,8 +217,9 @@ Use a model ID that the running server actually serves. These presets use the sh
 | GPT4All | `"gpt4all"` | `http://127.0.0.1:4891/v1`; enable Local API Server in settings |
 | MLX-LM | `"mlx-lm"` | `http://127.0.0.1:8080/v1`; run `mlx_lm.server` on Apple Silicon |
 | KoboldCpp | `"koboldcpp"` | `http://localhost:5001/v1` |
+| Apfel bridge | `"apfel"` | `http://localhost:11434/v1`; run `apfel --serve` (shares Ollama's port) |
 
-Together with native Ollama, Transformers and AirLLM, these cover **12 distinct local runtimes** (llama.cpp has both in-process and server paths). This is a compatibility selection, not a measured popularity ranking. GPT4All and MLX-LM presets provide text/chat; use a separate embedding backend. Native tools, schemas and vision require explicit upstream/model support. See the [capability matrix and setup references](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/docs/source/backends.rst) before choosing a runtime.
+Together with native Ollama, Transformers and AirLLM, these cover **14 distinct local runtimes** (llama.cpp has both in-process and server paths). This is a compatibility selection, not a measured popularity ranking. GPT4All and MLX-LM presets provide text/chat; use a separate embedding backend. Native tools, schemas and vision require explicit upstream/model support. See the [capability matrix and setup references](https://github.com/1Utkarsh1/Local-LLM-kit/blob/v0.2.0/docs/source/backends.rst) before choosing a runtime.
 
 ```python
 from local_llm_kit import LLM

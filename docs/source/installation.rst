@@ -26,6 +26,7 @@ Select optional dependencies as needed:
    pip install "local-llm-kit[transformers]"
    pip install "local-llm-kit[llamacpp]"
    pip install "local-llm-kit[airllm]"
+   pip install "local-llm-kit[apple-fm]"  # macOS 26+, Xcode 26+, Python 3.10+
    pip install "local-llm-kit[server]"
    pip install "local-llm-kit[embeddings]"
    pip install "local-llm-kit[rag]"

@@ -1,7 +1,7 @@
 """
 Core LLM class with an OpenAI-compatible API over local backends.
 
-Backends: "auto" | "transformers" | "llamacpp" | "ollama" | "openai-compat" | "echo".
+Backends: "auto" | "transformers" | "airllm" | "apple-fm" | "llamacpp" | "ollama" | "openai-compat" | "echo".
 Only the stdlib is imported at module load; heavy backends (transformers,
 llama.cpp, ...) are imported lazily inside ``_init_backend``.
 
@@ -57,6 +57,7 @@ _SUPPORTED_BACKENDS = (
     "auto",
     "transformers",
     "airllm",
+    "apple-fm",
     "llamacpp",
     "ollama",
     "openai-compat",
@@ -266,8 +267,8 @@ class LLM:
     OpenAI-like interface for local language models.
 
     :param model_path: path, HF id, Ollama tag, URL, or "echo".
-    :param backend: "auto" (default), "transformers", "llamacpp", "ollama",
-        "openai-compat", or "echo".
+    :param backend: "auto" (default), "transformers", "airllm", "apple-fm",
+        "llamacpp", "ollama", "openai-compat", or "echo".
     :param backend_instance: pre-built backend object (tests / DI). Skips the
         cache and auto-detection entirely.
     :param use_cache: reuse module-level cached backends for identical
@@ -396,6 +397,18 @@ class LLM:
             from .backends.airllm import AirLLMBackend
 
             return AirLLMBackend(self.model_path, **self.backend_kwargs)
+        if name == "apple-fm":
+            try:
+                from .backends.apple_fm import AppleFMBackend
+
+                return AppleFMBackend(self.model_path, **self.backend_kwargs)
+            except ImportError as exc:
+                raise RuntimeError(
+                    "apple-fm backend needs Apple's Foundation Models SDK "
+                    "(pip install 'local-llm-kit[apple-fm]'). Requires macOS 26+, "
+                    "Xcode 26+ (SDK agreement accepted), Python 3.10+, and Apple "
+                    "Intelligence turned on."
+                ) from exc
         if name == "ollama":
             try:
                 from .backends.ollama import OllamaBackend  # type: ignore
