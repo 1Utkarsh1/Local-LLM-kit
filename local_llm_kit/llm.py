@@ -346,6 +346,8 @@ class LLM:
         # ToolRegistry subclasses FunctionRegistry, so both APIs share one store.
         self.tool_registry = ToolRegistry()
         self.function_registry = self.tool_registry  # backwards-compat alias
+        #: Open MCP server connections registered via :meth:`add_mcp_server`.
+        self._mcp_servers: Dict[str, Any] = {}
 
     # -- backend setup ----------------------------------------------------
     def _init_backend(self, backend_name: Optional[str]) -> BaseBackend:
@@ -495,6 +497,124 @@ class LLM:
     def list_tools(self) -> List[Dict[str, Any]]:
         """Return registered tools in OpenAI ``tools`` format."""
         return self.tool_registry.get_tool_list()
+
+    # -- MCP (Model Context Protocol) -------------------------------------
+    @property
+    def mcp_servers(self) -> Dict[str, Any]:
+        """Mapping of name -> open :class:`local_llm_kit.mcp.MCPServer`."""
+        return dict(self._mcp_servers)
+
+    def add_mcp_server(
+        self,
+        server: Any = None,
+        name: Optional[str] = None,
+        command: Optional[str] = None,
+        args: Optional[List[str]] = None,
+        url: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        cwd: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: float = 30.0,
+        prefix: Union[bool, str, None] = True,
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+    ) -> List[str]:
+        """Connect an MCP server and register its tools on this client.
+
+        Either pass an already-built/open :class:`~local_llm_kit.mcp.MCPServer`
+        as *server*, or the connection details (``command`` for stdio, ``url``
+        for Streamable HTTP). Discovered tools become regular tools usable by
+        :meth:`chat` (including the auto-execution tool loop).
+
+        :param name: server name (required when building from ``command``/``url``);
+            also used as the default tool namespace.
+        :param prefix: ``True`` (default) namespaces tools as ``<server>__<tool>``
+            to avoid collisions across servers; pass a string to choose the
+            namespace, or ``False``/``None`` to keep the raw MCP names.
+        :param include: when set, only these MCP tool names are registered.
+        :param exclude: MCP tool names to skip.
+        :returns: the registered (possibly namespaced) tool names.
+        """
+        from .mcp import MCPServer, sanitize_tool_name
+
+        if server is None:
+            if not name:
+                raise ValueError("add_mcp_server needs a server instance or a name.")
+            server = MCPServer(
+                name,
+                command=command,
+                args=args,
+                url=url,
+                env=env,
+                cwd=cwd,
+                headers=headers,
+                timeout=timeout,
+            )
+        elif name is None:
+            name = getattr(server, "name", None)
+        if getattr(server, "closed", False) or not getattr(server, "_opened", False):
+            server.open()
+        server_name = name or getattr(server, "name", "mcp")
+        namespace = server_name if prefix is True else (prefix or None)
+
+        registered: List[str] = []
+        for tool in server.list_tools():
+            if include is not None and tool.name not in include:
+                continue
+            if exclude is not None and tool.name in exclude:
+                continue
+            qualified = sanitize_tool_name(
+                "%s__%s" % (namespace, tool.name) if namespace else tool.name
+            )
+            spec = tool.to_openai(qualified)
+            schema = dict(spec["function"])
+            self.tool_registry.add_function(
+                name=qualified,
+                schema=schema,
+                implementation=self._mcp_tool_impl(server, tool.name),
+            )
+            registered.append(qualified)
+        self._mcp_servers[server_name] = server
+        logger.info(
+            "Registered %d MCP tool(s) from server %r: %s",
+            len(registered),
+            server_name,
+            ", ".join(registered) or "(none)",
+        )
+        return registered
+
+    @staticmethod
+    def _mcp_tool_impl(server: Any, tool_name: str) -> Callable[..., str]:
+        """Build the tool implementation that forwards to the MCP server."""
+
+        def _call(**kwargs: Any) -> str:
+            return server.call_tool(tool_name, kwargs)
+
+        _call.__name__ = tool_name
+        return _call
+
+    def close(self) -> None:
+        """Close MCP server connections and release backend resources."""
+        for server in list(self._mcp_servers.values()):
+            try:
+                server.close()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                logger.debug(
+                    "Error closing MCP server %r", getattr(server, "name", "?"), exc_info=True
+                )
+        self._mcp_servers.clear()
+        close_backend = getattr(self.backend, "close", None)
+        if callable(close_backend):
+            try:
+                close_backend()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                logger.debug("Error closing backend", exc_info=True)
+
+    def __enter__(self) -> "LLM":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
 
     # -- internal plumbing ------------------------------------------------
     def _now(self) -> int:

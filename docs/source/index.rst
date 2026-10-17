@@ -20,6 +20,7 @@ Welcome to local_llm_kit's documentation!
    models
    api_reference
    examples
+   mcp
    best_practices
 
 .. toctree::
@@ -46,6 +47,7 @@ Features
 * Server discovery and real capability reporting, with an on-device guard (see :doc:`discovery`)
 * Chat completion API
 * Function calling capability
+* MCP (Model Context Protocol) host: discover and call tools from MCP servers
 * Streaming responses
 * JSON mode output
 * Memory management

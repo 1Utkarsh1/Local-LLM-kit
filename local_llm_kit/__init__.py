@@ -22,6 +22,13 @@ from .discovery import (
 )
 from .function_calling import FunctionCall, FunctionRegistry, add_function, parse_function_calls
 from .llm import LLM, clear_backend_cache, clear_client_cache, get_client
+from .mcp import (
+    MCPError,
+    MCPServer,
+    MCPTool,
+    MCPToolError,
+    mcp_tools_to_openai,
+)
 from .tools import (
     ToolCall,
     ToolRegistry,
@@ -37,6 +44,11 @@ __all__ = [
     "get_client",
     "clear_backend_cache",
     "clear_client_cache",
+    "MCPServer",
+    "MCPTool",
+    "MCPError",
+    "MCPToolError",
+    "mcp_tools_to_openai",
     "chat",
     "complete",
     "embed",
