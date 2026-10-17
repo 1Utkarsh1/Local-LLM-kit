@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "local-llm-kit"
 # Single-sourced: resolved at build time from local_llm_kit/__init__.py
-# (__version__ = "0.2.0"). Do NOT duplicate the version string here.
+# (__version__). Do NOT duplicate the version string here.
 dynamic = ["version"]
 description = "One Python API for offline LLMs and local servers: Ollama, AirLLM, SGLang, vLLM, LM Studio and llama.cpp"
 readme = "README.md"
@@ -143,7 +143,7 @@ where = ["."]
 include = ["local_llm_kit*"]
 namespaces = false
 
-# Version is single-sourced from local_llm_kit/__init__.py:__version__ (= "0.2.0").
+# Version is single-sourced from local_llm_kit/__init__.py:__version__.
 [tool.setuptools.dynamic]
 version = { attr = "local_llm_kit.__version__" }
 

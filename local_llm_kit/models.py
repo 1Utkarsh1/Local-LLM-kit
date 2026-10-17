@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
+from . import __version__
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -308,7 +310,7 @@ def _download_url(url: str, dest_path: str, chunk_size: int = 1024 * 1024) -> st
     if parent:
         os.makedirs(parent, exist_ok=True)
     part = None
-    req = urllib.request.Request(url, headers={"User-Agent": "local-llm-kit/0.2.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "local-llm-kit/" + __version__})
     try:
         with (
             urllib.request.urlopen(req, timeout=30) as resp,

@@ -6,10 +6,12 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
+from local_llm_kit import __version__
+
 project = "Local_LLM_Kit"
 copyright = "2025, Utkarsh Rajput"
 author = "Utkarsh Rajput"
-release = "0.2.0"
+release = __version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

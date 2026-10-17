@@ -9,7 +9,7 @@ Core install stays light (stdlib + typing-extensions); heavy dependencies
 are optional extras, lazily imported.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .chat import achat, acomplete, chat, complete, embed
 from .discovery import (
