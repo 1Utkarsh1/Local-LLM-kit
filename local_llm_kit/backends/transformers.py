@@ -2,6 +2,8 @@
 Hugging Face Transformers backend for model inference.
 """
 
+from __future__ import annotations
+
 import logging
 import queue
 import threading
@@ -182,8 +184,7 @@ class TransformersBackend(BaseBackend):
             return result
 
         # Prepare inputs
-        inputs = self.tokenizer(prompt, return_tensors="pt")
-        input_ids = inputs["input_ids"].to(self.device)
+        input_ids = self._prepare_input_ids(prompt, max_new_tokens)
 
         # Prepare generation config
         gen_kwargs = {
@@ -248,11 +249,12 @@ class TransformersBackend(BaseBackend):
             )
 
         # Prepare inputs
-        inputs = self.tokenizer(prompt, return_tensors="pt")
-        input_ids = inputs["input_ids"].to(self.device)
+        input_ids = self._prepare_input_ids(prompt, max_new_tokens)
 
         # Create streamer
-        streamer = TextIteratorStreamer(self.tokenizer, skip_special_tokens=True, timeout=10.0)
+        streamer = TextIteratorStreamer(
+            self.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=10.0
+        )
 
         # Prepare generation config
         gen_kwargs = {
@@ -291,8 +293,9 @@ class TransformersBackend(BaseBackend):
             streamer.put = put_with_scores
 
         # Start generation in a separate thread
+        errors = queue.Queue()
         generation_thread = threading.Thread(
-            target=self._generate_in_thread, args=(self.model, input_ids, gen_kwargs)
+            target=self._generate_in_thread, args=(self.model, input_ids, gen_kwargs, errors)
         )
         generation_thread.start()
 
@@ -301,11 +304,10 @@ class TransformersBackend(BaseBackend):
         scores_list = []
 
         # Stream output tokens
-        last_text = ""
         for new_text in streamer:
-            # Extract delta text (only the new part)
-            delta_text = new_text[len(last_text) :]
-            last_text = new_text
+            if not errors.empty():
+                raise errors.get_nowait()
+            delta_text = new_text
 
             # Get token ids for this chunk
             if logprobs:
@@ -335,21 +337,31 @@ class TransformersBackend(BaseBackend):
 
             yield chunk
 
-    def _generate_in_thread(self, model, input_ids, gen_kwargs):
+        generation_thread.join()
+        if not errors.empty():
+            raise errors.get_nowait()
+
+    def _prepare_input_ids(self, prompt: str, max_new_tokens: int):
+        input_ids = self.tokenizer(prompt, return_tensors="pt", truncation=False)["input_ids"]
+        prompt_tokens = len(input_ids[0])
+        context_window = self.get_context_window()
+        if prompt_tokens + max_new_tokens > context_window:
+            raise ValueError(
+                "Prompt (%d tokens) plus requested output (%d tokens) exceeds context window "
+                "(%d tokens); shorten the prompt or reduce max_tokens."
+                % (prompt_tokens, max_new_tokens, context_window)
+            )
+        return input_ids.to(self.device)
+
+    def _generate_in_thread(self, model, input_ids, gen_kwargs, errors):
         """Helper method to run model generation in a separate thread."""
         try:
             with torch.no_grad():
                 model.generate(input_ids, **gen_kwargs)
         except Exception as e:
             logger.error(f"Error in generation thread: {e}")
-            # Try to put error in streamer
-            streamer = gen_kwargs.get("streamer")
-            if streamer:
-                try:
-                    streamer.put(f"[ERROR: {e}]")
-                    streamer.end()
-                except Exception:
-                    pass
+            errors.put(e)
+            gen_kwargs["streamer"].on_finalized_text("", stream_end=True)
 
     def _extract_logprobs(
         self, token_ids: torch.Tensor, scores: Tuple[torch.Tensor], top_n: Optional[int] = None

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Transformers checks the tokenized prompt plus requested output against its context window before generation, including chat and streaming. Oversized requests raise a descriptive `ValueError` instead of reaching position-embedding failures.
+- Transformers streaming now propagates worker exceptions to the consumer, preserves successive text deltas and excludes the input prompt. Optional-dependency imports no longer fail while evaluating torch type annotations.
+
 ## [0.3.0] - 2026-10-17
 
 ### Added
