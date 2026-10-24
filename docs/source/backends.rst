@@ -273,6 +273,13 @@ models, or ``backend="llamacpp"`` with the ``llamacpp`` extra for local GGUF fil
 Tool calls and JSON output use the kit's prompt formatting unless the backend
 implements a native capability. Prompted JSON is not a schema-enforcement guarantee.
 
+The development version after 0.3.0 checks the tokenized Transformers prompt
+plus the requested output budget against the model's reported context window.
+Oversized chat and completion requests raise ``ValueError`` before model
+generation starts, including streaming requests. Shorten the prompt or reduce
+``max_tokens``; input is not silently truncated. Generation-worker errors are
+raised by the stream consumer rather than emitted as successful text.
+
 The ``transformers-serve`` preset connects to a running ``transformers serve``
 instance instead of loading weights in-process: same adapter, same model ID
 rules as the other presets, default ``http://localhost:8000/v1``.
