@@ -59,7 +59,7 @@ class TextStreamer:
         return self
 
     def __next__(self):
-        value = self.items.get(timeout=0.2)
+        value = self.items.get(timeout=2)
         if value is None:
             raise StopIteration
         return value
