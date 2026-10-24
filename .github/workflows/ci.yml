@@ -49,7 +49,7 @@ jobs:
         if: matrix.python-version == '3.12'
         run: |
           pip install -e .[server] httpx numpy
-          pytest tests/test_server.py
+          pytest tests/test_server.py tests/test_server_concurrency.py
 
       - name: Official SDK interoperability
         if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest'

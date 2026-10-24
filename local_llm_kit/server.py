@@ -40,6 +40,7 @@ import hashlib
 import inspect
 import json
 import math
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -659,25 +660,27 @@ def create_app(
         ) from exc
 
     state = {"llm": llm}  # mutable holder so tests can swap llm after creation
+    model_lock = threading.Lock()
 
     def _get_llm() -> Any:
-        if state["llm"] is not None:
-            return state["llm"]
-        nonlocal_model_path = model_path
-        if nonlocal_model_path is None:
-            if (backend or "").lower() in ("echo", "mock"):
-                # Model-free backends work without a model id.
-                nonlocal_model_path = (backend or "echo").lower()
-            else:
-                raise RuntimeError(
-                    "No LLM available: pass llm=... or model_path=... to create_app()."
-                )
-        # Lazy import: keeps `import local_llm_kit.server` light and avoids
-        # pulling heavy backends (torch/llama.cpp) until first request.
-        from .llm import LLM
+        with model_lock:
+            if state["llm"] is not None:
+                return state["llm"]
+            nonlocal_model_path = model_path
+            if nonlocal_model_path is None:
+                if (backend or "").lower() in ("echo", "mock"):
+                    # Model-free backends work without a model id.
+                    nonlocal_model_path = (backend or "echo").lower()
+                else:
+                    raise RuntimeError(
+                        "No LLM available: pass llm=... or model_path=... to create_app()."
+                    )
+            # Lazy import: keeps `import local_llm_kit.server` light and avoids
+            # pulling heavy backends (torch/llama.cpp) until first request.
+            from .llm import LLM
 
-        state["llm"] = LLM(model_path=nonlocal_model_path, backend=backend, **llm_kwargs)
-        return state["llm"]
+            state["llm"] = LLM(model_path=nonlocal_model_path, backend=backend, **llm_kwargs)
+            return state["llm"]
 
     def _model_id() -> str:
         if state["llm"] is not None:
@@ -764,7 +767,7 @@ def create_app(
             return _error("'messages' must be a non-empty list.")
 
         try:
-            llm_obj = _get_llm()
+            llm_obj = await asyncio.to_thread(_get_llm)
         except RuntimeError as exc:
             return _error(str(exc), status=503, err_type="server_error")
 
@@ -805,7 +808,9 @@ def create_app(
 
         if not stream:
             try:
-                result = _call_llm_chat(llm_obj, dict(chat_kwargs, stream=False))
+                result = await asyncio.to_thread(
+                    _call_llm_chat, llm_obj, dict(chat_kwargs, stream=False)
+                )
             except Exception as exc:
                 return _error("Chat failed: %s" % exc, status=500, err_type="server_error")
             try:
@@ -877,7 +882,7 @@ def create_app(
             return _error("'prompt' must be a non-empty string.")
 
         try:
-            llm_obj = _get_llm()
+            llm_obj = await asyncio.to_thread(_get_llm)
         except RuntimeError as exc:
             return _error(str(exc), status=503, err_type="server_error")
 
@@ -899,7 +904,9 @@ def create_app(
 
         if not stream:
             try:
-                result = _call_llm_complete(llm_obj, dict(complete_kwargs, stream=False))
+                result = await asyncio.to_thread(
+                    _call_llm_complete, llm_obj, dict(complete_kwargs, stream=False)
+                )
             except Exception as exc:
                 return _error("Completion failed: %s" % exc, status=500, err_type="server_error")
             if isinstance(result, dict):
@@ -1011,7 +1018,7 @@ def create_app(
         except (TypeError, ValueError) as exc:
             return _error(str(exc))
         try:
-            llm_obj = _get_llm()
+            llm_obj = await asyncio.to_thread(_get_llm)
         except RuntimeError as exc:
             return _error(str(exc), status=503, err_type="server_error")
         model = _model_id()
@@ -1083,7 +1090,7 @@ def create_app(
             return _error("'input' must be non-empty.")
 
         try:
-            llm_obj = _get_llm()
+            llm_obj = await asyncio.to_thread(_get_llm)
         except RuntimeError:
             llm_obj = None
         requested_model = body.get("model") or _model_id()
@@ -1091,11 +1098,11 @@ def create_app(
         vectors = None
         if llm_obj is not None:
             try:
-                vectors = _try_get_embeddings(llm_obj, texts)
+                vectors = await asyncio.to_thread(_try_get_embeddings, llm_obj, texts)
             except Exception:
                 vectors = None
         if vectors is None:
-            vectors = [_pseudo_embedding(t) for t in texts]
+            vectors = await asyncio.to_thread(lambda: [_pseudo_embedding(t) for t in texts])
 
         prompt_tokens = sum(len(t.split()) for t in texts)
         return {

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Transformers checks the tokenized prompt plus requested output against its context window before generation, including chat and streaming. Oversized requests raise a descriptive `ValueError` instead of reaching position-embedding failures.
 - Transformers streaming now propagates worker exceptions to the consumer, preserves successive text deltas and excludes the input prompt. Optional-dependency imports no longer fail while evaluating torch type annotations.
+- Chat, legacy completion and embedding requests no longer run synchronous inference on the FastAPI event loop. Lazy model loading also runs in a worker and is initialized once across concurrent first requests; health checks remain responsive during blocking work (issue #18).
 
 ## [0.3.0] - 2026-10-17
 
