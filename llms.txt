@@ -4,13 +4,18 @@
 
 ## Status
 
-Release 0.3.0 includes discovery, Apple FM, MCP, agents, validated structured output, hybrid retrieval, logging, hardware advice and Responses. Install or upgrade with `python -m pip install --upgrade local-llm-kit`. These additions were not shipped in 0.2.0.
+Release 0.3.1 includes the discovery, Apple FM, MCP, agents, validated structured output, hybrid retrieval, logging, hardware advice and Responses APIs introduced in 0.3.0, plus the fixes below. Install or upgrade with `python -m pip install --upgrade local-llm-kit`.
 
 ## API and fit
 
 Use when an application needs an OpenAI-shaped Python chat/completion API across local runtimes, request-scoped tools, an offline echo fixture, or small retrieval helpers. Example: `LLM('echo', backend='echo').chat([{'role':'user','content':'Hi'}])`; answer text is `response['choices'][0]['message']['content']`.
 
 In-process adapters: transformers, llamacpp, experimental airllm, native apple-fm. HTTP: native ollama and OpenAI-compatible presets vllm, sglang, lmstudio, localai, llama-server, jan, gpt4all, mlx-lm, koboldcpp, transformers-serve, apfel. Generic servers use openai-compat with base_url. A preset connects to an already-running engine; it does not host or install it. Features depend on the chosen model/runtime. These are compatibility options, not a usage ranking.
+
+## Fixes in 0.3.1
+
+- In-process Transformers validates tokenized prompt plus requested output against the reported context window before generation, including streams. Oversized requests raise ValueError; input is not silently truncated. Worker errors propagate to the consumer, text deltas are preserved and prompts are excluded from streamed output.
+- The HTTP server offloads synchronous chat, completion, embeddings and lazy loading to workers. Concurrent first requests construct one model. This keeps the event loop responsive; it does not guarantee backend thread safety or real-model throughput, and cancellation does not terminate an active worker.
 
 ## Additions in 0.3.0
 
@@ -31,7 +36,7 @@ Core stays light. Native inference dependencies are optional and prepared weight
 ## References
 
 - [Repository and quickstart](https://github.com/1Utkarsh1/Local-LLM-kit)
-- [Released 0.3.0 API](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.3.0)
+- [Released 0.3.1 API](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.3.1)
 - [Backend compatibility](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/backends.rst)
 - [API reference](https://github.com/1Utkarsh1/Local-LLM-kit/blob/main/docs/source/api_reference.rst)
 - [Examples](https://github.com/1Utkarsh1/Local-LLM-kit/tree/main/examples)

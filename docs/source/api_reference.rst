@@ -143,7 +143,7 @@ validates generation options, forwards structured-output formats and preserves
 native embedding vectors. Remote tool execution defaults to disabled and requires
 an explicit ``execute_tools=true`` request.
 
-The development version after 0.3.0 runs synchronous inference, embeddings and
+Version 0.3.1 and newer runs synchronous inference, embeddings and
 lazy model loading in worker threads. Concurrent first requests construct one
 model, and slow inference leaves the event loop available to health checks.
 Streaming still uses synchronous iterators in workers. This does not add model

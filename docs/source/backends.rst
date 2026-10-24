@@ -273,7 +273,7 @@ models, or ``backend="llamacpp"`` with the ``llamacpp`` extra for local GGUF fil
 Tool calls and JSON output use the kit's prompt formatting unless the backend
 implements a native capability. Prompted JSON is not a schema-enforcement guarantee.
 
-The development version after 0.3.0 checks the tokenized Transformers prompt
+Transformers in 0.3.1 and newer checks the tokenized prompt
 plus the requested output budget against the model's reported context window.
 Oversized chat and completion requests raise ``ValueError`` before model
 generation starts, including streaming requests. Shorten the prompt or reduce
