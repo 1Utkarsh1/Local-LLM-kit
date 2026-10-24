@@ -5,7 +5,7 @@ Install and run offline
 -----------------------
 
 The core package needs no GPU or model download. The examples here target
-Local LLM Kit 0.3.0 or newer.
+Local LLM Kit 0.3.1 or newer.
 
 .. code-block:: bash
 

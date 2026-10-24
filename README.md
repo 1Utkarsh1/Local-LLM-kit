@@ -9,15 +9,17 @@ Use OpenAI-shaped chat, streaming, tools and structured output while choosing
 where your model runs. The core install needs only `typing-extensions`; model
 engines and validation packages are optional.
 
-**Release 0.3.0** includes native Apple FM,
+**Release 0.3.1** includes native Apple FM,
 MCP, discovery, Responses, agents, hybrid retrieval, logging and the hardware
-advisor. Install or upgrade from PyPI:
+advisor. This patch fixes Transformers context and streaming handling, and keeps
+blocking server inference and model loading off the event loop. Install or
+upgrade from PyPI:
 
 ```bash
 python -m pip install --upgrade local-llm-kit
 ```
 
-For the released API, use the [0.3.0 documentation](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.3.0).
+For the released API, use the [0.3.1 documentation](https://github.com/1Utkarsh1/Local-LLM-kit/tree/v0.3.1).
 No API key is needed for local inference. Prepare your engine, dependencies and
 model weights before disconnecting from the internet.
 
