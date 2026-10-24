@@ -1,0 +1,29 @@
+{
+  "backend": "ollama",
+  "model": "qwen3.8:27b",
+  "input": "vision-input-red.png",
+  "passed": true,
+  "seconds": 9.878116007021163,
+  "response": {
+    "id": "chatcmpl-ae1e7cc4fc1a40bf92ed2ae7",
+    "object": "chat.completion",
+    "created": 1792858268,
+    "model": "qwen3.8:27b",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": " Red"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 38,
+      "completion_tokens": 2,
+      "total_tokens": 40
+    }
+  },
+  "limit": "One solid-color synthetic image; not a general vision benchmark."
+}

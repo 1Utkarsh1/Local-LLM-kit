@@ -269,6 +269,10 @@ class OllamaBackend(BaseBackend):
         return {
             "text": resp.get("response", ""),
             "finish_reason": resp.get("done_reason", "stop"),
+            "usage": {
+                "prompt_tokens": resp.get("prompt_eval_count"),
+                "completion_tokens": resp.get("eval_count"),
+            },
             "model": self.model,
             "raw": resp,
         }
@@ -367,6 +371,10 @@ class OllamaBackend(BaseBackend):
             "thinking": message.get("thinking"),
             "tool_calls": message.get("tool_calls"),
             "finish_reason": resp.get("done_reason", "stop"),
+            "usage": {
+                "prompt_tokens": resp.get("prompt_eval_count"),
+                "completion_tokens": resp.get("eval_count"),
+            },
             "model": self.model,
             "raw": resp,
         }

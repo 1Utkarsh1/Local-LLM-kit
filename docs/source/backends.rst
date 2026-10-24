@@ -259,8 +259,11 @@ sampling controls depend on the PyTorch path. This is a text adapter, with no
 native embedding or vision implementation.
 
 Offline unit tests cover loading, device forwarding, output shapes, stopping,
-context limits and both upstream call contracts with doubles. Real checkpoint,
-CUDA and MLX execution have not been certified. AirLLM models may execute
+context limits and both upstream call contracts with doubles. AirLLM 4.0.0 with
+TinyLlama 1.1B passed three real CUDA checks on an A100 80 GB on 2026-10-25:
+completion, buffered streaming and context rejection. See the
+`recorded validation evidence <https://github.com/1Utkarsh1/Local-LLM-kit/tree/main/benchmarks/2026-10-25-a100>`_.
+Larger checkpoints and the MLX path were not run. AirLLM models may execute
 model-supplied code and need substantial disk space for prepared layer shards.
 Use trusted checkpoints, and follow `AirLLM's hardware and installation guide
 <https://github.com/lyogavin/airllm>`_.

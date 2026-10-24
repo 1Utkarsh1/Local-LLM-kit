@@ -5,6 +5,18 @@ Most inference cost belongs to the selected engine and model. The kit is a
 client/interface layer and does not establish throughput or memory advantages
 for a particular runtime. Protocol tests use fixtures, not model benchmarks.
 
+Recorded GPU validation
+-----------------------
+
+The `2026-10-25 A100 80 GB evidence bundle
+<https://github.com/1Utkarsh1/Local-LLM-kit/tree/main/benchmarks/2026-10-25-a100>`_
+contains real model checks, warm loopback HTTP measurements, exact model
+revisions, software manifests, scripts, failures and passing regressions.
+Each measured engine is a separate configuration; quantization and scheduling
+differ. These small runs establish reproducibility and compatibility for the
+listed combinations. They do not establish comparative model quality, cold-start
+performance or superiority over another library.
+
 Avoid repeated loading
 ----------------------
 

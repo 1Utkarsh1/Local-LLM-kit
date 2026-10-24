@@ -23,6 +23,24 @@ For the released API, use the [0.3.1 documentation](https://github.com/1Utkarsh1
 No API key is needed for local inference. Prepare your engine, dependencies and
 model weights before disconnecting from the internet.
 
+## Recorded GPU validation
+
+The [25 October 2026 validation bundle](benchmarks/2026-10-25-a100/README.md)
+records real model runs on an **NVIDIA A100 80 GB**: Qwen3.8-27B through vLLM,
+SGLang, Ollama and native llama.cpp, plus TinyLlama 1.1B through Transformers
+and AirLLM. It includes raw responses and logs, exact model revisions, package
+versions, reproduction scripts, benchmark samples and before/after bug evidence.
+
+![Captured validation report, generated from the saved JSON and logs](benchmarks/2026-10-25-a100/images/validation-report.jpg)
+
+The tested source is **v0.3.1 plus the recorded fixes**; see
+[the source patch](benchmarks/2026-10-25-a100/source-fixes.patch) and
+[Unreleased changes](CHANGELOG.md#unreleased). Warm HTTP measurements cover short,
+repeated prompts on one GPU. Engine settings and quantization differ, so these
+results establish the listed compatibility and measurements without ranking
+engines or claiming better model quality. Untested runtimes and features are
+listed with the evidence.
+
 ## Start with a local model
 
 Start [Ollama](https://github.com/ollama/ollama), then download a model once:

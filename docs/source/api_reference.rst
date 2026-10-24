@@ -34,6 +34,12 @@ with ``llm.add_function(name, schema, implementation)``.
 ``LLM.embed`` accepts a string or a list of strings and requires an embedding
 backend. The echo backend returns deterministic test vectors.
 
+Non-streaming chat and completion responses preserve valid engine-reported
+``usage`` counters. Chat tool loops sum prompt and completion counts across
+generation rounds. When the engine omits valid counters, the client falls back
+to its backend's token estimate. Streaming usage remains estimated; do not use
+those estimates to measure engine throughput.
+
 Set ``stream=True`` on chat or completion to receive an iterator. Chat chunks
 carry ``choices[0].delta``; text-completion chunks carry ``choices[0].text``.
 AirLLM streaming is buffered into one completed backend chunk.

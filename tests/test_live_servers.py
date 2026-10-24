@@ -159,7 +159,9 @@ class TestRealInferenceOnDevice(unittest.TestCase):
 
     def test_chat_round_trip(self):
         response = self.llm.chat(
-            [{"role": "user", "content": "Reply with the single word: OK"}], max_tokens=16
+            [{"role": "user", "content": "Reply with the single word: OK"}],
+            max_tokens=16,
+            think=False,  # Keep the short smoke-test budget for visible output.
         )
         content = response["choices"][0]["message"]["content"]
         self.assertTrue(content.strip(), "model returned empty content")
@@ -170,7 +172,10 @@ class TestRealInferenceOnDevice(unittest.TestCase):
     def test_streaming_round_trip(self):
         pieces = []
         for chunk in self.llm.chat(
-            [{"role": "user", "content": "Count to three."}], max_tokens=24, stream=True
+            [{"role": "user", "content": "Count to three."}],
+            max_tokens=24,
+            stream=True,
+            think=False,
         ):
             pieces.append(chunk["choices"][0]["delta"].get("content") or "")
         self.assertTrue("".join(pieces).strip())

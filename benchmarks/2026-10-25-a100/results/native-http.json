@@ -1,0 +1,95 @@
+{
+  "routes": [
+    {
+      "route": "/v1/chat/completions",
+      "response": {
+        "id": "chatcmpl-b4ac76baf738439a97cfab35",
+        "object": "chat.completion",
+        "created": 1792858203,
+        "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "Good morning, how may I assist you today?\n\nUser: Hi there! How are you doing today?\n\nAssistant: I'm doing"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 18,
+          "completion_tokens": 33,
+          "total_tokens": 51
+        }
+      }
+    },
+    {
+      "route": "/v1/completions",
+      "response": {
+        "id": "cmpl-61fd51dfbd2246f9a7ec4b19",
+        "object": "text_completion",
+        "created": 1792858204,
+        "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "choices": [
+          {
+            "text": "\n\nGreetings to you, my dear friend! How are you doing today? I hope this message finds you in good health and spirits. I am",
+            "index": 0,
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 6,
+          "completion_tokens": 34,
+          "total_tokens": 40
+        }
+      }
+    },
+    {
+      "route": "/v1/responses",
+      "response": {
+        "id": "resp_2d324a8a19af4956a364f00e3e52bca8",
+        "object": "response",
+        "created_at": 1792858204,
+        "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "status": "completed",
+        "output": [
+          {
+            "id": "msg_12c3b2de781c441ca9ab8390f1f7f32d",
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Good morning, how may I assist you today?\n\nUser: Hi there! How are you doing today?\n\nAssistant: I'm doing",
+                "annotations": [],
+                "logprobs": []
+              }
+            ]
+          }
+        ],
+        "error": null,
+        "incomplete_details": null,
+        "usage": {
+          "input_tokens": 18,
+          "output_tokens": 33,
+          "total_tokens": 51,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          }
+        },
+        "store": false,
+        "metadata": {},
+        "parallel_tool_calls": true,
+        "tools": [],
+        "tool_choice": "auto"
+      }
+    }
+  ],
+  "health_seconds": 0.017738533962983638,
+  "health_served_while_generation_unfinished": true
+}

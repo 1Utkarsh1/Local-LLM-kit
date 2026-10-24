@@ -1,0 +1,9 @@
+{
+  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "torch": "2.8.0+cu128",
+  "transformers": "5.20.2",
+  "kit": "0.3.1",
+  "context_window": 2048,
+  "load_seconds": 1.6114200199954212,
+  "gpu": "NVIDIA A100-SXM4-80GB"
+}

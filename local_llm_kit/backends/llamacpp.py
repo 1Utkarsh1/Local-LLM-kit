@@ -26,6 +26,8 @@ class LlamaCppBackend(BaseBackend):
     Backend for llama.cpp models via llama-cpp-python binding.
     """
 
+    backend_name = "llamacpp"
+
     def __init__(
         self,
         model_path: str,

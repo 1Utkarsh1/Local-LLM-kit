@@ -1,0 +1,41 @@
+
+[live] probed 12 endpoints in 427.9ms; live: ['http://127.0.0.1:11434/v1']
+...
+[live] http://127.0.0.1:11434/v1 -> ollama
+u.u.s.
+[live] qwen3.8:27b: adapter now reports ctx=262144 (was hardcoded 4096); capabilities=['completion', 'vision', 'tools', 'thinking']
+.F..Fs..
+=================================== FAILURES ===================================
+________________ TestRealInferenceOnDevice.test_chat_round_trip ________________
+
+self = <tests.test_live_servers.TestRealInferenceOnDevice testMethod=test_chat_round_trip>
+
+    def test_chat_round_trip(self):
+        response = self.llm.chat(
+            [{"role": "user", "content": "Reply with the single word: OK"}], max_tokens=16
+        )
+        content = response["choices"][0]["message"]["content"]
+>       self.assertTrue(content.strip(), "model returned empty content")
+E       AssertionError: '' is not true : model returned empty content
+
+tests/test_live_servers.py:165: AssertionError
+_____________ TestRealInferenceOnDevice.test_streaming_round_trip ______________
+
+self = <tests.test_live_servers.TestRealInferenceOnDevice testMethod=test_streaming_round_trip>
+
+    def test_streaming_round_trip(self):
+        pieces = []
+        for chunk in self.llm.chat(
+            [{"role": "user", "content": "Count to three."}], max_tokens=24, stream=True
+        ):
+            pieces.append(chunk["choices"][0]["delta"].get("content") or "")
+>       self.assertTrue("".join(pieces).strip())
+E       AssertionError: '' is not true
+
+tests/test_live_servers.py:176: AssertionError
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_live_servers.py:131: this server lists no provider-routed models
+SKIPPED [1] tests/test_live_servers.py:194: no provider-routed model is available to refuse
+FAILED tests/test_live_servers.py::TestRealInferenceOnDevice::test_chat_round_trip
+FAILED tests/test_live_servers.py::TestRealInferenceOnDevice::test_streaming_round_trip
+2 failed, 11 passed, 2 skipped, 2 subtests passed in 13.40s

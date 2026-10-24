@@ -1,0 +1,59 @@
+{
+  "same_generated_token_ids": true,
+  "normal": "```python\ndef add_numbers(num1, num2):\n    return num1 + num2\n```\n\n3. Implement a function",
+  "stream": "```python\ndef add_numbers(num1, num2):\n   return num1 + num2\n```\n\n3. Implement a function",
+  "stream_no_cleanup": "```python\ndef add_numbers(num1, num2):\n   return num1 + num2\n```\n\n3. Implement a function",
+  "same_ids_no_cleanup": true,
+  "anchored_stream": "```python\ndef add_numbers(num1, num2):\n    return num1 + num2\n```\n\n3. Implement a function",
+  "anchor_preserves_generation": true,
+  "token_replay": [
+    {
+      "sample": "def add(a, b):\n    return a+b\n",
+      "passed": true,
+      "expected": "def add(a, b):\n    return a+b\n",
+      "actual": "def add(a, b):\n    return a+b\n"
+    },
+    {
+      "sample": "if a:\n\tprint(a)\n\n    next_line",
+      "passed": true,
+      "expected": "if a:\n\tprint(a)\n\n    next_line",
+      "actual": "if a:\n\tprint(a)\n\n    next_line"
+    },
+    {
+      "sample": "A\n  caf\u00e9\n  \u4e16\u754c\n  \ud83d\ude00\n",
+      "passed": true,
+      "expected": "A\n  caf\u00e9\n  \u4e16\u754c\n  \ud83d\ude00\n",
+      "actual": "A\n  caf\u00e9\n  \u4e16\u754c\n  \ud83d\ude00\n"
+    },
+    {
+      "sample": "\n    leading\n\n",
+      "passed": true,
+      "expected": "\n    leading\n\n",
+      "actual": "\n    leading\n\n"
+    },
+    {
+      "sample": "one\n\n  two\n",
+      "passed": true,
+      "expected": "one\n\n  two\n",
+      "actual": "one\n\n  two\n"
+    },
+    {
+      "sample": "  hello world",
+      "passed": true,
+      "expected": " hello world",
+      "actual": " hello world"
+    },
+    {
+      "sample": "a\n \n b",
+      "passed": true,
+      "expected": "a\n \n b",
+      "actual": "a\n \n b"
+    },
+    {
+      "sample": "```python\n    pass\n```",
+      "passed": true,
+      "expected": "```python\n    pass\n```",
+      "actual": "```python\n    pass\n```"
+    }
+  ]
+}

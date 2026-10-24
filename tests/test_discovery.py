@@ -519,6 +519,17 @@ class TestOllamaTruthfulCapabilities(unittest.TestCase):
 
 
 class TestRequireLocal(unittest.TestCase):
+    def test_native_transformers_and_llamacpp_are_accepted(self):
+        from local_llm_kit.backends.llamacpp import LlamaCppBackend
+        from local_llm_kit.backends.transformers import TransformersBackend
+
+        for cls in (TransformersBackend, LlamaCppBackend):
+            with self.subTest(backend=cls.__name__):
+                backend = object.__new__(cls)
+                backend.model_path = "local-checkpoint"
+                llm = LLM("local-checkpoint", backend_instance=backend, require_local=True)
+                self.assertTrue(llm.assert_local())
+
     def test_on_device_model_is_accepted(self):
         with Fixture() as fixture, profile(OLLAMA):
             llm = LLM(

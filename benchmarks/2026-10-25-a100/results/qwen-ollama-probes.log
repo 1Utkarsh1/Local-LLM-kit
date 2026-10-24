@@ -1,0 +1,7 @@
+locality_and_capabilities True 0.239
+chat True 91.366
+stream_matches_nonstream True 4.191
+structured_json_schema True 3.204
+tool_call_without_execution True 3.199
+reasoning_metadata True 2.701
+text_completion True 1.501

@@ -1,0 +1,24 @@
+......................................s............................... [ 14%]
+.............................................................................................................................sssssss [ 40%]
+sssssss....................................... [ 49%]
+...................................................................................................................................................................................s.. [ 86%]
+..................................................... [ 96%]
+.................                                                [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_apple_fm.py:649: opt-in live test: needs an eligible Mac (macOS 26+, Xcode 26+, Apple Intelligence on). Not run in CI.
+SKIPPED [1] tests/test_live_servers.py:56: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:88: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:80: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:65: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:72: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:131: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:127: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:106: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:160: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:179: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:188: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:170: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:194: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_live_servers.py:219: set LOCAL_LLM_KIT_LIVE=1 (with a local server running) to run
+SKIPPED [1] tests/test_server.py:302: fastapi is installed; skip-path test not applicable
+484 passed, 16 skipped, 245 subtests passed in 35.51s

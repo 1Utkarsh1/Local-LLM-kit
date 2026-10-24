@@ -276,5 +276,70 @@ class TestOllamaNativeChat(unittest.TestCase):
         self.assertEqual(chunks[-1]["choices"][0]["finish_reason"], "tool_calls")
 
 
+class TestReportedUsage(unittest.TestCase):
+    def test_chat_and_completion_keep_reported_counts(self):
+        usage = {
+            "prompt_tokens": 120,
+            "completion_tokens": 64,
+            "total_tokens": 184,
+            "completion_tokens_details": {"reasoning_tokens": 12},
+        }
+        for route in ("chat", "complete"):
+            with self.subTest(route=route):
+                backend = OpenAICompatBackend("test-model")
+                payload = openai_response("Short text")
+                payload["choices"][0]["text"] = "Short text"
+                payload["usage"] = usage
+                with mock.patch.object(backend, "_post_json", return_value=payload):
+                    llm = make_llm(backend)
+                    result = llm.chat(MESSAGES) if route == "chat" else llm.complete("Hello")
+                self.assertEqual(result["usage"], usage)
+
+    def test_tool_rounds_sum_each_reported_usage(self):
+        backend = OpenAICompatBackend("test-model")
+        replies = [openai_response(calls=[native_call()]), openai_response("Done")]
+        replies[0]["usage"] = {"prompt_tokens": 100, "completion_tokens": 20}
+        replies[1]["usage"] = {"prompt_tokens": 150, "completion_tokens": 10}
+        with mock.patch.object(backend, "_post_json", side_effect=replies):
+            result = make_llm(backend).chat(MESSAGES, tools=[lookup])
+        self.assertEqual(
+            result["usage"], {"prompt_tokens": 250, "completion_tokens": 30, "total_tokens": 280}
+        )
+
+    def test_ollama_native_counts_reach_public_responses(self):
+        backend = OllamaBackend("test-model")
+        payload = {
+            "message": {"content": "Short text"},
+            "response": "Short text",
+            "prompt_eval_count": 100,
+            "eval_count": 64,
+        }
+        with mock.patch.object(backend, "_post_json", return_value=payload):
+            for result in (make_llm(backend).chat(MESSAGES), make_llm(backend).complete("Hi")):
+                self.assertEqual(
+                    result["usage"],
+                    {"prompt_tokens": 100, "completion_tokens": 64, "total_tokens": 164},
+                )
+
+    def test_zero_counts_and_invalid_count_fallback(self):
+        backend = OpenAICompatBackend("test-model")
+        for reported in (
+            {"prompt_tokens": 0, "completion_tokens": 0},
+            {"prompt_tokens": -1, "completion_tokens": 4},
+            {"prompt_tokens": True, "completion_tokens": 4},
+            {"prompt_tokens": "100", "completion_tokens": 4},
+            None,
+        ):
+            with self.subTest(reported=reported):
+                payload = dict(openai_response("Hello"), usage=reported)
+                with mock.patch.object(backend, "_post_json", return_value=payload):
+                    result = make_llm(backend).chat(MESSAGES)
+                if reported == {"prompt_tokens": 0, "completion_tokens": 0}:
+                    self.assertEqual(result["usage"]["total_tokens"], 0)
+                else:
+                    self.assertGreater(result["usage"]["prompt_tokens"], 0)
+                    self.assertTrue(all(type(value) is int for value in result["usage"].values()))
+
+
 if __name__ == "__main__":
     unittest.main()

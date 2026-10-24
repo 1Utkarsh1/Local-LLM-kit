@@ -1,0 +1,18 @@
+{
+  "id": "cmpl-79d6adff024d46c8b2c9f097",
+  "object": "text_completion",
+  "created": 1792857069,
+  "model": "/workspace/ollama-models/blobs/sha256-f5f1dd8920d417aac2718b0bda3403da274301efdd6760b4f0f4b864ff2ad57d",
+  "choices": [
+    {
+      "text": " Paris.\nThe capital of Germany is Berlin.\nThe capital of Italy is Rome.\nThe capital of Spain is Madrid.\nThe capital of Portugal is",
+      "index": 0,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 5,
+    "completion_tokens": 32,
+    "total_tokens": 37
+  }
+}

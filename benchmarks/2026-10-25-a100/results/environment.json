@@ -1,0 +1,20 @@
+{
+  "python": "3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0]",
+  "gpu": "NVIDIA A100-SXM4-80GB, 81920 MiB, 595.91.07",
+  "image": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+  "kit_base_commit": "df9b95526b029601cdd0775950a72fd9485e7c8e",
+  "kit_source": "v0.3.1 plus source-fixes.patch",
+  "qwen_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "tinyllama_revision": "fe8a4ea1ffedaf415f4da2f062534de366a451e6",
+  "base_environment": {
+    "torch": "2.8.0+cu128",
+    "transformers": "5.20.2",
+    "accelerate": "1.15.0",
+    "openai": "3.37.0",
+    "mcp": "2.3.0",
+    "fastapi": "0.162.0",
+    "starlette": "1.10.0",
+    "pytest": "9.1.1",
+    "local-llm-kit": "0.3.1"
+  }
+}

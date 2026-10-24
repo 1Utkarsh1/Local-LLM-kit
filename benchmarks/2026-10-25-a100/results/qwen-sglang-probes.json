@@ -1,0 +1,331 @@
+{
+  "backend": "sglang",
+  "model": "Qwen/Qwen3.8-27B",
+  "url": "http://127.0.0.1:30000/v1",
+  "results": [
+    {
+      "name": "model_listing",
+      "passed": true,
+      "seconds": 0.031355929968412966,
+      "data": {
+        "object": "list",
+        "data": [
+          {
+            "id": "Qwen/Qwen3.8-27B",
+            "object": "model",
+            "created": 1792858498,
+            "owned_by": "sglang",
+            "root": "Qwen/Qwen3.8-27B",
+            "parent": null,
+            "max_model_len": 8192
+          }
+        ]
+      }
+    },
+    {
+      "name": "chat",
+      "passed": true,
+      "seconds": 0.26855734799755737,
+      "data": {
+        "id": "chatcmpl-0f1b204d2ef0484ca72f822f",
+        "object": "chat.completion",
+        "created": 1792858498,
+        "model": "Qwen/Qwen3.8-27B",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "4"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 25,
+          "total_tokens": 27,
+          "completion_tokens": 2,
+          "prompt_tokens_details": null,
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "name": "stream_matches_nonstream",
+      "passed": true,
+      "seconds": 1.9800722159561701,
+      "data": {
+        "response": {
+          "id": "chatcmpl-51b1bae0abe640d9820529ef",
+          "object": "chat.completion",
+          "created": 1792858499,
+          "model": "Qwen/Qwen3.8-27B",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "```python\ndef add(a, b):\n    return a + b\n```"
+              },
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 27,
+            "total_tokens": 45,
+            "completion_tokens": 18,
+            "prompt_tokens_details": null,
+            "reasoning_tokens": 0
+          }
+        },
+        "stream_text": "```python\ndef add(a, b):\n    return a + b\n```",
+        "chunks": 19
+      }
+    },
+    {
+      "name": "structured_json_schema",
+      "passed": true,
+      "seconds": 1.392129454005044,
+      "data": {
+        "id": "chatcmpl-919fe1a1c24a4762abbbb328",
+        "object": "chat.completion",
+        "created": 1792858501,
+        "model": "Qwen/Qwen3.8-27B",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "{\n  \"city\": \"Paris\",\n  \"country\": \"France\"\n}"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 21,
+          "total_tokens": 41,
+          "completion_tokens": 20,
+          "prompt_tokens_details": null,
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "name": "forced_tool_call_without_execution",
+      "passed": true,
+      "seconds": 2.307089476962574,
+      "data": {
+        "id": "chatcmpl-07f835c4edd244b9b241b776",
+        "object": "chat.completion",
+        "created": 1792858502,
+        "model": "Qwen/Qwen3.8-27B",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_3be8727e7af545ac82ac075f",
+                  "type": "function",
+                  "function": {
+                    "name": "lookup_weather",
+                    "arguments": "{\"city\": \"Sydney\"}"
+                  }
+                }
+              ],
+              "function_call": {
+                "name": "lookup_weather",
+                "arguments": "{\"city\": \"Sydney\"}"
+              }
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 293,
+          "total_tokens": 321,
+          "completion_tokens": 28,
+          "prompt_tokens_details": null,
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "name": "reasoning_metadata",
+      "passed": true,
+      "seconds": 2.082731103990227,
+      "data": {
+        "id": "chatcmpl-c5ebcafab10349b9bb5a0783",
+        "object": "chat.completion",
+        "created": 1792858504,
+        "model": "Qwen/Qwen3.8-27B",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "\n\n2 plus 2 equals **4**.",
+              "reasoning_content": "The user is asking a simple arithmetic question: 2 + 2. The answer is 4.\n"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 48,
+          "total_tokens": 81,
+          "completion_tokens": 33,
+          "prompt_tokens_details": null,
+          "reasoning_tokens": 23
+        }
+      }
+    },
+    {
+      "name": "text_completion",
+      "passed": true,
+      "seconds": 1.6253864399623126,
+      "data": {
+        "id": "cmpl-566e743ff3b54a03bc8b1556",
+        "object": "text_completion",
+        "created": 1792858508,
+        "model": "Qwen/Qwen3.8-27B",
+        "choices": [
+          {
+            "text": " Paris.\nThe capital of Germany is Berlin.\nThe capital of Italy is Rome.\nThe capital of Spain is Madrid.\nThe capital of Portugal is",
+            "index": 0,
+            "finish_reason": "length"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5,
+          "total_tokens": 37,
+          "completion_tokens": 32,
+          "prompt_tokens_details": null,
+          "reasoning_tokens": 0
+        }
+      }
+    },
+    {
+      "name": "context_overflow_nonstream",
+      "passed": true,
+      "seconds": 0.42467983899405226,
+      "data": {
+        "rejected_with": "RuntimeError",
+        "message": "OpenAI-compatible request POST http://127.0.0.1:30000/v1/chat/completions failed with HTTP 400: {\"object\":\"error\",\"message\":\"The input (9012 tokens) is longer than the model's context length (8192 tokens).\",\"type\":\"BadRequestError\",\"param\":null,\"code\":400}"
+      }
+    },
+    {
+      "name": "context_overflow_stream",
+      "passed": true,
+      "seconds": 0.0028521170024760067,
+      "data": {
+        "rejected_with": "RuntimeError",
+        "message": "OpenAI-compatible request POST http://127.0.0.1:30000/v1/chat/completions failed with HTTP 400: {\"object\":\"error\",\"message\":\"The input (9012 tokens) is longer than the model's context length (8192 tokens).\",\"type\":\"BadRequestError\",\"param\":null,\"code\":400}"
+      }
+    },
+    {
+      "name": "four_concurrent_requests",
+      "passed": true,
+      "seconds": 1.1980813349946402,
+      "data": {
+        "requests": 4,
+        "wall_seconds": 1.198044534015935,
+        "responses": [
+          {
+            "id": "chatcmpl-76f90857e74648d181e55c0f",
+            "object": "chat.completion",
+            "created": 1792858508,
+            "model": "Qwen/Qwen3.8-27B",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "10"
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 26,
+              "total_tokens": 29,
+              "completion_tokens": 3,
+              "prompt_tokens_details": null,
+              "reasoning_tokens": 0
+            }
+          },
+          {
+            "id": "chatcmpl-b750bf53342340a599813565",
+            "object": "chat.completion",
+            "created": 1792858508,
+            "model": "Qwen/Qwen3.8-27B",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "11"
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 26,
+              "total_tokens": 29,
+              "completion_tokens": 3,
+              "prompt_tokens_details": null,
+              "reasoning_tokens": 0
+            }
+          },
+          {
+            "id": "chatcmpl-750dba6a375b40b0ad355472",
+            "object": "chat.completion",
+            "created": 1792858508,
+            "model": "Qwen/Qwen3.8-27B",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "12"
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 26,
+              "total_tokens": 29,
+              "completion_tokens": 3,
+              "prompt_tokens_details": null,
+              "reasoning_tokens": 0
+            }
+          },
+          {
+            "id": "chatcmpl-46309db4ff9e4a7db473e112",
+            "object": "chat.completion",
+            "created": 1792858508,
+            "model": "Qwen/Qwen3.8-27B",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "13"
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 26,
+              "total_tokens": 29,
+              "completion_tokens": 3,
+              "prompt_tokens_details": null,
+              "reasoning_tokens": 0
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

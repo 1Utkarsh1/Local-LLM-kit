@@ -1,0 +1,15 @@
+
+[live] probed 12 endpoints in 390.7ms; live: ['http://127.0.0.1:11434/v1']
+...
+[live] http://127.0.0.1:11434/v1 -> ollama
+u.u.s.
+[live] qwen3.8:27b: adapter now reports ctx=262144 (was hardcoded 4096); capabilities=['completion', 'vision', 'tools', 'thinking']
+.
+[live] qwen3.8:27b chat -> 'OK'
+...
+[live] qwen3.8:27b streamed 8 chunks
+.s..
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_live_servers.py:131: this server lists no provider-routed models
+SKIPPED [1] tests/test_live_servers.py:199: no provider-routed model is available to refuse
+13 passed, 2 skipped, 2 subtests passed in 5.28s
