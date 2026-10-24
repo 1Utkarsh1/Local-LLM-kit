@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Chat, legacy completion and embedding requests no longer run synchronous inference on the FastAPI event loop. Lazy model loading also runs in a worker and is initialized once across concurrent first requests; health checks remain responsive during blocking work (issue #18).
+
 ## [0.3.0] - 2026-10-17
 
 ### Added

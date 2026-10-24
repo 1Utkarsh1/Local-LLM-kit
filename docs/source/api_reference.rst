@@ -143,5 +143,12 @@ validates generation options, forwards structured-output formats and preserves
 native embedding vectors. Remote tool execution defaults to disabled and requires
 an explicit ``execute_tools=true`` request.
 
+The development version after 0.3.0 runs synchronous inference, embeddings and
+lazy model loading in worker threads. Concurrent first requests construct one
+model, and slow inference leaves the event loop available to health checks.
+Streaming still uses synchronous iterators in workers. This does not add model
+batching or make a backend safe for concurrent calls; cancelling a request does
+not terminate synchronous work already running in a worker.
+
 This bundled server is a development shim. Use a dedicated inference server for
 production serving requirements.
