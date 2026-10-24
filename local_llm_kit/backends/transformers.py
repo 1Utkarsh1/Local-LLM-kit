@@ -35,6 +35,8 @@ class TransformersBackend(BaseBackend):
     Backend for Hugging Face Transformers models.
     """
 
+    backend_name = "transformers"
+
     def __init__(
         self,
         model_path: str,
@@ -251,8 +253,18 @@ class TransformersBackend(BaseBackend):
         # Prepare inputs
         input_ids = self._prepare_input_ids(prompt, max_new_tokens)
 
-        # Create streamer
-        streamer = TextIteratorStreamer(
+        class IndentationSafeStreamer(TextIteratorStreamer):
+            def put(self, value):
+                was_prompt = self.skip_prompt and self.next_tokens_are_prompt
+                super().put(value)
+                if not was_prompt and not self.token_cache and value.numel():
+                    # Keep a newline anchor: fresh SentencePiece decoding strips an indentation space.
+                    self.token_cache = [value.reshape(-1)[-1].item()]
+                    self.print_len = len(
+                        self.tokenizer.decode(self.token_cache, **self.decode_kwargs)
+                    )
+
+        streamer = IndentationSafeStreamer(
             self.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=10.0
         )
 

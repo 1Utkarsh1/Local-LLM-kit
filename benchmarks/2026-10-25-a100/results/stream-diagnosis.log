@@ -1,0 +1,70 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+
+Loading weights:   0%|          | 0/201 [00:00<?, ?it/s]
+Loading weights:  34%|███▍      | 68/201 [00:00<00:00, 662.86it/s]
+Loading weights:  70%|███████   | 141/201 [00:00<00:00, 691.04it/s]
+Loading weights: 100%|██████████| 201/201 [00:00<00:00, 712.95it/s]
+[transformers] The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+[transformers] Both `max_new_tokens` (=32) and `max_length`(=2048) seem to have been set. `max_new_tokens` will take precedence. Please refer to the documentation for more information. (https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)
+[transformers] Both `max_new_tokens` (=32) and `max_length`(=2048) seem to have been set. `max_new_tokens` will take precedence. Please refer to the documentation for more information. (https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)
+[transformers] Both `max_new_tokens` (=32) and `max_length`(=2048) seem to have been set. `max_new_tokens` will take precedence. Please refer to the documentation for more information. (https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)
+[transformers] Both `max_new_tokens` (=32) and `max_length`(=2048) seem to have been set. `max_new_tokens` will take precedence. Please refer to the documentation for more information. (https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)
+{
+  "same_generated_token_ids": true,
+  "normal": "```python\ndef add_numbers(num1, num2):\n    return num1 + num2\n```\n\n3. Implement a function",
+  "stream": "```python\ndef add_numbers(num1, num2):\n   return num1 + num2\n```\n\n3. Implement a function",
+  "stream_no_cleanup": "```python\ndef add_numbers(num1, num2):\n   return num1 + num2\n```\n\n3. Implement a function",
+  "same_ids_no_cleanup": true,
+  "anchored_stream": "```python\ndef add_numbers(num1, num2):\n    return num1 + num2\n```\n\n3. Implement a function",
+  "anchor_preserves_generation": true,
+  "token_replay": [
+    {
+      "sample": "def add(a, b):\n    return a+b\n",
+      "passed": true,
+      "expected": "def add(a, b):\n    return a+b\n",
+      "actual": "def add(a, b):\n    return a+b\n"
+    },
+    {
+      "sample": "if a:\n\tprint(a)\n\n    next_line",
+      "passed": true,
+      "expected": "if a:\n\tprint(a)\n\n    next_line",
+      "actual": "if a:\n\tprint(a)\n\n    next_line"
+    },
+    {
+      "sample": "A\n  caf\u00e9\n  \u4e16\u754c\n  \ud83d\ude00\n",
+      "passed": true,
+      "expected": "A\n  caf\u00e9\n  \u4e16\u754c\n  \ud83d\ude00\n",
+      "actual": "A\n  caf\u00e9\n  \u4e16\u754c\n  \ud83d\ude00\n"
+    },
+    {
+      "sample": "\n    leading\n\n",
+      "passed": true,
+      "expected": "\n    leading\n\n",
+      "actual": "\n    leading\n\n"
+    },
+    {
+      "sample": "one\n\n  two\n",
+      "passed": true,
+      "expected": "one\n\n  two\n",
+      "actual": "one\n\n  two\n"
+    },
+    {
+      "sample": "  hello world",
+      "passed": true,
+      "expected": " hello world",
+      "actual": " hello world"
+    },
+    {
+      "sample": "a\n \n b",
+      "passed": true,
+      "expected": "a\n \n b",
+      "actual": "a\n \n b"
+    },
+    {
+      "sample": "```python\n    pass\n```",
+      "passed": true,
+      "expected": "```python\n    pass\n```",
+      "actual": "```python\n    pass\n```"
+    }
+  ]
+}

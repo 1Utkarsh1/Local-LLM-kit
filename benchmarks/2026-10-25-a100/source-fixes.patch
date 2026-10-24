@@ -1,0 +1,356 @@
+diff --git a/local_llm_kit/backends/llamacpp.py b/local_llm_kit/backends/llamacpp.py
+index 5d20e33..6593a26 100644
+--- a/local_llm_kit/backends/llamacpp.py
++++ b/local_llm_kit/backends/llamacpp.py
+@@ -26,6 +26,8 @@ class LlamaCppBackend(BaseBackend):
+     Backend for llama.cpp models via llama-cpp-python binding.
+     """
+ 
++    backend_name = "llamacpp"
++
+     def __init__(
+         self,
+         model_path: str,
+diff --git a/local_llm_kit/backends/ollama.py b/local_llm_kit/backends/ollama.py
+index ae65ada..38062d4 100644
+--- a/local_llm_kit/backends/ollama.py
++++ b/local_llm_kit/backends/ollama.py
+@@ -269,6 +269,10 @@ class OllamaBackend(BaseBackend):
+         return {
+             "text": resp.get("response", ""),
+             "finish_reason": resp.get("done_reason", "stop"),
++            "usage": {
++                "prompt_tokens": resp.get("prompt_eval_count"),
++                "completion_tokens": resp.get("eval_count"),
++            },
+             "model": self.model,
+             "raw": resp,
+         }
+@@ -367,6 +371,10 @@ class OllamaBackend(BaseBackend):
+             "thinking": message.get("thinking"),
+             "tool_calls": message.get("tool_calls"),
+             "finish_reason": resp.get("done_reason", "stop"),
++            "usage": {
++                "prompt_tokens": resp.get("prompt_eval_count"),
++                "completion_tokens": resp.get("eval_count"),
++            },
+             "model": self.model,
+             "raw": resp,
+         }
+diff --git a/local_llm_kit/backends/transformers.py b/local_llm_kit/backends/transformers.py
+index 7445651..1b4e8d7 100644
+--- a/local_llm_kit/backends/transformers.py
++++ b/local_llm_kit/backends/transformers.py
+@@ -35,6 +35,8 @@ class TransformersBackend(BaseBackend):
+     Backend for Hugging Face Transformers models.
+     """
+ 
++    backend_name = "transformers"
++
+     def __init__(
+         self,
+         model_path: str,
+@@ -251,8 +253,18 @@ class TransformersBackend(BaseBackend):
+         # Prepare inputs
+         input_ids = self._prepare_input_ids(prompt, max_new_tokens)
+ 
+-        # Create streamer
+-        streamer = TextIteratorStreamer(
++        class IndentationSafeStreamer(TextIteratorStreamer):
++            def put(self, value):
++                was_prompt = self.skip_prompt and self.next_tokens_are_prompt
++                super().put(value)
++                if not was_prompt and not self.token_cache and value.numel():
++                    # Keep a newline anchor: fresh SentencePiece decoding strips an indentation space.
++                    self.token_cache = [value.reshape(-1)[-1].item()]
++                    self.print_len = len(
++                        self.tokenizer.decode(self.token_cache, **self.decode_kwargs)
++                    )
++
++        streamer = IndentationSafeStreamer(
+             self.tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=10.0
+         )
+ 
+diff --git a/local_llm_kit/llm.py b/local_llm_kit/llm.py
+index fc2163c..3b28842 100644
+--- a/local_llm_kit/llm.py
++++ b/local_llm_kit/llm.py
+@@ -792,7 +792,15 @@ class LLM:
+                 + "}"
+             )
+ 
+-    def _usage(self, prompt: str, text: Any) -> Dict[str, int]:
++    def _usage(self, prompt: str, text: Any, reported: Any = None) -> Dict[str, Any]:
++        if isinstance(reported, dict) and all(
++            type(reported.get(key)) is int and reported[key] >= 0
++            for key in ("prompt_tokens", "completion_tokens")
++        ):
++            return dict(
++                reported,
++                total_tokens=reported["prompt_tokens"] + reported["completion_tokens"],
++            )
+         pt = self._count(prompt)
+         ct = self._count(text)
+         return {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}
+@@ -946,7 +954,7 @@ class LLM:
+         prompt = ""
+         text = ""
+         pending: List[ToolCall] = []
+-        completion_parts: List[str] = []
++        usages: List[Dict[str, Any]] = []
+         finish = "stop"
+ 
+         for turn in range(max_iterations + 1):
+@@ -955,6 +963,9 @@ class LLM:
+             )
+             result = self._backend_generate(working, prompt, gen_params)
+             text = _extract_text(result)
++            usages.append(
++                self._usage(prompt, text, result.get("usage") if isinstance(result, dict) else None)
++            )
+             finish = result.get("finish_reason", "stop") if isinstance(result, dict) else "stop"
+ 
+             calls: List[ToolCall] = []
+@@ -964,7 +975,6 @@ class LLM:
+                     calls = [c for c in calls if c.name == forced_name]
+             if json_mode and not calls:
+                 text = self._ensure_json_output(text)
+-            completion_parts.append(text or "")
+             if not calls:
+                 pending = []
+                 finish = "stop" if finish not in ("length",) else finish
+@@ -1038,7 +1048,14 @@ class LLM:
+         }
+         if gen_params.get("logprobs"):
+             response["choices"][0]["logprobs"] = {}
+-        response["usage"] = self._usage(prompt, "".join(completion_parts) if pending else text)
++        response["usage"] = (
++            usages[0]
++            if len(usages) == 1
++            else {
++                key: sum(usage[key] for usage in usages)
++                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
++            }
++        )
+         self._log_chat(working, response)
+         return response
+ 
+@@ -1290,7 +1307,9 @@ class LLM:
+             response["choices"][0]["logprobs"] = (
+                 result.get("logprobs", {}) if isinstance(result, dict) else {}
+             )
+-        response["usage"] = self._usage(prompt, text)
++        response["usage"] = self._usage(
++            prompt, text, result.get("usage") if isinstance(result, dict) else None
++        )
+         return response
+ 
+     def _complete_streaming(
+diff --git a/tests/test_discovery.py b/tests/test_discovery.py
+index 51ad542..82bccf1 100644
+--- a/tests/test_discovery.py
++++ b/tests/test_discovery.py
+@@ -519,6 +519,17 @@ class TestOllamaTruthfulCapabilities(unittest.TestCase):
+ 
+ 
+ class TestRequireLocal(unittest.TestCase):
++    def test_native_transformers_and_llamacpp_are_accepted(self):
++        from local_llm_kit.backends.llamacpp import LlamaCppBackend
++        from local_llm_kit.backends.transformers import TransformersBackend
++
++        for cls in (TransformersBackend, LlamaCppBackend):
++            with self.subTest(backend=cls.__name__):
++                backend = object.__new__(cls)
++                backend.model_path = "local-checkpoint"
++                llm = LLM("local-checkpoint", backend_instance=backend, require_local=True)
++                self.assertTrue(llm.assert_local())
++
+     def test_on_device_model_is_accepted(self):
+         with Fixture() as fixture, profile(OLLAMA):
+             llm = LLM(
+diff --git a/tests/test_live_servers.py b/tests/test_live_servers.py
+index e0f3d72..a07bdf5 100644
+--- a/tests/test_live_servers.py
++++ b/tests/test_live_servers.py
+@@ -159,7 +159,9 @@ class TestRealInferenceOnDevice(unittest.TestCase):
+ 
+     def test_chat_round_trip(self):
+         response = self.llm.chat(
+-            [{"role": "user", "content": "Reply with the single word: OK"}], max_tokens=16
++            [{"role": "user", "content": "Reply with the single word: OK"}],
++            max_tokens=16,
++            think=False,  # Keep the short smoke-test budget for visible output.
+         )
+         content = response["choices"][0]["message"]["content"]
+         self.assertTrue(content.strip(), "model returned empty content")
+@@ -170,7 +172,10 @@ class TestRealInferenceOnDevice(unittest.TestCase):
+     def test_streaming_round_trip(self):
+         pieces = []
+         for chunk in self.llm.chat(
+-            [{"role": "user", "content": "Count to three."}], max_tokens=24, stream=True
++            [{"role": "user", "content": "Count to three."}],
++            max_tokens=24,
++            stream=True,
++            think=False,
+         ):
+             pieces.append(chunk["choices"][0]["delta"].get("content") or "")
+         self.assertTrue("".join(pieces).strip())
+diff --git a/tests/test_native_chat.py b/tests/test_native_chat.py
+index 6204cf5..65390b2 100644
+--- a/tests/test_native_chat.py
++++ b/tests/test_native_chat.py
+@@ -276,5 +276,70 @@ class TestOllamaNativeChat(unittest.TestCase):
+         self.assertEqual(chunks[-1]["choices"][0]["finish_reason"], "tool_calls")
+ 
+ 
++class TestReportedUsage(unittest.TestCase):
++    def test_chat_and_completion_keep_reported_counts(self):
++        usage = {
++            "prompt_tokens": 120,
++            "completion_tokens": 64,
++            "total_tokens": 184,
++            "completion_tokens_details": {"reasoning_tokens": 12},
++        }
++        for route in ("chat", "complete"):
++            with self.subTest(route=route):
++                backend = OpenAICompatBackend("test-model")
++                payload = openai_response("Short text")
++                payload["choices"][0]["text"] = "Short text"
++                payload["usage"] = usage
++                with mock.patch.object(backend, "_post_json", return_value=payload):
++                    llm = make_llm(backend)
++                    result = llm.chat(MESSAGES) if route == "chat" else llm.complete("Hello")
++                self.assertEqual(result["usage"], usage)
++
++    def test_tool_rounds_sum_each_reported_usage(self):
++        backend = OpenAICompatBackend("test-model")
++        replies = [openai_response(calls=[native_call()]), openai_response("Done")]
++        replies[0]["usage"] = {"prompt_tokens": 100, "completion_tokens": 20}
++        replies[1]["usage"] = {"prompt_tokens": 150, "completion_tokens": 10}
++        with mock.patch.object(backend, "_post_json", side_effect=replies):
++            result = make_llm(backend).chat(MESSAGES, tools=[lookup])
++        self.assertEqual(
++            result["usage"], {"prompt_tokens": 250, "completion_tokens": 30, "total_tokens": 280}
++        )
++
++    def test_ollama_native_counts_reach_public_responses(self):
++        backend = OllamaBackend("test-model")
++        payload = {
++            "message": {"content": "Short text"},
++            "response": "Short text",
++            "prompt_eval_count": 100,
++            "eval_count": 64,
++        }
++        with mock.patch.object(backend, "_post_json", return_value=payload):
++            for result in (make_llm(backend).chat(MESSAGES), make_llm(backend).complete("Hi")):
++                self.assertEqual(
++                    result["usage"],
++                    {"prompt_tokens": 100, "completion_tokens": 64, "total_tokens": 164},
++                )
++
++    def test_zero_counts_and_invalid_count_fallback(self):
++        backend = OpenAICompatBackend("test-model")
++        for reported in (
++            {"prompt_tokens": 0, "completion_tokens": 0},
++            {"prompt_tokens": -1, "completion_tokens": 4},
++            {"prompt_tokens": True, "completion_tokens": 4},
++            {"prompt_tokens": "100", "completion_tokens": 4},
++            None,
++        ):
++            with self.subTest(reported=reported):
++                payload = dict(openai_response("Hello"), usage=reported)
++                with mock.patch.object(backend, "_post_json", return_value=payload):
++                    result = make_llm(backend).chat(MESSAGES)
++                if reported == {"prompt_tokens": 0, "completion_tokens": 0}:
++                    self.assertEqual(result["usage"]["total_tokens"], 0)
++                else:
++                    self.assertGreater(result["usage"]["prompt_tokens"], 0)
++                    self.assertTrue(all(type(value) is int for value in result["usage"].values()))
++
++
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_transformers_streaming.py b/tests/test_transformers_streaming.py
+index 13a8504..636fc71 100644
+--- a/tests/test_transformers_streaming.py
++++ b/tests/test_transformers_streaming.py
+@@ -38,12 +38,20 @@ class TextStreamer:
+     """The HF contract: token tensors enter put(); iteration yields text deltas."""
+ 
+     def __init__(self, tokenizer, skip_prompt=False, **kwargs):
++        self.tokenizer = tokenizer
+         self.skip_prompt = skip_prompt
++        self.next_tokens_are_prompt = True
++        self.token_cache = []
++        self.print_len = 0
++        self.decode_kwargs = kwargs
+         self.items = queue.Queue()
+ 
+     def put(self, value):
+         if not isinstance(value, InputIds):
+             raise TypeError("put() requires token tensors")
++        if self.skip_prompt and self.next_tokens_are_prompt:
++            self.next_tokens_are_prompt = False
++            return
+         if not self.skip_prompt:
+             self.on_finalized_text("prompt ")
+ 
+@@ -141,6 +149,58 @@ class TestTransformersContextAndStreaming(unittest.TestCase):
+             list(self.backend.generate_stream("prompt", max_new_tokens=2))
+         self.assertIs(caught.exception, failure)
+ 
++    def test_sentencepiece_newline_flush_preserves_indentation(self):
++        class PrefixStripTokenizer(Tokenizer):
++            def decode(self, tokens, **kwargs):
++                text = "".join(chr(token) for token in tokens)
++                return text[1:] if text.startswith(" ") else text
++
++        class FlushingStreamer(TextStreamer):
++            def put(self, value):
++                if self.skip_prompt and self.next_tokens_are_prompt:
++                    self.next_tokens_are_prompt = False
++                    return
++                self.token_cache.extend(value.tolist())
++                text = self.tokenizer.decode(self.token_cache)
++                self.on_finalized_text(text[self.print_len :])
++                self.print_len = len(text)
++                if text.endswith("\n"):
++                    self.token_cache = []
++                    self.print_len = 0
++
++        def token_value(tokens):
++            return types.SimpleNamespace(
++                tolist=lambda: tokens,
++                numel=lambda: len(tokens),
++                reshape=lambda shape: [types.SimpleNamespace(item=lambda: tokens[-1])],
++            )
++
++        samples = [
++            "def add(a, b):\n    return a+b\n",
++            "if a:\n\tprint(a)\n\n    next_line",
++            "A\n  café\n  世界\n  😀\n",
++            "\n    leading\n\n",
++            "one\n\n  two\n",
++            "a\n \n b",
++            "```python\n    pass\n```",
++        ]
++        self.backend.tokenizer = PrefixStripTokenizer()
++        with mock.patch.object(self.module, "TextIteratorStreamer", FlushingStreamer):
++            for text in samples:
++                with self.subTest(text=text):
++
++                    def generate(input_ids, _text=text, **kwargs):
++                        streamer = kwargs["streamer"]
++                        streamer.put(input_ids)
++                        streamer.put(token_value([]))
++                        for char in _text:
++                            streamer.put(token_value([ord(char)]))
++                        streamer.end()
++
++                    self.backend.model.generate.side_effect = generate
++                    chunks = list(self.backend.generate_stream("prompt", max_new_tokens=2))
++                    self.assertEqual("".join(chunk["text"] for chunk in chunks), text)
++
+     def test_error_after_stream_end_is_not_silently_accepted(self):
+         failure = RuntimeError("finalization failed")
+ 

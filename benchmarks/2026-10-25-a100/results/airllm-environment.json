@@ -1,0 +1,7 @@
+{
+  "airllm": "4.0.0",
+  "transformers": "5.20.2",
+  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "max_seq_len": 256,
+  "load_seconds": 9.65857089299243
+}

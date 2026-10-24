@@ -1,0 +1,13 @@
+{
+  "scope": "Local validation builds with unreleased fixes; not uploaded to PyPI.",
+  "wheel_source_files_verified": 30,
+  "fresh_wheel_light_core_and_echo_chat": "passed",
+  "strict_sphinx_build": "passed",
+  "ruff_check": "passed",
+  "black_check": "passed",
+  "twine_wheel_and_sdist_check": "passed",
+  "artifact_sha256": {
+    "local_llm_kit-0.3.1-py3-none-any.whl": "d9a6ee6039ba05bf46b9e9944f468cf2f179938eb351f060e5a560ccd206da2c",
+    "local_llm_kit-0.3.1.tar.gz": "6daa3c6f49bf8a5e237e97e5df9186323a084edada72666986dd42b590ab701c"
+  }
+}

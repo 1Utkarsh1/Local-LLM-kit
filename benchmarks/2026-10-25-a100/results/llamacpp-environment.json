@@ -1,0 +1,7 @@
+{
+  "llama_cpp_python": "0.3.36",
+  "model_sha256": "f5f1dd8920d417aac2718b0bda3403da274301efdd6760b4f0f4b864ff2ad57d",
+  "n_gpu_layers": -1,
+  "n_ctx": 8192,
+  "load_seconds": 3.879338569007814
+}

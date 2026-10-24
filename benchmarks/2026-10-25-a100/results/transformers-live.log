@@ -1,0 +1,56 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.7.0 -- /workspace/env-base/bin/python
+cachedir: .pytest_cache
+rootdir: /workspace
+plugins: cov-7.1.0, anyio-4.11.0
+collecting ... collected 13 items
+
+../workspace/test_transformers_live.py::test_streamed_deltas_equal_real_greedy_completion[8] PASSED [  7%]
+../workspace/test_transformers_live.py::test_streamed_deltas_equal_real_greedy_completion[32] FAILED [ 15%]
+../workspace/test_transformers_live.py::test_actual_oversized_prompt_rejected[False] PASSED [ 23%]
+../workspace/test_transformers_live.py::test_actual_oversized_prompt_rejected[True] PASSED [ 30%]
+../workspace/test_transformers_live.py::test_output_reservation_rejected[False] PASSED [ 38%]
+../workspace/test_transformers_live.py::test_output_reservation_rejected[True] PASSED [ 46%]
+../workspace/test_transformers_live.py::test_real_generation_error_reaches_caller[False] PASSED [ 53%]
+../workspace/test_transformers_live.py::test_real_generation_error_reaches_caller[True] PASSED [ 61%]
+../workspace/test_transformers_live.py::test_native_exact_context_fit PASSED [ 69%]
+../workspace/test_transformers_live.py::test_public_llm_chat[Say hello.] PASSED [ 76%]
+../workspace/test_transformers_live.py::test_public_llm_chat[Explain caf\xe9 in one sentence.] PASSED [ 84%]
+../workspace/test_transformers_live.py::test_public_llm_chat[Return a JSON object with a city field.] PASSED [ 92%]
+../workspace/test_transformers_live.py::test_http_routes_with_real_inference PASSED [100%]
+
+=================================== FAILURES ===================================
+____________ test_streamed_deltas_equal_real_greedy_completion[32] _____________
+
+backend = <local_llm_kit.backends.transformers.TransformersBackend object at 0x717baff4ebd0>
+budget = 32
+
+    @pytest.mark.parametrize('budget', [8, 32])
+    def test_streamed_deltas_equal_real_greedy_completion(backend, budget):
+        prompt = 'Write a short Python function to add two numbers:\n'
+        normal = backend.generate(prompt, temperature=0, max_new_tokens=budget)
+        chunks = list(backend.generate_stream(prompt, temperature=0, max_new_tokens=budget))
+        assert chunks
+        assert all(isinstance(c['text'], str) for c in chunks)
+>       assert ''.join(c['text'] for c in chunks) == normal['text']
+E       AssertionError: assert '```python\nd...nt a function' == '```python\nd...nt a function'
+E         
+E           ```python
+E           def add_numbers(num1, num2):
+E         -     return num1 + num2
+E         ? -
+E         +    return num1 + num2
+E           ```
+E           
+E           3. Implement a function
+
+/workspace/test_transformers_live.py:42: AssertionError
+----------------------------- Captured stderr call -----------------------------
+[transformers] Both `max_new_tokens` (=32) and `max_length`(=2048) seem to have been set. `max_new_tokens` will take precedence. Please refer to the documentation for more information. (https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)
+[transformers] Both `max_new_tokens` (=32) and `max_length`(=2048) seem to have been set. `max_new_tokens` will take precedence. Please refer to the documentation for more information. (https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)
+------------------------------ Captured log call -------------------------------
+WARNING  transformers.generation.utils:utils.py:2015 Both `max_new_tokens` (=32) and `max_length`(=2048) seem to have been set. `max_new_tokens` will take precedence. Please refer to the documentation for more information. (https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)
+WARNING  transformers.generation.utils:utils.py:2015 Both `max_new_tokens` (=32) and `max_length`(=2048) seem to have been set. `max_new_tokens` will take precedence. Please refer to the documentation for more information. (https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)
+=========================== short test summary info ============================
+FAILED ../workspace/test_transformers_live.py::test_streamed_deltas_equal_real_greedy_completion[32]
+======================== 1 failed, 12 passed in 40.24s =========================

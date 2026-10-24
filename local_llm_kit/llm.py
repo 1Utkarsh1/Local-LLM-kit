@@ -792,7 +792,15 @@ class LLM:
                 + "}"
             )
 
-    def _usage(self, prompt: str, text: Any) -> Dict[str, int]:
+    def _usage(self, prompt: str, text: Any, reported: Any = None) -> Dict[str, Any]:
+        if isinstance(reported, dict) and all(
+            type(reported.get(key)) is int and reported[key] >= 0
+            for key in ("prompt_tokens", "completion_tokens")
+        ):
+            return dict(
+                reported,
+                total_tokens=reported["prompt_tokens"] + reported["completion_tokens"],
+            )
         pt = self._count(prompt)
         ct = self._count(text)
         return {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}
@@ -946,7 +954,7 @@ class LLM:
         prompt = ""
         text = ""
         pending: List[ToolCall] = []
-        completion_parts: List[str] = []
+        usages: List[Dict[str, Any]] = []
         finish = "stop"
 
         for turn in range(max_iterations + 1):
@@ -955,6 +963,9 @@ class LLM:
             )
             result = self._backend_generate(working, prompt, gen_params)
             text = _extract_text(result)
+            usages.append(
+                self._usage(prompt, text, result.get("usage") if isinstance(result, dict) else None)
+            )
             finish = result.get("finish_reason", "stop") if isinstance(result, dict) else "stop"
 
             calls: List[ToolCall] = []
@@ -964,7 +975,6 @@ class LLM:
                     calls = [c for c in calls if c.name == forced_name]
             if json_mode and not calls:
                 text = self._ensure_json_output(text)
-            completion_parts.append(text or "")
             if not calls:
                 pending = []
                 finish = "stop" if finish not in ("length",) else finish
@@ -1038,7 +1048,14 @@ class LLM:
         }
         if gen_params.get("logprobs"):
             response["choices"][0]["logprobs"] = {}
-        response["usage"] = self._usage(prompt, "".join(completion_parts) if pending else text)
+        response["usage"] = (
+            usages[0]
+            if len(usages) == 1
+            else {
+                key: sum(usage[key] for usage in usages)
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            }
+        )
         self._log_chat(working, response)
         return response
 
@@ -1290,7 +1307,9 @@ class LLM:
             response["choices"][0]["logprobs"] = (
                 result.get("logprobs", {}) if isinstance(result, dict) else {}
             )
-        response["usage"] = self._usage(prompt, text)
+        response["usage"] = self._usage(
+            prompt, text, result.get("usage") if isinstance(result, dict) else None
+        )
         return response
 
     def _complete_streaming(

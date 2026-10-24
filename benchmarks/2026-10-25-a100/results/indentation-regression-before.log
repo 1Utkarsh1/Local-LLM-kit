@@ -1,0 +1,450 @@
+.                                                                 [100%]
+=================================== FAILURES ===================================
+_ TestTransformersContextAndStreaming.test_sentencepiece_newline_flush_preserves_indentation (text='def add(a, b):\n    return a+b\n') _
+
+self = <tests.test_transformers_streaming.TestTransformersContextAndStreaming testMethod=test_sentencepiece_newline_flush_preserves_indentation>
+
+    def test_sentencepiece_newline_flush_preserves_indentation(self):
+        class PrefixStripTokenizer(Tokenizer):
+            def decode(self, tokens, **kwargs):
+                text = "".join(chr(token) for token in tokens)
+                return text[1:] if text.startswith(" ") else text
+    
+        class FlushingStreamer(TextStreamer):
+            def put(self, value):
+                if self.skip_prompt and self.next_tokens_are_prompt:
+                    self.next_tokens_are_prompt = False
+                    return
+                self.token_cache.extend(value.tolist())
+                text = self.tokenizer.decode(self.token_cache)
+                self.on_finalized_text(text[self.print_len :])
+                self.print_len = len(text)
+                if text.endswith("\n"):
+                    self.token_cache = []
+                    self.print_len = 0
+    
+        def token_value(tokens):
+            return types.SimpleNamespace(
+                tolist=lambda: tokens,
+                numel=lambda: len(tokens),
+                reshape=lambda shape: [types.SimpleNamespace(item=lambda: tokens[-1])],
+            )
+    
+        samples = [
+            "def add(a, b):\n    return a+b\n",
+            "if a:\n\tprint(a)\n\n    next_line",
+            "A\n  café\n  世界\n  😀\n",
+            "\n    leading\n\n",
+            "one\n\n  two\n",
+            "a\n \n b",
+            "```python\n    pass\n```",
+        ]
+        self.backend.tokenizer = PrefixStripTokenizer()
+        with mock.patch.object(self.module, "TextIteratorStreamer", FlushingStreamer):
+            for text in samples:
+                with self.subTest(text=text):
+                    def generate(input_ids, **kwargs):
+                        streamer = kwargs["streamer"]
+                        streamer.put(input_ids)
+                        streamer.put(token_value([]))
+                        for char in text:
+                            streamer.put(token_value([ord(char)]))
+                        streamer.end()
+    
+                    self.backend.model.generate.side_effect = generate
+                    chunks = list(self.backend.generate_stream("prompt", max_new_tokens=2))
+>                   self.assertEqual("".join(chunk["text"] for chunk in chunks), text)
+E                   AssertionError: 'def add(a, b):\n   return a+b\n' != 'def add(a, b):\n    return a+b\n'
+E                     def add(a, b):
+E                   -    return a+b
+E                   +     return a+b
+E                   ? +
+
+tests/test_transformers_streaming.py:201: AssertionError
+_ TestTransformersContextAndStreaming.test_sentencepiece_newline_flush_preserves_indentation (text='if a:\n\tprint(a)\n\n    next_line') _
+
+self = <tests.test_transformers_streaming.TestTransformersContextAndStreaming testMethod=test_sentencepiece_newline_flush_preserves_indentation>
+
+    def test_sentencepiece_newline_flush_preserves_indentation(self):
+        class PrefixStripTokenizer(Tokenizer):
+            def decode(self, tokens, **kwargs):
+                text = "".join(chr(token) for token in tokens)
+                return text[1:] if text.startswith(" ") else text
+    
+        class FlushingStreamer(TextStreamer):
+            def put(self, value):
+                if self.skip_prompt and self.next_tokens_are_prompt:
+                    self.next_tokens_are_prompt = False
+                    return
+                self.token_cache.extend(value.tolist())
+                text = self.tokenizer.decode(self.token_cache)
+                self.on_finalized_text(text[self.print_len :])
+                self.print_len = len(text)
+                if text.endswith("\n"):
+                    self.token_cache = []
+                    self.print_len = 0
+    
+        def token_value(tokens):
+            return types.SimpleNamespace(
+                tolist=lambda: tokens,
+                numel=lambda: len(tokens),
+                reshape=lambda shape: [types.SimpleNamespace(item=lambda: tokens[-1])],
+            )
+    
+        samples = [
+            "def add(a, b):\n    return a+b\n",
+            "if a:\n\tprint(a)\n\n    next_line",
+            "A\n  café\n  世界\n  😀\n",
+            "\n    leading\n\n",
+            "one\n\n  two\n",
+            "a\n \n b",
+            "```python\n    pass\n```",
+        ]
+        self.backend.tokenizer = PrefixStripTokenizer()
+        with mock.patch.object(self.module, "TextIteratorStreamer", FlushingStreamer):
+            for text in samples:
+                with self.subTest(text=text):
+                    def generate(input_ids, **kwargs):
+                        streamer = kwargs["streamer"]
+                        streamer.put(input_ids)
+                        streamer.put(token_value([]))
+                        for char in text:
+                            streamer.put(token_value([ord(char)]))
+                        streamer.end()
+    
+                    self.backend.model.generate.side_effect = generate
+                    chunks = list(self.backend.generate_stream("prompt", max_new_tokens=2))
+>                   self.assertEqual("".join(chunk["text"] for chunk in chunks), text)
+E                   AssertionError: 'if a:\n\tprint(a)\n\n   next_line' != 'if a:\n\tprint(a)\n\n    next_line'
+E                     if a:
+E                     	print(a)
+E                     
+E                   -    next_line
+E                   +     next_line
+E                   ? +
+
+tests/test_transformers_streaming.py:201: AssertionError
+_ TestTransformersContextAndStreaming.test_sentencepiece_newline_flush_preserves_indentation (text='A\n  café\n  世界\n  😀\n') _
+
+self = <tests.test_transformers_streaming.TestTransformersContextAndStreaming testMethod=test_sentencepiece_newline_flush_preserves_indentation>
+
+    def test_sentencepiece_newline_flush_preserves_indentation(self):
+        class PrefixStripTokenizer(Tokenizer):
+            def decode(self, tokens, **kwargs):
+                text = "".join(chr(token) for token in tokens)
+                return text[1:] if text.startswith(" ") else text
+    
+        class FlushingStreamer(TextStreamer):
+            def put(self, value):
+                if self.skip_prompt and self.next_tokens_are_prompt:
+                    self.next_tokens_are_prompt = False
+                    return
+                self.token_cache.extend(value.tolist())
+                text = self.tokenizer.decode(self.token_cache)
+                self.on_finalized_text(text[self.print_len :])
+                self.print_len = len(text)
+                if text.endswith("\n"):
+                    self.token_cache = []
+                    self.print_len = 0
+    
+        def token_value(tokens):
+            return types.SimpleNamespace(
+                tolist=lambda: tokens,
+                numel=lambda: len(tokens),
+                reshape=lambda shape: [types.SimpleNamespace(item=lambda: tokens[-1])],
+            )
+    
+        samples = [
+            "def add(a, b):\n    return a+b\n",
+            "if a:\n\tprint(a)\n\n    next_line",
+            "A\n  café\n  世界\n  😀\n",
+            "\n    leading\n\n",
+            "one\n\n  two\n",
+            "a\n \n b",
+            "```python\n    pass\n```",
+        ]
+        self.backend.tokenizer = PrefixStripTokenizer()
+        with mock.patch.object(self.module, "TextIteratorStreamer", FlushingStreamer):
+            for text in samples:
+                with self.subTest(text=text):
+                    def generate(input_ids, **kwargs):
+                        streamer = kwargs["streamer"]
+                        streamer.put(input_ids)
+                        streamer.put(token_value([]))
+                        for char in text:
+                            streamer.put(token_value([ord(char)]))
+                        streamer.end()
+    
+                    self.backend.model.generate.side_effect = generate
+                    chunks = list(self.backend.generate_stream("prompt", max_new_tokens=2))
+>                   self.assertEqual("".join(chunk["text"] for chunk in chunks), text)
+E                   AssertionError: 'A\n café\n 世界\n 😀\n' != 'A\n  café\n  世界\n  😀\n'
+E                     A
+E                   -  café
+E                   +   café
+E                   ? +
+E                   -  世界
+E                   +   世界
+E                   ? +
+E                   -  😀
+E                   +   😀
+E                   ? +
+
+tests/test_transformers_streaming.py:201: AssertionError
+_ TestTransformersContextAndStreaming.test_sentencepiece_newline_flush_preserves_indentation (text='\n    leading\n\n') _
+
+self = <tests.test_transformers_streaming.TestTransformersContextAndStreaming testMethod=test_sentencepiece_newline_flush_preserves_indentation>
+
+    def test_sentencepiece_newline_flush_preserves_indentation(self):
+        class PrefixStripTokenizer(Tokenizer):
+            def decode(self, tokens, **kwargs):
+                text = "".join(chr(token) for token in tokens)
+                return text[1:] if text.startswith(" ") else text
+    
+        class FlushingStreamer(TextStreamer):
+            def put(self, value):
+                if self.skip_prompt and self.next_tokens_are_prompt:
+                    self.next_tokens_are_prompt = False
+                    return
+                self.token_cache.extend(value.tolist())
+                text = self.tokenizer.decode(self.token_cache)
+                self.on_finalized_text(text[self.print_len :])
+                self.print_len = len(text)
+                if text.endswith("\n"):
+                    self.token_cache = []
+                    self.print_len = 0
+    
+        def token_value(tokens):
+            return types.SimpleNamespace(
+                tolist=lambda: tokens,
+                numel=lambda: len(tokens),
+                reshape=lambda shape: [types.SimpleNamespace(item=lambda: tokens[-1])],
+            )
+    
+        samples = [
+            "def add(a, b):\n    return a+b\n",
+            "if a:\n\tprint(a)\n\n    next_line",
+            "A\n  café\n  世界\n  😀\n",
+            "\n    leading\n\n",
+            "one\n\n  two\n",
+            "a\n \n b",
+            "```python\n    pass\n```",
+        ]
+        self.backend.tokenizer = PrefixStripTokenizer()
+        with mock.patch.object(self.module, "TextIteratorStreamer", FlushingStreamer):
+            for text in samples:
+                with self.subTest(text=text):
+                    def generate(input_ids, **kwargs):
+                        streamer = kwargs["streamer"]
+                        streamer.put(input_ids)
+                        streamer.put(token_value([]))
+                        for char in text:
+                            streamer.put(token_value([ord(char)]))
+                        streamer.end()
+    
+                    self.backend.model.generate.side_effect = generate
+                    chunks = list(self.backend.generate_stream("prompt", max_new_tokens=2))
+>                   self.assertEqual("".join(chunk["text"] for chunk in chunks), text)
+E                   AssertionError: '\n   leading\n\n' != '\n    leading\n\n'
+E                     
+E                   -    leading
+E                   +     leading
+E                   ? +
+
+tests/test_transformers_streaming.py:201: AssertionError
+_ TestTransformersContextAndStreaming.test_sentencepiece_newline_flush_preserves_indentation (text='one\n\n  two\n') _
+
+self = <tests.test_transformers_streaming.TestTransformersContextAndStreaming testMethod=test_sentencepiece_newline_flush_preserves_indentation>
+
+    def test_sentencepiece_newline_flush_preserves_indentation(self):
+        class PrefixStripTokenizer(Tokenizer):
+            def decode(self, tokens, **kwargs):
+                text = "".join(chr(token) for token in tokens)
+                return text[1:] if text.startswith(" ") else text
+    
+        class FlushingStreamer(TextStreamer):
+            def put(self, value):
+                if self.skip_prompt and self.next_tokens_are_prompt:
+                    self.next_tokens_are_prompt = False
+                    return
+                self.token_cache.extend(value.tolist())
+                text = self.tokenizer.decode(self.token_cache)
+                self.on_finalized_text(text[self.print_len :])
+                self.print_len = len(text)
+                if text.endswith("\n"):
+                    self.token_cache = []
+                    self.print_len = 0
+    
+        def token_value(tokens):
+            return types.SimpleNamespace(
+                tolist=lambda: tokens,
+                numel=lambda: len(tokens),
+                reshape=lambda shape: [types.SimpleNamespace(item=lambda: tokens[-1])],
+            )
+    
+        samples = [
+            "def add(a, b):\n    return a+b\n",
+            "if a:\n\tprint(a)\n\n    next_line",
+            "A\n  café\n  世界\n  😀\n",
+            "\n    leading\n\n",
+            "one\n\n  two\n",
+            "a\n \n b",
+            "```python\n    pass\n```",
+        ]
+        self.backend.tokenizer = PrefixStripTokenizer()
+        with mock.patch.object(self.module, "TextIteratorStreamer", FlushingStreamer):
+            for text in samples:
+                with self.subTest(text=text):
+                    def generate(input_ids, **kwargs):
+                        streamer = kwargs["streamer"]
+                        streamer.put(input_ids)
+                        streamer.put(token_value([]))
+                        for char in text:
+                            streamer.put(token_value([ord(char)]))
+                        streamer.end()
+    
+                    self.backend.model.generate.side_effect = generate
+                    chunks = list(self.backend.generate_stream("prompt", max_new_tokens=2))
+>                   self.assertEqual("".join(chunk["text"] for chunk in chunks), text)
+E                   AssertionError: 'one\n\n two\n' != 'one\n\n  two\n'
+E                     one
+E                     
+E                   -  two
+E                   +   two
+E                   ? +
+
+tests/test_transformers_streaming.py:201: AssertionError
+_ TestTransformersContextAndStreaming.test_sentencepiece_newline_flush_preserves_indentation (text='a\n \n b') _
+
+self = <tests.test_transformers_streaming.TestTransformersContextAndStreaming testMethod=test_sentencepiece_newline_flush_preserves_indentation>
+
+    def test_sentencepiece_newline_flush_preserves_indentation(self):
+        class PrefixStripTokenizer(Tokenizer):
+            def decode(self, tokens, **kwargs):
+                text = "".join(chr(token) for token in tokens)
+                return text[1:] if text.startswith(" ") else text
+    
+        class FlushingStreamer(TextStreamer):
+            def put(self, value):
+                if self.skip_prompt and self.next_tokens_are_prompt:
+                    self.next_tokens_are_prompt = False
+                    return
+                self.token_cache.extend(value.tolist())
+                text = self.tokenizer.decode(self.token_cache)
+                self.on_finalized_text(text[self.print_len :])
+                self.print_len = len(text)
+                if text.endswith("\n"):
+                    self.token_cache = []
+                    self.print_len = 0
+    
+        def token_value(tokens):
+            return types.SimpleNamespace(
+                tolist=lambda: tokens,
+                numel=lambda: len(tokens),
+                reshape=lambda shape: [types.SimpleNamespace(item=lambda: tokens[-1])],
+            )
+    
+        samples = [
+            "def add(a, b):\n    return a+b\n",
+            "if a:\n\tprint(a)\n\n    next_line",
+            "A\n  café\n  世界\n  😀\n",
+            "\n    leading\n\n",
+            "one\n\n  two\n",
+            "a\n \n b",
+            "```python\n    pass\n```",
+        ]
+        self.backend.tokenizer = PrefixStripTokenizer()
+        with mock.patch.object(self.module, "TextIteratorStreamer", FlushingStreamer):
+            for text in samples:
+                with self.subTest(text=text):
+                    def generate(input_ids, **kwargs):
+                        streamer = kwargs["streamer"]
+                        streamer.put(input_ids)
+                        streamer.put(token_value([]))
+                        for char in text:
+                            streamer.put(token_value([ord(char)]))
+                        streamer.end()
+    
+                    self.backend.model.generate.side_effect = generate
+                    chunks = list(self.backend.generate_stream("prompt", max_new_tokens=2))
+>                   self.assertEqual("".join(chunk["text"] for chunk in chunks), text)
+E                   AssertionError: 'a\n\nb' != 'a\n \n b'
+E                     a
+E                   - 
+E                   +  
+E                   - b
+E                   +  b
+E                   ? +
+
+tests/test_transformers_streaming.py:201: AssertionError
+_ TestTransformersContextAndStreaming.test_sentencepiece_newline_flush_preserves_indentation (text='```python\n    pass\n```') _
+
+self = <tests.test_transformers_streaming.TestTransformersContextAndStreaming testMethod=test_sentencepiece_newline_flush_preserves_indentation>
+
+    def test_sentencepiece_newline_flush_preserves_indentation(self):
+        class PrefixStripTokenizer(Tokenizer):
+            def decode(self, tokens, **kwargs):
+                text = "".join(chr(token) for token in tokens)
+                return text[1:] if text.startswith(" ") else text
+    
+        class FlushingStreamer(TextStreamer):
+            def put(self, value):
+                if self.skip_prompt and self.next_tokens_are_prompt:
+                    self.next_tokens_are_prompt = False
+                    return
+                self.token_cache.extend(value.tolist())
+                text = self.tokenizer.decode(self.token_cache)
+                self.on_finalized_text(text[self.print_len :])
+                self.print_len = len(text)
+                if text.endswith("\n"):
+                    self.token_cache = []
+                    self.print_len = 0
+    
+        def token_value(tokens):
+            return types.SimpleNamespace(
+                tolist=lambda: tokens,
+                numel=lambda: len(tokens),
+                reshape=lambda shape: [types.SimpleNamespace(item=lambda: tokens[-1])],
+            )
+    
+        samples = [
+            "def add(a, b):\n    return a+b\n",
+            "if a:\n\tprint(a)\n\n    next_line",
+            "A\n  café\n  世界\n  😀\n",
+            "\n    leading\n\n",
+            "one\n\n  two\n",
+            "a\n \n b",
+            "```python\n    pass\n```",
+        ]
+        self.backend.tokenizer = PrefixStripTokenizer()
+        with mock.patch.object(self.module, "TextIteratorStreamer", FlushingStreamer):
+            for text in samples:
+                with self.subTest(text=text):
+                    def generate(input_ids, **kwargs):
+                        streamer = kwargs["streamer"]
+                        streamer.put(input_ids)
+                        streamer.put(token_value([]))
+                        for char in text:
+                            streamer.put(token_value([ord(char)]))
+                        streamer.end()
+    
+                    self.backend.model.generate.side_effect = generate
+                    chunks = list(self.backend.generate_stream("prompt", max_new_tokens=2))
+>                   self.assertEqual("".join(chunk["text"] for chunk in chunks), text)
+E                   AssertionError: '```python\n   pass\n```' != '```python\n    pass\n```'
+E                     ```python
+E                   -    pass
+E                   +     pass
+E                   ? +
+E                     ```
+
+tests/test_transformers_streaming.py:201: AssertionError
+=========================== short test summary info ============================
+SUBFAILED(text='def add(a, b):\n    return a+b\n') tests/test_transformers_streaming.py::TestTransformersContextAndStreaming::test_sentencepiece_newline_flush_preserves_indentation
+SUBFAILED(text='if a:\n\tprint(a)\n\n    next_line') tests/test_transformers_streaming.py::TestTransformersContextAndStreaming::test_sentencepiece_newline_flush_preserves_indentation
+SUBFAILED(text='A\n  café\n  世界\n  😀\n') tests/test_transformers_streaming.py::TestTransformersContextAndStreaming::test_sentencepiece_newline_flush_preserves_indentation
+SUBFAILED(text='\n    leading\n\n') tests/test_transformers_streaming.py::TestTransformersContextAndStreaming::test_sentencepiece_newline_flush_preserves_indentation
+SUBFAILED(text='one\n\n  two\n') tests/test_transformers_streaming.py::TestTransformersContextAndStreaming::test_sentencepiece_newline_flush_preserves_indentation
+SUBFAILED(text='a\n \n b') tests/test_transformers_streaming.py::TestTransformersContextAndStreaming::test_sentencepiece_newline_flush_preserves_indentation
+SUBFAILED(text='```python\n    pass\n```') tests/test_transformers_streaming.py::TestTransformersContextAndStreaming::test_sentencepiece_newline_flush_preserves_indentation
+7 failed, 1 passed, 8 deselected in 3.79s

@@ -38,12 +38,20 @@ class TextStreamer:
     """The HF contract: token tensors enter put(); iteration yields text deltas."""
 
     def __init__(self, tokenizer, skip_prompt=False, **kwargs):
+        self.tokenizer = tokenizer
         self.skip_prompt = skip_prompt
+        self.next_tokens_are_prompt = True
+        self.token_cache = []
+        self.print_len = 0
+        self.decode_kwargs = kwargs
         self.items = queue.Queue()
 
     def put(self, value):
         if not isinstance(value, InputIds):
             raise TypeError("put() requires token tensors")
+        if self.skip_prompt and self.next_tokens_are_prompt:
+            self.next_tokens_are_prompt = False
+            return
         if not self.skip_prompt:
             self.on_finalized_text("prompt ")
 
@@ -140,6 +148,58 @@ class TestTransformersContextAndStreaming(unittest.TestCase):
         with self.assertRaises(RuntimeError) as caught:
             list(self.backend.generate_stream("prompt", max_new_tokens=2))
         self.assertIs(caught.exception, failure)
+
+    def test_sentencepiece_newline_flush_preserves_indentation(self):
+        class PrefixStripTokenizer(Tokenizer):
+            def decode(self, tokens, **kwargs):
+                text = "".join(chr(token) for token in tokens)
+                return text[1:] if text.startswith(" ") else text
+
+        class FlushingStreamer(TextStreamer):
+            def put(self, value):
+                if self.skip_prompt and self.next_tokens_are_prompt:
+                    self.next_tokens_are_prompt = False
+                    return
+                self.token_cache.extend(value.tolist())
+                text = self.tokenizer.decode(self.token_cache)
+                self.on_finalized_text(text[self.print_len :])
+                self.print_len = len(text)
+                if text.endswith("\n"):
+                    self.token_cache = []
+                    self.print_len = 0
+
+        def token_value(tokens):
+            return types.SimpleNamespace(
+                tolist=lambda: tokens,
+                numel=lambda: len(tokens),
+                reshape=lambda shape: [types.SimpleNamespace(item=lambda: tokens[-1])],
+            )
+
+        samples = [
+            "def add(a, b):\n    return a+b\n",
+            "if a:\n\tprint(a)\n\n    next_line",
+            "A\n  café\n  世界\n  😀\n",
+            "\n    leading\n\n",
+            "one\n\n  two\n",
+            "a\n \n b",
+            "```python\n    pass\n```",
+        ]
+        self.backend.tokenizer = PrefixStripTokenizer()
+        with mock.patch.object(self.module, "TextIteratorStreamer", FlushingStreamer):
+            for text in samples:
+                with self.subTest(text=text):
+
+                    def generate(input_ids, _text=text, **kwargs):
+                        streamer = kwargs["streamer"]
+                        streamer.put(input_ids)
+                        streamer.put(token_value([]))
+                        for char in _text:
+                            streamer.put(token_value([ord(char)]))
+                        streamer.end()
+
+                    self.backend.model.generate.side_effect = generate
+                    chunks = list(self.backend.generate_stream("prompt", max_new_tokens=2))
+                    self.assertEqual("".join(chunk["text"] for chunk in chunks), text)
 
     def test_error_after_stream_end_is_not_silently_accepted(self):
         failure = RuntimeError("finalization failed")

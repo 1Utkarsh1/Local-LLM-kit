@@ -1,0 +1,199 @@
+{
+  "model": "qwen3.8:27b",
+  "backend": "ollama",
+  "results": [
+    {
+      "name": "locality_and_capabilities",
+      "passed": true,
+      "seconds": 0.23899634700501338,
+      "data": {
+        "model": "qwen3.8:27b",
+        "detected": true,
+        "capabilities": [
+          "completion",
+          "vision",
+          "tools",
+          "thinking"
+        ],
+        "context_window": 262144,
+        "remote": false,
+        "remote_host": null,
+        "error": null,
+        "routing_verified": true,
+        "supported": true
+      }
+    },
+    {
+      "name": "chat",
+      "passed": true,
+      "seconds": 91.36644371901639,
+      "data": {
+        "id": "chatcmpl-c9a8c270815c4e128ce9689d",
+        "object": "chat.completion",
+        "created": 1792857177,
+        "model": "qwen3.8:27b",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "4"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 25,
+          "completion_tokens": 2,
+          "total_tokens": 27
+        }
+      }
+    },
+    {
+      "name": "stream_matches_nonstream",
+      "passed": true,
+      "seconds": 4.191187092976179,
+      "data": {
+        "response": {
+          "id": "chatcmpl-603fbf6d75b44540b3944ef4",
+          "object": "chat.completion",
+          "created": 1792857268,
+          "model": "qwen3.8:27b",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "```python\ndef add(a, b):\n    return a + b\n```"
+              },
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 25,
+            "completion_tokens": 18,
+            "total_tokens": 43
+          }
+        },
+        "streamed_text": "```python\ndef add(a, b):\n    return a + b\n```",
+        "chunks": 15
+      }
+    },
+    {
+      "name": "structured_json_schema",
+      "passed": true,
+      "seconds": 3.203925974026788,
+      "data": {
+        "id": "chatcmpl-281bc671a58748b1a270b6bb",
+        "object": "chat.completion",
+        "created": 1792857273,
+        "model": "qwen3.8:27b",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "{\n  \"city\": \"Paris\",\n  \"country\": \"France\"\n}"
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 23,
+          "completion_tokens": 20,
+          "total_tokens": 43
+        }
+      }
+    },
+    {
+      "name": "tool_call_without_execution",
+      "passed": true,
+      "seconds": 3.19867263402557,
+      "data": {
+        "id": "chatcmpl-a6a54912a0f14c65b7d41178",
+        "object": "chat.completion",
+        "created": 1792857276,
+        "model": "qwen3.8:27b",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_4dq3h0zy",
+                  "type": "function",
+                  "function": {
+                    "name": "lookup_weather",
+                    "arguments": "{\"city\": \"Sydney\"}"
+                  }
+                }
+              ],
+              "function_call": {
+                "name": "lookup_weather",
+                "arguments": "{\"city\": \"Sydney\"}"
+              }
+            },
+            "finish_reason": "tool_calls"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 274,
+          "completion_tokens": 28,
+          "total_tokens": 302
+        }
+      }
+    },
+    {
+      "name": "reasoning_metadata",
+      "passed": true,
+      "seconds": 2.7009540389990434,
+      "data": {
+        "id": "chatcmpl-43152fa203674b95826a873f",
+        "object": "chat.completion",
+        "created": 1792857279,
+        "model": "qwen3.8:27b",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "2 + 2 = **4**",
+              "thinking": "The user is asking a simple arithmetic question: what is 2 plus 2. The answer is 4."
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 18,
+          "completion_tokens": 35,
+          "total_tokens": 53
+        }
+      }
+    },
+    {
+      "name": "text_completion",
+      "passed": true,
+      "seconds": 1.5013841969775967,
+      "data": {
+        "id": "cmpl-3d9f4e42f3434f3e9715789f",
+        "object": "text_completion",
+        "created": 1792857283,
+        "model": "qwen3.8:27b",
+        "choices": [
+          {
+            "text": "The capital of France is **Paris**.",
+            "index": 0,
+            "finish_reason": "stop"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 17,
+          "completion_tokens": 9,
+          "total_tokens": 26
+        }
+      }
+    }
+  ]
+}

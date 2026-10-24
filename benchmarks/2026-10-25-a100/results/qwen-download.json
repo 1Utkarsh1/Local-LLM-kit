@@ -1,0 +1,9 @@
+{
+  "model": "Qwen/Qwen3.8-27B",
+  "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "started": 1792855127.0880525,
+  "weight_bytes": 55563006776,
+  "snapshot": "/workspace/hf-cache/hub/models--Qwen--Qwen3.8-27B/snapshots/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "elapsed_seconds": 188.3246591091156,
+  "completed": true
+}

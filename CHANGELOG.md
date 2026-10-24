@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Transformers streaming preserves code indentation after newline flushes with SentencePiece tokenizers. Real CUDA inference reproduced a lost space despite identical generated token IDs; regression tests cover code, blank lines, tabs and Unicode.
+- Native Transformers and llama.cpp backends identify themselves correctly, so `require_local=True` accepts these in-process engines and model metadata reports their actual backend.
+- Non-streaming chat and completion responses preserve engine-reported token usage, including Ollama's native counters, instead of replacing it with an estimate. Tool loops sum the usage of every generation round; estimates remain the fallback when counts are unavailable or invalid.
+
+### Validation
+- Added reproducible A100 80 GB validation evidence, raw responses, warm HTTP benchmarks and a captured results report. The recorded runtime/model combinations and untested features are listed with the results.
+
 ## [0.3.1] - 2026-10-25
 
 ### Fixed

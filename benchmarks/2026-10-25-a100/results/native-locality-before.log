@@ -1,0 +1,132 @@
+.                                                                      [100%]
+=================================== FAILURES ===================================
+_ TestRequireLocal.test_native_transformers_and_llamacpp_are_accepted (backend='TransformersBackend') _
+
+self = <tests.test_discovery.TestRequireLocal testMethod=test_native_transformers_and_llamacpp_are_accepted>
+
+    def test_native_transformers_and_llamacpp_are_accepted(self):
+        from local_llm_kit.backends.llamacpp import LlamaCppBackend
+        from local_llm_kit.backends.transformers import TransformersBackend
+    
+        for cls in (TransformersBackend, LlamaCppBackend):
+            with self.subTest(backend=cls.__name__):
+                backend = object.__new__(cls)
+                backend.model_path = "local-checkpoint"
+>               llm = LLM("local-checkpoint", backend_instance=backend, require_local=True)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_discovery.py:530: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+local_llm_kit/llm.py:326: in __init__
+    self.assert_local()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = LLM(model_path='local-checkpoint', backend=TransformersBackend)
+
+    def assert_local(self) -> bool:
+        """Require an in-process backend or verified local-server metadata.
+    
+        Unknown routing fails closed. Metadata is a report from the configured
+        server, not a security boundary against a dishonest server operator.
+        """
+        from .discovery import is_loopback_url, probe_endpoint
+    
+        name = getattr(self.backend, "backend_name", "")
+        if name in ("echo", "transformers", "llamacpp", "airllm", "apple-fm"):
+            return True
+        if name == "ollama":
+            if not is_loopback_url(self.backend.host):
+                raise RuntimeError("require_local refuses a non-loopback Ollama endpoint.")
+            detection = self.detect_backend_capabilities()
+            if detection.get("remote"):
+                raise RuntimeError(
+                    "Model %r is routed off-device to %s."
+                    % (self.model_path, detection.get("remote_host") or "a remote host")
+                )
+            if detection.get("error") or not detection.get("routing_verified"):
+                raise RuntimeError(
+                    "Could not confirm that %r runs on this machine: routing metadata unavailable."
+                    % self.model_path
+                )
+            if not detection.get("remote"):
+                return True
+        elif name == "openai-compat":
+            if not is_loopback_url(self.backend.base_url):
+                raise RuntimeError("require_local refuses a non-loopback endpoint.")
+            report = probe_endpoint(self.backend.base_url, timeout=min(self.backend.timeout, 5.0))
+            if any(m.id == self.model_path for m in report.local_models):
+                return True
+>       raise RuntimeError(
+            "Could not confirm that %r runs on this machine; the model is remote or its execution locality is unknown."
+            % self.model_path
+        )
+E       RuntimeError: Could not confirm that 'local-checkpoint' runs on this machine; the model is remote or its execution locality is unknown.
+
+local_llm_kit/llm.py:486: RuntimeError
+_ TestRequireLocal.test_native_transformers_and_llamacpp_are_accepted (backend='LlamaCppBackend') _
+
+self = <tests.test_discovery.TestRequireLocal testMethod=test_native_transformers_and_llamacpp_are_accepted>
+
+    def test_native_transformers_and_llamacpp_are_accepted(self):
+        from local_llm_kit.backends.llamacpp import LlamaCppBackend
+        from local_llm_kit.backends.transformers import TransformersBackend
+    
+        for cls in (TransformersBackend, LlamaCppBackend):
+            with self.subTest(backend=cls.__name__):
+                backend = object.__new__(cls)
+                backend.model_path = "local-checkpoint"
+>               llm = LLM("local-checkpoint", backend_instance=backend, require_local=True)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_discovery.py:530: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+local_llm_kit/llm.py:326: in __init__
+    self.assert_local()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = LLM(model_path='local-checkpoint', backend=LlamaCppBackend)
+
+    def assert_local(self) -> bool:
+        """Require an in-process backend or verified local-server metadata.
+    
+        Unknown routing fails closed. Metadata is a report from the configured
+        server, not a security boundary against a dishonest server operator.
+        """
+        from .discovery import is_loopback_url, probe_endpoint
+    
+        name = getattr(self.backend, "backend_name", "")
+        if name in ("echo", "transformers", "llamacpp", "airllm", "apple-fm"):
+            return True
+        if name == "ollama":
+            if not is_loopback_url(self.backend.host):
+                raise RuntimeError("require_local refuses a non-loopback Ollama endpoint.")
+            detection = self.detect_backend_capabilities()
+            if detection.get("remote"):
+                raise RuntimeError(
+                    "Model %r is routed off-device to %s."
+                    % (self.model_path, detection.get("remote_host") or "a remote host")
+                )
+            if detection.get("error") or not detection.get("routing_verified"):
+                raise RuntimeError(
+                    "Could not confirm that %r runs on this machine: routing metadata unavailable."
+                    % self.model_path
+                )
+            if not detection.get("remote"):
+                return True
+        elif name == "openai-compat":
+            if not is_loopback_url(self.backend.base_url):
+                raise RuntimeError("require_local refuses a non-loopback endpoint.")
+            report = probe_endpoint(self.backend.base_url, timeout=min(self.backend.timeout, 5.0))
+            if any(m.id == self.model_path for m in report.local_models):
+                return True
+>       raise RuntimeError(
+            "Could not confirm that %r runs on this machine; the model is remote or its execution locality is unknown."
+            % self.model_path
+        )
+E       RuntimeError: Could not confirm that 'local-checkpoint' runs on this machine; the model is remote or its execution locality is unknown.
+
+local_llm_kit/llm.py:486: RuntimeError
+=========================== short test summary info ============================
+SUBFAILED(backend='TransformersBackend') tests/test_discovery.py::TestRequireLocal::test_native_transformers_and_llamacpp_are_accepted
+SUBFAILED(backend='LlamaCppBackend') tests/test_discovery.py::TestRequireLocal::test_native_transformers_and_llamacpp_are_accepted
+2 failed, 1 passed, 40 deselected in 0.09s

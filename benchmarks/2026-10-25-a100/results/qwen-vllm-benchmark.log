@@ -1,0 +1,21 @@
+{
+  "sequential_n": 10,
+  "median_latency_seconds": 4.022782835003454,
+  "min_latency_seconds": 4.014021247974597,
+  "max_latency_seconds": 4.049141025985591,
+  "median_output_tokens_per_second": 15.909388593572451,
+  "median_ttft_seconds": 0.1710785779869184,
+  "concurrent_output_tokens_per_second": 59.32882488808234,
+  "completion_tokens": [
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64
+  ]
+}

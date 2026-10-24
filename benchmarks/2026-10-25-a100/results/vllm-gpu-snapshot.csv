@@ -1,0 +1,2 @@
+name, memory.used [MiB], memory.total [MiB], utilization.gpu [%]
+NVIDIA A100-SXM4-80GB, 69117 MiB, 81920 MiB, 0 %
